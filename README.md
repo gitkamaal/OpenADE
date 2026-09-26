@@ -71,8 +71,8 @@ Supported agent executables:
 |---|---|---:|---:|---:|
 | Claude Code | `claude` | Yes | Yes | Yes |
 | Codex CLI | `codex` | Yes | Yes | Yes |
-| GitHub Copilot CLI | `copilot` | Initial prompt | No | No |
-| OpenCode | `opencode` | Initial prompt | No | No |
+| GitHub Copilot CLI | `copilot` | No | Raw CLI | No |
+| OpenCode | `opencode` | No | Raw CLI | No |
 | Local shell | `$SHELL` | No | Terminal | No |
 
 Optional integrations:
@@ -88,7 +88,8 @@ OpenADE does not proxy or store provider credentials. Each integration uses the 
 git clone https://github.com/gitkamaal/OpenADE.git
 cd OpenADE/apps/desktop
 npm ci
-CGO_ENABLED=1 "$(go env GOPATH)/bin/wails" build -clean
+npm run build
+CGO_ENABLED=1 "$(go env GOPATH)/bin/wails" build -m -skipbindings -s
 open build/bin/OpenADE.app
 ```
 
@@ -107,11 +108,13 @@ For browser-only frontend work, run the daemon and Vite separately:
 ```sh
 # terminal 1
 cd apps/desktop
-go run . --daemon --addr 127.0.0.1:7433
+export OPENADE_DATA_DIR="$PWD/.local-dev"
+go run . --daemon --addr 127.0.0.1:7434
 
 # terminal 2
 cd apps/desktop
-npm run dev
+export OPENADE_DATA_DIR="$PWD/.local-dev"
+VITE_OPENADE_DAEMON_URL=http://127.0.0.1:7434 VITE_OPENADE_AUTH_TOKEN="$(cat "$OPENADE_DATA_DIR/engine.token")" npm run dev
 ```
 
 ## First session
@@ -133,7 +136,7 @@ While an agent is working, follow-up messages can be queued, steered to the fron
 │ React 19 + TypeScript + xterm.js                         │
 │ Native chat, Direct TUI, projects, review, PRs, settings │
 └────────────────────────────┬─────────────────────────────┘
-                             │ localhost HTTP + WebSocket
+                             │ authenticated loopback HTTP + SSE + WebSocket
 ┌────────────────────────────▼─────────────────────────────┐
 │ One Go daemon                                            │
 │ SQLite WAL index · message queues · transcripts          │
@@ -150,7 +153,7 @@ While an agent is working, follow-up messages can be queued, steered to the fron
 
 The daemon is deliberately independent from the window lifecycle:
 
-- Wails starts it only when no healthy daemon is already listening.
+- Wails reconnects only to the matching profile. An occupied address or profile lock prevents a second owner before any migration.
 - Closing the window leaves it and its managed PTYs running.
 - Reopening the app reattaches to live sessions and terminal scrollback.
 - Daemon shutdown closes PTYs, subscribers, transcript writers, process groups, and SQLite in a deterministic order.
@@ -169,7 +172,7 @@ The directory contains:
 openade.sqlite3       session, queue, and terminal index
 openade.sqlite3-wal   SQLite write-ahead log while active
 worktrees/            isolated task checkouts
-transcripts/          agent PTY transcripts
+transcripts/          structured chat or raw PTY transcripts
 terminal-transcripts/ independent shell transcripts
 daemon.log            detached daemon output
 ```
@@ -179,50 +182,29 @@ Configuration knobs:
 | Variable | Purpose | Default |
 |---|---|---|
 | `OPENADE_DATA_DIR` | Override daemon state and worktree storage | OS user config directory |
+| `OPENADE_PROFILE` | Named profile under the existing data directory | `default` (preserves existing data) |
 | `OPENADE_DAEMON_ADDR` | Override daemon listen address | `127.0.0.1:7433` |
-| `VITE_OPENADE_DAEMON_URL` | Point the browser frontend at another local daemon | `http://127.0.0.1:7433` |
+| `VITE_OPENADE_DAEMON_URL` / `VITE_OPENADE_AUTH_TOKEN` | Explicit browser development connection | Native Wails bridge otherwise |
 
 ## Testing
 
-Backend tests use Go's standard `testing` package. Frontend tests use Vitest 3 with jsdom and Testing Library. End-to-end tests use Playwright 1.62 against a real Go daemon, Vite frontend, fixture Git repository, PTYs, and Chromium.
+Current desktop verification uses end-to-end tests only. The former Vitest/component and in-process Go test suites are retired. `npm test` and `npm run e2e` both run Playwright against the production UI, a real Go engine, real Git repositories/worktrees and PTYs, and deterministic synthetic provider CLIs. No external accounts or user data are involved.
 
 ```sh
 cd apps/desktop
-
-# Go unit and daemon integration tests, including race detection
-go test -race ./...
-go vet ./...
-
-# React unit and component integration tests
-npm test
-
-# Production frontend type-check and build
+npm ci
+npx playwright install chromium
 npm run build
-
-# Browser lifecycle tests
-npx playwright install chromium # first run only
+go vet ./...
 npm run e2e
-
-# Packaged desktop build
-CGO_ENABLED=1 "$(go env GOPATH)/bin/wails" build -clean
+# Rebuild without test URL/token before packaging.
+npm run build
+wails build -m -skipbindings -s
 ```
 
-The lifecycle suites specifically exercise:
+The flows cover settings and shortcuts, native chat and model arguments, queue edit/order/turn ownership, files and write conflicts, diffs/commit/history, draft PR delivery through a synthetic gh CLI, archived sessions, conversation adoption, repository isolation, raw PTY input/resize, authenticated control, cancellation/crash recovery, daemon restart, replay and inactive-view cleanup. Production-client performance is measured with 24 sessions, two repositories and a 260-turn transcript. See [verification and limits](docs/zeron-rebuild.md).
 
-- PTY closure and transcript flushing after a process exits.
-- Subscriber removal and channel closure.
-- Managed process-group termination during daemon shutdown.
-- Non-overlapping polling and stale async response suppression.
-- WebSocket reconnect-timer cleanup.
-- xterm input subscriptions, ResizeObservers, sockets, and terminal disposal.
-- Repeated Direct TUI navigation and multiple project-terminal open/close cycles in Chromium.
-
-Current verified checkpoint on this branch:
-
-- Go race tests and `go vet` pass.
-- 20 Vitest files / 130 tests pass on Vitest 3.2.7.
-- Repeated Playwright lifecycle runs pass on Playwright 1.62.1.
-- Wails 2.10.2 produces a macOS arm64 application bundle with CGO enabled.
+CI checks the Go/Wails desktop on macOS. The earlier Rust release workflow is manual only; it does not publish the current desktop app.
 
 ## Repository layout
 
@@ -241,11 +223,14 @@ docs/                     product and historical design documentation
 
 ## Current limitations
 
+- Local UI follows Zeron while retaining the header/rail. Remote devices, Appshots, provider account switching/sync, imported themes and hunk staging are not implemented. Local-server discovery, native macOS browser previews and latest-turn diffs are available.
+- Native chat uses a structured pipe per turn and durable provider resume. Persistent upstream sessions, mid-turn steering and interactive permission bridging are not claimed. “Send next” reorders the queue.
+
 - Direct TUI and durable provider resume are implemented only for Claude Code and Codex CLI.
 - Sites is a UI integration surface only.
 - Jira support expects a locally installed and authenticated `jira` executable.
 - GitHub operations expect a locally installed and authenticated `gh` executable and an `origin` repository you can push to.
-- The current frontend bundle emits a non-blocking large-chunk warning; code splitting is a future performance pass.
+- Terminal code loads only when used. Markdown rendering still emits a non-blocking large-chunk warning.
 - Several documents and screenshots under `docs/` describe the earlier Rust/Tauri prototype and may not match this branch's current UI.
 
 ## Principles

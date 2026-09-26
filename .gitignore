@@ -30,6 +30,7 @@ apps/desktop/src/wailsjs/
 
 # OpenADE local data
 .openade-data/
+apps/desktop/.local-dev/
 
 # Playwright
 apps/desktop/e2e/.tmp/

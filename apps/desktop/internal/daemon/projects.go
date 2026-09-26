@@ -76,7 +76,7 @@ func scanProjectRoot(root string) ([]string, error) {
 }
 
 func discoverExternalConversations(root string, projects []string) []ExternalConversation {
-	home, _ := os.UserHomeDir()
+	home := providerHome()
 	codexTitles := codexConversationTitles(home)
 	type candidate struct {
 		path, provider string

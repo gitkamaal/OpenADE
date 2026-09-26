@@ -17,11 +17,7 @@ export interface ChatTurn {
 
 type JsonRecord = Record<string, unknown>;
 
-export function parseChatTranscript(
-  value: string,
-  initialPrompt: string,
-  running: boolean,
-): ChatTurn[] {
+export function createTranscriptParser(initialPrompt:string){
   const turns: ChatTurn[] = [];
   if (initialPrompt.trim()) {
     turns.push({ id: "user-0", role: "user", markdown: initialPrompt.trim(), activities: [] });
@@ -34,11 +30,19 @@ export function parseChatTranscript(
   // Strip terminal escapes one line at a time. A raw TUI can leave an OSC
   // sequence unterminated; stripping the entire transcript at once would then
   // swallow every later JSON event, including valid streamed chat responses.
-  for (const rawLine of value.replace(/\r/g, "").split("\n")) {
+  let carry="";
+  const consume=(rawLine:string)=>{
     const line = stripANSI(rawLine).trim();
-    if (!line.startsWith("{")) continue;
+    if (!line || line.startsWith("Reading additional input from stdin")) return;
+    if (!line.startsWith("{")) {
+      if (assistant.activities.filter(activity => activity.kind === "notice").length < 20) {
+        const message = line.slice(0, 2000);
+        addActivity(assistant, "notice", noticeTitle(message), message);
+      }
+      return;
+    }
     const event = parseEvent(line);
-    if (!event) continue;
+    if (!event) return;
 
     if (event.type === "openade.user_message") {
       commitAssistant(turns, assistant, finalMessage || partial);
@@ -51,11 +55,16 @@ export function parseChatTranscript(
       assistant = newAssistant(turns.length);
       partial = "";
       finalMessage = "";
-      continue;
+      return;
     }
 
     const type = String(event.type ?? "");
     const item = isRecord(event.item) ? event.item : null;
+    if (type === "error" || type === "turn.failed") {
+      const error = isRecord(event.error) ? event.error : event;
+      const message = String(error.message ?? event.message ?? "Provider failed to complete this turn").slice(0, 2000);
+      addActivity(assistant, "notice", noticeTitle(message), message);
+    }
     if (type === "thread.started" || type === "turn.started") {
       addActivity(assistant, "thinking", "Thinking");
     }
@@ -95,12 +104,16 @@ export function parseChatTranscript(
     if (type === "result" && typeof event.result === "string" && event.result.trim()) {
       finalMessage = event.result.trim();
     }
-  }
-
-  assistant.streaming = running;
-  commitAssistant(turns, assistant, finalMessage || partial, running);
-  return turns;
+  };
+  return {
+    append(chunk:string){const lines=(carry+chunk.replace(/\r/g,"")).split("\n");carry=lines.pop()??"";for(const line of lines)consume(line);},
+    snapshot(running:boolean):ChatTurn[]{
+      const current={...assistant,activities:assistant.activities.map(activity=>({...activity})),markdown:(finalMessage||partial).trim(),streaming:running};
+      return current.markdown||current.activities.length||running?[...turns,current]:[...turns];
+    },
+  };
 }
+export function parseChatTranscript(value:string,initialPrompt:string,running:boolean):ChatTurn[]{const parser=createTranscriptParser(initialPrompt);parser.append(value+"\n");return parser.snapshot(running);}
 
 function newAssistant(index: number): ChatTurn {
   return { id: `assistant-${index}`, role: "assistant", markdown: "", activities: [] };
@@ -152,6 +165,7 @@ function toolTitle(name: string): string {
 }
 
 function noticeTitle(message: string): string {
+  if (/^20\d\d-.*\b(?:WARN|ERROR)\b/.test(message)) return "Provider connection notice";
   if (message.includes("codex_hooks") && message.includes("deprecated")) return "Codex configuration notice";
   if (message.includes("Skill descriptions were shortened")) return "Skill context compacted";
   const firstLine = message.replace(/[`*_]/g, "").split("\n")[0].trim();

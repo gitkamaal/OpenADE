@@ -1,39 +1,5 @@
-# OpenADE desktop app
+# OpenADE desktop
 
-Vite + React + TypeScript UI in a Tauri 2 shell. The UI is a *viewer*: all
-session state lives in `openade-daemon` (see `crates/openade-daemon`), which
-the app talks to at `http://127.0.0.1:7433` (override with
-`VITE_OPENADE_DAEMON_URL`). Closing the window never kills a session.
+The current runtime is Go 1.26 / Wails 2.10.2 / React 19. A durable, authenticated loopback engine owns SQLite WAL state, agent processes, worktrees, transcripts and project terminals. Wails is a replaceable client. Native chat uses structured pipes; Direct TUI and shells use PTYs.
 
-## Develop the UI only (no system dependencies needed)
-
-```sh
-# terminal 1: the daemon
-cargo run -p openade-daemon
-
-# terminal 2: the UI in a browser
-cd apps/desktop
-npm install
-npm run dev
-```
-
-`npm run build` type-checks and produces `dist/` — this is what CI verifies.
-
-## Run the native shell
-
-The `src-tauri` crate is **excluded from the root Cargo workspace** because it
-needs platform webview libraries:
-
-- **macOS**: Xcode command-line tools.
-- **Linux**: `libwebkit2gtk-4.1-dev`, `build-essential`, `libssl-dev`,
-  `libayatana-appindicator3-dev`, `librsvg2-dev` (Debian/Ubuntu names).
-
-```sh
-cd apps/desktop
-npm install
-npx @tauri-apps/cli dev     # or: cargo tauri dev
-```
-
-A placeholder app icon is checked in at `src-tauri/icons/icon.png`
-(`bundle.active` is still `false`); regenerate a real icon set with
-`npx @tauri-apps/cli icon <source.png>` before enabling bundling.
+See the [root README](../../README.md) for build/run/profile configuration and the [verification guide](../../docs/zeron-rebuild.md) for end-to-end coverage and parity limits. Do not bake test connection variables into a native build. The old Tauri and Rust sources are historical references.

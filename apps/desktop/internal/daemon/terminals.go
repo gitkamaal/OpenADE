@@ -61,7 +61,7 @@ func (m *TerminalManager) Create(session Session, title string, launches ...Term
 	}
 	cmd := exec.Command(program, args...)
 	cmd.Dir = session.WorktreePath
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "COLORTERM=truecolor", "OPENADE_SESSION_ID="+session.ID, "OPENADE_TERMINAL_KIND="+launch.Kind)
+	cmd.Env = processEnvironment("TERM=xterm-256color", "COLORTERM=truecolor", "OPENADE_SESSION_ID="+session.ID, "OPENADE_TERMINAL_KIND="+launch.Kind)
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 32, Cols: 100})
 	if err != nil {
 		return TerminalSession{}, fmt.Errorf("start project terminal: %w", err)
@@ -153,18 +153,22 @@ func (m *TerminalManager) readOutput(id string, live *liveSession, transcript *o
 		n, err := reader.Read(buf)
 		if n > 0 {
 			chunk := append([]byte(nil), buf[:n]...)
+			live.mu.Lock()
 			if transcript != nil {
 				_, _ = transcript.Write(chunk)
 			}
-			live.mu.Lock()
 			live.scrollback = append(live.scrollback, chunk...)
-			if len(live.scrollback) > maxScrollback {
-				live.scrollback = live.scrollback[len(live.scrollback)-maxScrollback:]
+			if len(live.scrollback) > 256*1024 {
+				copy(live.scrollback, live.scrollback[len(live.scrollback)-128*1024:])
+				live.scrollback = live.scrollback[:128*1024]
 			}
+
 			for subscriber := range live.subscribers {
 				select {
 				case subscriber <- chunk:
 				default:
+					delete(live.subscribers, subscriber)
+					close(subscriber)
 				}
 			}
 			live.mu.Unlock()
@@ -241,7 +245,7 @@ func (m *TerminalManager) Stop(id string) error {
 	if live.cmd.Process == nil {
 		return nil
 	}
-	if err := signalProcessGroup(live, syscall.SIGTERM); err != nil {
+	if err := stopProcessGroup(live); err != nil {
 		m.mu.Lock()
 		delete(m.stopping, id)
 		m.mu.Unlock()
@@ -261,20 +265,20 @@ func (m *TerminalManager) Shutdown(ctx context.Context) {
 	shutdownLiveProcesses(ctx, lives)
 }
 
-func (m *TerminalManager) Subscribe(id string) ([]byte, <-chan []byte, func(), error) {
+func (m *TerminalManager) Subscribe(id string, after int64) (Replay, <-chan []byte, func(), error) {
 	live, err := m.getLive(id)
 	if err != nil {
 		if _, storeErr := m.store.GetTerminal(id); storeErr != nil {
-			return nil, nil, nil, storeErr
+			return Replay{}, nil, nil, storeErr
 		}
-		transcript, _ := os.ReadFile(filepath.Join(m.dataDir, "terminal-transcripts", id+".log"))
+		transcript, _ := readReplay(filepath.Join(m.dataDir, "terminal-transcripts", id+".log"), after)
 		closed := make(chan []byte)
 		close(closed)
 		return transcript, closed, func() {}, nil
 	}
 	ch := make(chan []byte, 128)
 	live.mu.Lock()
-	initial := append([]byte(nil), live.scrollback...)
+	initial, _ := readReplay(filepath.Join(m.dataDir, "terminal-transcripts", id+".log"), after)
 	live.subscribers[ch] = struct{}{}
 	live.mu.Unlock()
 	cancel := func() {

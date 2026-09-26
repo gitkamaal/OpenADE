@@ -1,9 +1,27 @@
 const frontendEnv = (import.meta as ImportMeta & {
-  env?: { VITE_OPENADE_DAEMON_URL?: string };
+  env?: { VITE_OPENADE_DAEMON_URL?: string; VITE_OPENADE_AUTH_TOKEN?: string };
 }).env;
 
-export const DAEMON_URL = frontendEnv?.VITE_OPENADE_DAEMON_URL ?? "http://127.0.0.1:7433";
+export let DAEMON_URL = frontendEnv?.VITE_OPENADE_DAEMON_URL ?? "http://127.0.0.1:7433";
 
+let authToken=frontendEnv?.VITE_OPENADE_AUTH_TOKEN ?? "";
+let connectionPromise:Promise<void>|null=null;
+function bounded<T>(promise:Promise<T>, milliseconds:number, message:string):Promise<T>{
+ return new Promise((resolve,reject)=>{const timer=window.setTimeout(()=>reject(new Error(message)),milliseconds);promise.then(value=>{clearTimeout(timer);resolve(value);},error=>{clearTimeout(timer);reject(error);});});
+}
+export async function engineConnection(){
+ if(authToken)return;
+ if(!connectionPromise)connectionPromise=(async()=>{
+  const bridge=window as typeof window & {go?:{main?:{App?:{EngineConnection?:()=>Promise<{url:string;token:string}>}}}};
+  const connect=bridge.go?.main?.App?.EngineConnection;
+  if(!connect)throw new Error("The desktop bridge is unavailable. Restart OpenADE, or configure a development engine.");
+  const connection=await bounded(connect(),12000,"The desktop bridge did not respond. Restart OpenADE to reconnect.");
+  if(!connection.url||!connection.token)throw new Error("The desktop engine connection is incomplete.");
+  DAEMON_URL=connection.url;authToken=connection.token;
+ })().catch(reason=>{connectionPromise=null;throw reason;});
+ await connectionPromise;
+}
+export const engineEventsURL=(sequence:number)=>`${DAEMON_URL}/api/events?after=${sequence}&token=${encodeURIComponent(authToken)}`;
 export type SessionStatus =
   | "starting"
   | "running"
@@ -14,11 +32,14 @@ export type SessionStatus =
   | "interrupted";
 
 export interface Session {
+ model:string;effort:string;service_tier:string;instructions:string;
   id: string;
   title: string;
   prompt: string;
   agent: string;
   mode: "chat" | "tui";
+  current_turn_id:string;
+  generation:number;
   repo_root: string;
   worktree_path: string;
   branch: string;
@@ -47,7 +68,9 @@ export interface ProjectTerminal {
   finished_at?: string;
 }
 
+export interface ModelChoice{id:string;label:string;description:string;efforts:string[];service_tiers?:{id:string;label:string;description:string}[]}
 export interface AgentInfo {
+ models?:ModelChoice[];
   id: string;
   available: boolean;
   path: string;
@@ -118,6 +141,7 @@ export interface WorkspaceScan {
 }
 
 export interface CreateSessionInput {
+ model?:string;effort?:string;service_tier?:string;checkout?:"current"|"worktree";
   title: string;
   prompt: string;
   agent: string;
@@ -130,10 +154,13 @@ export interface CreateSessionInput {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+ await engineConnection();
   const response = await fetch(`${DAEMON_URL}${path}`, {
     ...init,
+    signal: init?.signal ?? AbortSignal.timeout(path==="/api/sessions"&&init?.method==="POST"?90000:30000),
     headers: {
       "Content-Type": "application/json",
+      "Authorization":`Bearer ${authToken}`,
       ...init?.headers,
     },
   });
@@ -215,6 +242,9 @@ export const enqueueMessage = (id: string, text: string) =>
     body: JSON.stringify({ text }),
   });
 
+export const updateQueuedMessage = (sessionId:string,messageId:string,text:string) =>
+  request<void>(`/api/sessions/${sessionId}/message-queue/${messageId}`,{method:"PUT",body:JSON.stringify({text})});
+
 export const removeQueuedMessage = (sessionId: string, messageId: string) =>
   request<void>(`/api/sessions/${sessionId}/message-queue/${messageId}`, { method: "DELETE" });
 
@@ -266,12 +296,12 @@ export const resizeProjectTerminal = (id: string, rows: number, cols: number) =>
 export const stopTerminal = (id: string) =>
   request<void>(`/api/terminals/${id}/stop`, { method: "POST" });
 
-export async function getDiff(id: string): Promise<string> {
-  return (await request<{ diff: string }>(`/api/sessions/${id}/diff`)).diff;
+export async function getDiff(id: string, scope: "branch" | "working" | "staged" | "turn" = "branch"): Promise<string> {
+  return (await request<{ diff: string }>(`/api/sessions/${id}/diff?scope=${scope}`)).diff;
 }
 
-export async function getFiles(id: string): Promise<string[]> {
-  return (await request<{ files: string[] }>(`/api/sessions/${id}/files`)).files;
+export async function getFiles(id: string,ignored=false): Promise<string[]> {
+  return (await request<{ files: string[] }>(`/api/sessions/${id}/files?ignored=${ignored?"1":"0"}`)).files;
 }
 
 export async function listPullRequests(repo: string): Promise<PullRequest[]> {
@@ -302,12 +332,12 @@ export async function createPullRequest(input: {
 export const getTicket = (key: string) =>
   request<Ticket>(`/api/jira/tickets/${encodeURIComponent(key)}`);
 
-export function streamURL(id: string): string {
-  return `${DAEMON_URL.replace(/^http/, "ws")}/api/sessions/${id}/stream`;
+export function streamURL(id: string,after=0): string {
+  return `${DAEMON_URL.replace(/^http/, "ws")}/api/sessions/${id}/stream?after=${after}&token=${encodeURIComponent(authToken)}`;
 }
 
-export function terminalStreamURL(id: string): string {
-  return `${DAEMON_URL.replace(/^http/, "ws")}/api/terminals/${id}/stream`;
+export function terminalStreamURL(id: string,after=0): string {
+  return `${DAEMON_URL.replace(/^http/, "ws")}/api/terminals/${id}/stream?after=${after}&token=${encodeURIComponent(authToken)}`;
 }
 
 export function projectName(path: string): string {
@@ -324,3 +354,23 @@ export function relativeTime(value: string): string {
   if (hours < 24) return `${hours}h`;
   return `${Math.floor(hours / 24)}d`;
 }
+
+export interface GitCommit { sha:string; parents:string; author:string; date:string; subject:string; }
+export const getHistory = (id:string) => request<{branch:string;commits:GitCommit[]}>(`/api/sessions/${id}/history`);
+export const getFile = (id:string,path:string) => request<{path:string;content:string}>(`/api/sessions/${id}/file?path=${encodeURIComponent(path)}`);
+export const saveFile = (id:string,path:string,content:string,original:string) => request<{path:string;content:string}>(`/api/sessions/${id}/file?path=${encodeURIComponent(path)}`,{method:"PUT",body:JSON.stringify({content,original})});
+
+export interface EngineSnapshot{sequence:number;sessions:Session[];projects:string[];queues:Record<string,QueuedMessage[]>}
+export const getEngineState=()=>request<EngineSnapshot>("/api/state");
+
+export const commitChanges=(id:string,message:string,staged=false)=>request<{sha:string}>(`/api/sessions/${id}/commit`,{method:"POST",body:JSON.stringify({message,staged})});
+
+export const updateModel=(id:string,model:string,effort:string,service_tier="")=>request<void>(`/api/sessions/${id}/model`,{method:"POST",body:JSON.stringify({model,effort,service_tier})});
+
+export const getBranches=(root:string)=>request<{branches:string[];current:string}>(`/api/projects/branches?root=${encodeURIComponent(root)}`);
+export const getPreviewServers=(id:string)=>request<{servers:string[]}>(`/api/sessions/${id}/preview-servers`);
+export const stageFile=(id:string,path:string,staged:boolean)=>request<void>(`/api/sessions/${id}/stage`,{method:"POST",body:JSON.stringify({path,staged})});
+
+export const signInProvider=(provider:string)=>request<Session>(`/api/providers/${encodeURIComponent(provider)}/sign-in`,{method:"POST"});
+
+export const updateSessionDetails=(id:string,details:{title?:string;instructions?:string})=>request<void>(`/api/sessions/${id}`,{method:"PATCH",body:JSON.stringify(details)});

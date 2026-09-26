@@ -12,24 +12,31 @@ import (
 )
 
 type Session struct {
-	ID           string     `json:"id"`
-	Title        string     `json:"title"`
-	Prompt       string     `json:"prompt"`
-	Agent        string     `json:"agent"`
-	Mode         string     `json:"mode"`
-	RepoRoot     string     `json:"repo_root"`
-	WorktreePath string     `json:"worktree_path"`
-	Branch       string     `json:"branch"`
-	BaseBranch   string     `json:"base_branch"`
-	TicketKey    string     `json:"ticket_key,omitempty"`
-	TicketURL    string     `json:"ticket_url,omitempty"`
-	Status       string     `json:"status"`
-	PID          int        `json:"pid,omitempty"`
-	ExitCode     *int       `json:"exit_code,omitempty"`
-	PRURL        string     `json:"pr_url,omitempty"`
-	CreatedAt    time.Time  `json:"created_at"`
-	UpdatedAt    time.Time  `json:"updated_at"`
-	FinishedAt   *time.Time `json:"finished_at,omitempty"`
+	queueMessageID string
+	Model          string     `json:"model"`
+	Instructions   string     `json:"instructions"`
+	ServiceTier    string     `json:"service_tier"`
+	Effort         string     `json:"effort"`
+	CurrentTurnID  string     `json:"current_turn_id"`
+	Generation     int64      `json:"generation"`
+	ID             string     `json:"id"`
+	Title          string     `json:"title"`
+	Prompt         string     `json:"prompt"`
+	Agent          string     `json:"agent"`
+	Mode           string     `json:"mode"`
+	RepoRoot       string     `json:"repo_root"`
+	WorktreePath   string     `json:"worktree_path"`
+	Branch         string     `json:"branch"`
+	BaseBranch     string     `json:"base_branch"`
+	TicketKey      string     `json:"ticket_key,omitempty"`
+	TicketURL      string     `json:"ticket_url,omitempty"`
+	Status         string     `json:"status"`
+	PID            int        `json:"pid,omitempty"`
+	ExitCode       *int       `json:"exit_code,omitempty"`
+	PRURL          string     `json:"pr_url,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+	FinishedAt     *time.Time `json:"finished_at,omitempty"`
 }
 
 type TerminalSession struct {
@@ -130,6 +137,13 @@ CREATE INDEX IF NOT EXISTS message_queue_session_idx ON message_queue(session_id
 	if _, alterErr := s.db.Exec(`ALTER TABLE sessions ADD COLUMN mode TEXT NOT NULL DEFAULT 'chat'`); alterErr != nil && !strings.Contains(alterErr.Error(), "duplicate column") {
 		return fmt.Errorf("add session mode: %w", alterErr)
 	}
+	s.recoverProcesses()
+	if err := s.migrateActivity(); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`DELETE FROM message_queue WHERE status='dispatching' AND id IN (SELECT id FROM messages WHERE turn_id<>'')`); err != nil {
+		return err
+	}
 	if _, resetErr := s.db.Exec(`UPDATE message_queue SET status='queued', updated_at=? WHERE status='dispatching'`, encodeTime(time.Now().UTC())); resetErr != nil {
 		return resetErr
 	}
@@ -143,10 +157,28 @@ updated_at = ? WHERE status IN ('starting', 'running')`, time.Now().UTC().Format
 }
 
 func (s *Store) EnqueueMessage(message QueuedMessage) error {
-	_, err := s.db.Exec(`INSERT INTO message_queue(id,session_id,text,status,priority,created_at,updated_at)
+	if len(message.Text) > 256*1024 {
+		return fmt.Errorf("message exceeds 256 KiB")
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var count int
+	if err = tx.QueryRow(`SELECT COUNT(*) FROM message_queue WHERE session_id=?`, message.SessionID).Scan(&count); err != nil {
+		return err
+	}
+	if count >= 100 {
+		return fmt.Errorf("queue contains 100 messages")
+	}
+	_, err = tx.Exec(`INSERT INTO message_queue(id,session_id,text,status,priority,created_at,updated_at)
 VALUES(?,?,?,?,?,?,?)`, message.ID, message.SessionID, message.Text, message.Status, message.Priority,
 		encodeTime(message.CreatedAt), encodeTime(message.UpdatedAt))
-	return err
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) ListQueuedMessages(sessionID string) ([]QueuedMessage, error) {
@@ -167,6 +199,27 @@ FROM message_queue WHERE session_id=? ORDER BY CASE status WHEN 'dispatching' TH
 	return messages, rows.Err()
 }
 
+func (s *Store) EditQueuedMessage(sessionID, messageID, text string) error {
+	if len(text) > 256*1024 {
+		return fmt.Errorf("message exceeds 256 KiB")
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.Exec(`UPDATE message_queue SET text=?,updated_at=? WHERE id=? AND session_id=? AND status='queued'`, text, encodeTime(time.Now().UTC()), messageID, sessionID)
+	if err != nil {
+		return err
+	}
+	if err = requireAffected(result, "queued message"); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`UPDATE messages SET text=? WHERE id=? AND session_id=? AND turn_id=''`, text, messageID, sessionID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
 func (s *Store) PromoteQueuedMessage(sessionID, messageID string) error {
 	result, err := s.db.Exec(`UPDATE message_queue SET priority=(SELECT COALESCE(MAX(priority),0)+1 FROM message_queue WHERE session_id=?), updated_at=?
 WHERE id=? AND session_id=? AND status='queued'`, sessionID, encodeTime(time.Now().UTC()), messageID, sessionID)
@@ -222,22 +275,40 @@ func (s *Store) CompleteQueuedMessage(messageID string) error {
 
 func (s *Store) CreateSession(session Session) error {
 	_, err := s.db.Exec(`INSERT INTO sessions
-(id,title,prompt,agent,mode,repo_root,worktree_path,branch,base_branch,ticket_key,ticket_url,status,pid,created_at,updated_at)
-VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, session.ID, session.Title, session.Prompt, session.Agent, session.Mode,
+(id,title,prompt,agent,mode,repo_root,worktree_path,branch,base_branch,ticket_key,ticket_url,status,pid,created_at,updated_at,model,effort,service_tier,instructions)
+VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, session.ID, session.Title, session.Prompt, session.Agent, session.Mode,
 		session.RepoRoot, session.WorktreePath, session.Branch, session.BaseBranch, session.TicketKey,
-		session.TicketURL, session.Status, session.PID, encodeTime(session.CreatedAt), encodeTime(session.UpdatedAt))
+		session.TicketURL, session.Status, session.PID, encodeTime(session.CreatedAt), encodeTime(session.UpdatedAt), session.Model, session.Effort, session.ServiceTier, session.Instructions)
 	return err
 }
 
 func (s *Store) UpdateRuntime(id, status string, pid int, exitCode *int) error {
-	now := time.Now().UTC()
-	var finished any
-	if status == "completed" || status == "failed" || status == "stopped" {
-		finished = encodeTime(now)
+	return s.updateGeneration(id, 0, status, pid, exitCode)
+}
+func (s *Store) updateGeneration(id string, generation int64, status string, pid int, exitCode *int) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
 	}
-	_, err := s.db.Exec(`UPDATE sessions SET status=?, pid=?, exit_code=?, updated_at=?,
-finished_at=COALESCE(?, finished_at) WHERE id=?`, status, pid, exitCode, encodeTime(now), finished, id)
-	return err
+	defer tx.Rollback()
+	now := encodeTime(time.Now().UTC())
+	var finished any
+	if status == "completed" || status == "failed" || status == "stopped" || status == "interrupted" {
+		finished = now
+	}
+	result, err := tx.Exec(`UPDATE sessions SET status=?,pid=?,exit_code=?,updated_at=?,finished_at=? WHERE id=? AND (?=0 OR generation=?)`, status, pid, exitCode, now, finished, id, generation, generation)
+	if err != nil {
+		return err
+	}
+	count, _ := result.RowsAffected()
+	if count == 0 {
+		return nil
+	}
+	_, err = tx.Exec(`UPDATE turns SET status=?,exit_code=?,finished_at=? WHERE id=(SELECT current_turn_id FROM sessions WHERE id=?) AND status IN ('starting','running','waiting')`, status, exitCode, finished, id)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) UpdateMode(id, mode string) error {
@@ -248,6 +319,21 @@ func (s *Store) UpdateMode(id, mode string) error {
 	return requireAffected(result, "session")
 }
 
+func (s *Store) CompletePR(operationID, sessionID, url string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	now := encodeTime(time.Now().UTC())
+	if _, err = tx.Exec(`UPDATE operations SET status='completed',result=?,updated_at=? WHERE id=?`, url, now, operationID); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`UPDATE sessions SET pr_url=?,updated_at=? WHERE id=?`, url, now, sessionID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
 func (s *Store) SetPR(id, url string) error {
 	_, err := s.db.Exec(`UPDATE sessions SET pr_url=?, updated_at=? WHERE id=?`, url, encodeTime(time.Now().UTC()), id)
 	return err
@@ -255,7 +341,7 @@ func (s *Store) SetPR(id, url string) error {
 
 func (s *Store) ListSessions() ([]Session, error) {
 	rows, err := s.db.Query(`SELECT id,title,prompt,agent,mode,repo_root,worktree_path,branch,base_branch,
-ticket_key,ticket_url,status,pid,exit_code,pr_url,created_at,updated_at,finished_at
+ticket_key,ticket_url,status,pid,exit_code,pr_url,created_at,updated_at,finished_at,current_turn_id,generation,model,effort,service_tier,instructions
 FROM sessions ORDER BY updated_at DESC`)
 	if err != nil {
 		return nil, err
@@ -274,7 +360,7 @@ FROM sessions ORDER BY updated_at DESC`)
 
 func (s *Store) GetSession(id string) (Session, error) {
 	row := s.db.QueryRow(`SELECT id,title,prompt,agent,mode,repo_root,worktree_path,branch,base_branch,
-ticket_key,ticket_url,status,pid,exit_code,pr_url,created_at,updated_at,finished_at
+ticket_key,ticket_url,status,pid,exit_code,pr_url,created_at,updated_at,finished_at,current_turn_id,generation,model,effort,service_tier,instructions
 FROM sessions WHERE id=?`, id)
 	return scanSession(row)
 }
@@ -348,7 +434,7 @@ func scanSession(row scanner) (Session, error) {
 	var exitCode sql.NullInt64
 	err := row.Scan(&session.ID, &session.Title, &session.Prompt, &session.Agent, &session.Mode, &session.RepoRoot,
 		&session.WorktreePath, &session.Branch, &session.BaseBranch, &session.TicketKey, &session.TicketURL,
-		&session.Status, &session.PID, &exitCode, &session.PRURL, &created, &updated, &finished)
+		&session.Status, &session.PID, &exitCode, &session.PRURL, &created, &updated, &finished, &session.CurrentTurnID, &session.Generation, &session.Model, &session.Effort, &session.ServiceTier, &session.Instructions)
 	if err != nil {
 		return session, err
 	}

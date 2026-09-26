@@ -23,7 +23,7 @@ export function MessageQueue({
 
   return (
     <section className="message-queue" aria-label="Queued messages">
-      <span className="queue-progress">Step 1 / {messages.length + 1}</span>
+      <span className="queue-progress">{messages.length} queued · sends after this turn</span>
       <div className="queue-list">
         {messages.map((message, index) => (
           <article className={`queue-item ${sendingId === message.id ? "sending" : ""}`} key={message.id}>
@@ -31,7 +31,7 @@ export function MessageQueue({
             <span className="queue-index">{index + 1}</span>
             <p title={message.text}>{message.text}</p>
             <button type="button" className="queue-steer" onClick={() => onSteer(message.id)} disabled={sendingId === message.id} title="Move this message to the front of the queue">
-              <ArrowBendUpLeft /> <span>{sendingId === message.id ? "Sending" : "Steer"}</span>
+              <ArrowBendUpLeft /> <span>{sendingId === message.id ? "Sending" : "Send next"}</span>
             </button>
             <button type="button" className="queue-action" onClick={() => onRemove(message.id)} disabled={sendingId === message.id} aria-label={`Remove queued message ${index + 1}`} title="Remove from queue"><Trash /></button>
             <button type="button" className="queue-action" onClick={() => onEdit(message.id)} disabled={sendingId === message.id} aria-label={`Edit queued message ${index + 1}`} title="Edit message"><DotsThree /></button>

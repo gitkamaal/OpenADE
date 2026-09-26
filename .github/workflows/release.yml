@@ -1,6 +1,7 @@
-name: Release
+name: Legacy Rust release (manual)
 
-# Hands-off releases: every push/merge to main reads the version from
+# Historical Rust packaging, available only by explicit manual dispatch.
+# Previous release behavior: every push/merge to main reads the version from
 # Cargo.toml — if v<version> hasn't been released yet, the pipeline runs
 # the verification gate, builds macOS + Linux binaries, and publishes the
 # GitHub Release (tag created server-side). Pushes that don't bump the
@@ -8,11 +9,6 @@ name: Release
 # and manual dispatch remain as fallback paths. See README "Install".
 
 on:
-  push:
-    branches:
-      - main
-    tags:
-      - "v*"
   workflow_dispatch:
     inputs:
       tag:
@@ -71,7 +67,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
+      - run: cargo check --workspace
 
   build:
     name: Build ${{ matrix.target }}

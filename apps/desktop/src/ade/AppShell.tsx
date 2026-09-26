@@ -1,33 +1,27 @@
+import { Folder, Desktop } from "@phosphor-icons/react";
+import { Select } from "./Select";
 import {
   Pulse,
   ArrowUp,
   Check,
   Code,
-  Command,
-  Cpu,
-  DotsThree,
   FileCode,
   GitBranch,
   GitDiff,
   GithubLogo,
-  Lightning,
   ListMagnifyingGlass,
   Plus,
   Robot,
   SidebarSimple,
   SpinnerGap,
-  TerminalWindow,
   Ticket as TicketIcon,
   X,
 } from "@phosphor-icons/react";
-import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { CSSProperties, FormEvent, Suspense, useEffect, useRef, useState } from "react";
 import {
-  createSession,
+  createSession, getBranches,
   ExternalConversation,
-  getMeta,
-  listProjects,
   listPullRequests,
-  listSessions,
   scanWorkspace,
   Meta,
   projectName,
@@ -37,14 +31,17 @@ import {
   switchSessionSurface,
 } from "./api";
 import { SessionWorkspace } from "./SessionWorkspace";
-import { loadPreferences, Preferences, savePreferences, themeClass } from "./preferences";
-import { SettingsPage } from "./SettingsPage";
+import { loadPreferences, Preferences, savePreferences, themeClass, shortcutMatches, shouldSend } from "./preferences";
+import { SettingsNavigation, SettingsPage, SettingsSection } from "./SettingsPage";
 import { Page, Sidebar } from "./Sidebar";
+import { useEngine, refreshEngine } from "./engine-store";
+import { ModelPicker } from "./ModelPicker";
 import { SitesPage } from "./SitesPage";
 
 const agents = [
   { id: "claude", label: "Claude Code" },
-  { id: "codex", label: "Codex CLI" },
+  { id: "codex", label: "Codex" },
+  { id: "grok", label: "Grok" },
   { id: "copilot", label: "Copilot CLI" },
   { id: "opencode", label: "OpenCode" },
   { id: "shell", label: "Local shell" },
@@ -65,9 +62,16 @@ function AppShell() {
   const [projects, setProjects] = useState<string[]>([]);
   const [scannedProjects, setScannedProjects] = useState<string[]>([]);
   const [externalConversations, setExternalConversations] = useState<ExternalConversation[]>([]);
-  const [meta, setMeta] = useState<Meta | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const engine=useEngine();
+  const previousEngineError=useRef<string|null>(null);
+  const meta=engine.meta;
+  const [selectedId, setSelectedId] = useState<string | null>(()=>localStorage.getItem("openade.selected-session"));
+  useEffect(()=>{if(selectedId)localStorage.setItem("openade.selected-session",selectedId);else localStorage.removeItem("openade.selected-session");},[selectedId]);
+  const [sidebarOpen, setSidebarOpen] = useState(() => loadPreferences().sidebar_open);
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>("General");
+  const previousPage = useRef<{page:Page;id:string|null}>({page:"home",id:null});
+  const editorDirty = useRef(false);
+  const lastStatuses = useRef<Map<string,string> | null>(null);
   const [preferences, setPreferences] = useState<Preferences>(loadPreferences);
   const [error, setError] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
@@ -78,46 +82,21 @@ function AppShell() {
 
   useEffect(() => {
     mountedRef.current = true;
+    const dirty=(event:Event)=>{editorDirty.current=(event as CustomEvent<boolean>).detail;};
+    window.addEventListener("openade-editor-dirty",dirty);
+    const beforeUnload=(event:BeforeUnloadEvent)=>{if(editorDirty.current){event.preventDefault();event.returnValue="";}};
+    window.addEventListener("beforeunload",beforeUnload);
     return () => {
       mountedRef.current = false;
+      window.removeEventListener("openade-editor-dirty",dirty);
+      window.removeEventListener("beforeunload",beforeUnload);
       if (focusTimerRef.current !== undefined) window.clearTimeout(focusTimerRef.current);
     };
   }, []);
 
-  const refresh = useCallback(async () => {
-    try {
-      const [nextSessions, nextProjects, nextMeta] = await Promise.all([
-        listSessions(),
-        listProjects(),
-        getMeta(),
-      ]);
-      if (!mountedRef.current) return;
-      setSessions(nextSessions);
-      setProjects(nextProjects);
-      setMeta(nextMeta);
-      setConnected(true);
-      setError(null);
-    } catch (reason) {
-      if (!mountedRef.current) return;
-      setConnected(false);
-      setError(reason instanceof Error ? reason.message : String(reason));
-    }
-  }, []);
-
-  useEffect(() => {
-    let stopped = false;
-    let timer: number | undefined;
-    const poll = async () => {
-      await refresh();
-      if (!stopped) timer = window.setTimeout(() => void poll(), 1800);
-    };
-    void poll();
-    return () => {
-      stopped = true;
-      if (timer !== undefined) window.clearTimeout(timer);
-    };
-  }, [refresh]);
-
+  const refresh=refreshEngine;
+  useEffect(()=>{setSessions(engine.sessions);setProjects(engine.projects);setConnected(engine.connected);if(engine.error)setError(engine.error);else if(previousEngineError.current){const previous=previousEngineError.current;setError(current=>current===previous?null:current);}previousEngineError.current=engine.error;},[engine]);
+  useEffect(()=>{if(engine.connected&&!performance.getEntriesByName("openade-ready").length)performance.mark("openade-ready");},[engine.connected]);
   useEffect(() => {
     let stale = false;
     if (!preferences.project_root.trim()) {
@@ -137,28 +116,19 @@ function AppShell() {
     return () => { stale = true; };
   }, [preferences.project_root]);
 
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
-        event.preventDefault();
-        openComposer();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
-
   const selected = sessions.find((session) => session.id === selectedId) ?? null;
+  const visibleSessions = sessions.filter(item=>!preferences.archived_sessions.includes(item.id));
   const visibleProjects = [...new Set([...scannedProjects, ...projects])];
   const openSession = async (id: string) => {
     if (switchingSessionId) return;
+    if(editorDirty.current&&id!==selectedId){setError("Save or discard file changes before opening another session.");return;}
     const current = sessions.find((session) => session.id === id);
     if (!current) {
       setSelectedId(id);
       setPage("sessions");
       return;
     }
-    const preferredMode = preferredSessionMode(preferences, current.agent);
+    const preferredMode = current.agent==="shell"?current.mode:preferredSessionMode(preferences, current.agent);
     if (current.mode === preferredMode) {
       setSelectedId(id);
       setPage("sessions");
@@ -181,11 +151,15 @@ function AppShell() {
     setPreferences(next);
     savePreferences(next);
   };
+  useEffect(()=>{const native=window as typeof window & {go?:{main?:{App?:{SetAppearance?:(scheme:string,material:string)=>Promise<void>}}}};const media=matchMedia("(prefers-color-scheme: light)");const apply=()=>{const light=preferences.color_scheme==="light"||preferences.color_scheme==="system"&&media.matches;const material=preferences.glass==="default"?(light||preferences.dark_theme==="graphite"?"frosted":"opaque"):preferences.glass;void native.go?.main?.App?.SetAppearance?.(preferences.color_scheme,material);};apply();media.addEventListener("change",apply);return()=>media.removeEventListener("change",apply);},[preferences.color_scheme,preferences.dark_theme,preferences.glass]);
   const openPage = (next: Page) => {
+    if(editorDirty.current){setError("Save or discard file changes before leaving this session.");return;}
+    if(next === "settings" && page !== "settings") previousPage.current={page,id:selectedId};
     setPage(next);
     setSelectedId(null);
   };
   const openComposer = () => {
+    if(editorDirty.current){setError("Save or discard file changes before starting another session.");return;}
     setPage("home");
     setSelectedId(null);
     if (focusTimerRef.current !== undefined) window.clearTimeout(focusTimerRef.current);
@@ -194,6 +168,38 @@ function AppShell() {
       document.querySelector<HTMLTextAreaElement>("[data-main-composer]")?.focus();
     }, 0);
   };
+  const closeSettings = () => { setPage(previousPage.current.page); setSelectedId(previousPage.current.id); };
+  const toggleSidebar = () => { setSidebarOpen(value=>!value); };
+  useEffect(() => { savePreferences({...preferences,sidebar_open:sidebarOpen}); }, [sidebarOpen,preferences]);
+  useEffect(() => {
+    const onKey = (event:KeyboardEvent) => {
+      if(event.defaultPrevented || event.isComposing || event.repeat || (event.target instanceof Element && event.target.closest("[role=dialog]"))) return;
+      if(shortcutMatches(event,preferences.shortcuts.sidebar)){event.preventDefault();toggleSidebar();}
+      else if(shortcutMatches(event,preferences.shortcuts.settings)){event.preventDefault();page === "settings"?closeSettings():openPage("settings");}
+      else if(shortcutMatches(event,preferences.shortcuts.newSession)||(event.metaKey||event.ctrlKey)&&event.key.toLowerCase()==="k"){event.preventDefault();openComposer();}
+      else if(shortcutMatches(event,preferences.shortcuts.model)){event.preventDefault();window.dispatchEvent(new Event("openade-model-picker"));}
+      else if(shortcutMatches(event,preferences.shortcuts.focusComposer)&&!selectedId){event.preventDefault();document.querySelector<HTMLTextAreaElement>("[data-main-composer]")?.focus();}
+      else if(shortcutMatches(event,preferences.shortcuts.next)||shortcutMatches(event,preferences.shortcuts.previous)) {
+        event.preventDefault(); const index=visibleSessions.findIndex(s=>s.id===selectedId); const delta=shortcutMatches(event,preferences.shortcuts.previous)?-1:1;
+        const target=visibleSessions[(index+delta+visibleSessions.length)%visibleSessions.length]; if(target)void openSession(target.id);
+      } else if((event.metaKey||event.ctrlKey)&&/^[1-9]$/.test(event.key)){const target=visibleSessions[Number(event.key)-1];if(target){event.preventDefault();void openSession(target.id);}}
+    };
+    window.addEventListener("keydown",onKey);return ()=>window.removeEventListener("keydown",onKey);
+  },[preferences,page,selectedId,sessions,sidebarOpen]);
+  useEffect(() => {
+    if(!connected) return;
+    const before=lastStatuses.current; lastStatuses.current=new Map(sessions.map(s=>[s.id,s.status])); if(!before)return;
+    for(const session of sessions) {
+      if(!before.has(session.id)||before.get(session.id)===session.status)continue;
+      const completed=session.status==="completed";const input=session.status==="waiting";const failed=["failed","interrupted"].includes(session.status);
+      if(!(completed||input||failed))continue;
+      if(preferences.background_only&&document.hasFocus())continue;
+      if(preferences.notifications&&"Notification" in window&&Notification.permission==="granted")new Notification(completed?"Task completed":input?"Input required":"Session interrupted",{body:session.title});
+      if(preferences.sounds&&(completed?preferences.sound_completed:input?preferences.sound_input:preferences.sound_errors)) {
+        const audio=new AudioContext(); const oscillator=audio.createOscillator();const gain=audio.createGain();oscillator.frequency.value=failed?220:completed?660:440;gain.gain.setValueAtTime(.04,audio.currentTime);gain.gain.exponentialRampToValueAtTime(.001,audio.currentTime+.18);oscillator.connect(gain);gain.connect(audio.destination);oscillator.start();oscillator.stop(audio.currentTime+.2);oscillator.onended=()=>void audio.close();
+      }
+    }
+  },[sessions,connected,preferences]);
   const resumeExternalConversation = async (conversation: ExternalConversation) => {
     if (resumingConversationId) return;
     setResumingConversationId(`${conversation.provider}:${conversation.id}`);
@@ -218,13 +224,14 @@ function AppShell() {
   };
 
   return (
-    <div
-      className={`ade ${themeClass(preferences.theme)} ${sidebarOpen ? "" : "sidebar-collapsed"}`}
-      style={sidebarOpen ? undefined : { gridTemplateColumns: "minmax(0, 1fr)" }}
+    <div data-connected={connected}
+      className={`ade ${themeClass(preferences)} material-${preferences.glass} ${preferences.dark_theme === "dusk" && preferences.color_scheme!=="light" ? "default-opaque" : "default-frosted"} ${("go" in window) ? "native-window" : "browser-window"} ${sidebarOpen ? "" : "sidebar-collapsed"}`}
+      style={{"--sidebar-width":`${preferences.sidebar_width}px`,"--conversation-width":`${preferences.conversation_width}px`,"--code-font":`"${preferences.code_font}", monospace`,"--terminal-font":`"${preferences.terminal_font}", monospace`,"--code-size":`${preferences.code_size}px`,"--terminal-size":`${preferences.terminal_size}px`,"--interface-scale":preferences.interface_size/16,...(preferences.accent!=="default"?{"--accent":preferences.accent}:{}),fontFamily:preferences.interface_font==="System UI"?"-apple-system, BlinkMacSystemFont, sans-serif":undefined} as CSSProperties}
     >
-      {sidebarOpen && <Sidebar
+      {<div className="sidebar-clip" inert={!sidebarOpen}>{page === "settings" ? <SettingsNavigation section={settingsSection} onSection={setSettingsSection} onBack={closeSettings}/> : <Sidebar
+        preferences={preferences} onPreferences={next=>{if(editorDirty.current&&selectedId&&next.archived_sessions.includes(selectedId)){setError("Save or discard file changes before archiving.");return;}updatePreferences(next);if(selectedId&&next.archived_sessions.includes(selectedId))setSelectedId(null);}}
         page={page}
-        sessions={sessions}
+        sessions={visibleSessions}
         projects={visibleProjects}
         externalConversations={externalConversations}
         projectOrganization={preferences.project_organization}
@@ -238,59 +245,68 @@ function AppShell() {
         onProjectOrganization={(projectOrganization) => updatePreferences({ ...preferences, project_organization: projectOrganization })}
         onProjectSort={(projectSort) => updatePreferences({ ...preferences, project_sort: projectSort })}
         onNewSession={openComposer}
-        onToggle={() => setSidebarOpen(false)}
-      />}
+        onToggle={toggleSidebar}
+      />}</div>}
+      {sidebarOpen && page !== "settings" && <div className="sidebar-resizer" role="separator" aria-label="Resize sidebar" aria-orientation="vertical" onDoubleClick={()=>updatePreferences({...preferences,sidebar_width:256})} onPointerDown={event=>{event.currentTarget.setPointerCapture(event.pointerId);}} onPointerMove={event=>{if(event.currentTarget.hasPointerCapture(event.pointerId))updatePreferences({...preferences,sidebar_width:Math.min(400,Math.max(224,event.clientX))});}}/>}
 
       <main className="main-shell">
         {!sidebarOpen && <button className="sidebar-toggle icon-button" onClick={() => setSidebarOpen(true)} aria-label="Toggle sidebar"><SidebarSimple size={18} /></button>}
-        {!connected && <div className="connection-banner"><SpinnerGap className="spin" /> Connecting to the local daemon… {error}</div>}
+        {!connected && <div className="connection-banner"><SpinnerGap className="spin" /> {error || "Connecting to the local daemon…"}<button onClick={()=>{const bridge=window as typeof window & {go?:{main?:{App?:{Reconnect?:()=>Promise<void>}}}};void (bridge.go?.main?.App?.Reconnect?.()||Promise.resolve()).then(refresh).catch(reason=>setError(String(reason)));}}>Reconnect</button></div>}
         {connected && error && <button className="error-toast" onClick={() => setError(null)}><span>{error}</span><X /></button>}
         {selected ? (
-          <SessionWorkspace key={selected.id} session={selected} preferences={preferences} onBack={() => setSelectedId(null)} onRefresh={refresh} />
+          <Suspense fallback={<div className="opening-session" role="status">Opening session…</div>}><SessionWorkspace key={selected.id} session={selected} preferences={preferences} onPreferences={updatePreferences} onArchive={()=>{if(editorDirty.current){setError("Save or discard file changes before archiving.");return;}updatePreferences({...preferences,archived_sessions:[...preferences.archived_sessions,selected.id]});setSelectedId(null);}} onBack={() => {if(editorDirty.current){setError("Save or discard file changes before leaving this session.");return;}setSelectedId(null);}} onRefresh={refresh} /></Suspense>
         ) : page === "home" ? (
           <Home sessions={sessions} projects={visibleProjects} meta={meta} preferences={preferences} onCreated={(session) => { void refresh(); openSession(session.id); }} onOpen={openSession} onError={setError} />
         ) : page === "sites" ? (
           <SitesPage />
         ) : page === "sessions" ? (
-          <SessionsPage sessions={sessions} onOpen={openSession} />
+          <SessionsPage sessions={visibleSessions} onOpen={openSession} />
         ) : page === "agents" ? (
           <AgentsPage onUse={(prompt) => { sessionStorage.setItem("openade-template", prompt); setPage("home"); }} />
         ) : page === "review" ? (
           <ReviewPage projects={visibleProjects} sessions={sessions} />
         ) : (
-          <SettingsPage preferences={preferences} onChange={updatePreferences} />
+          <SettingsPage preferences={preferences} onChange={updatePreferences} section={settingsSection} meta={meta} sessions={sessions} onSetup={session=>{void refresh();setSelectedId(session.id);setPage("sessions");}} onRestore={id=>updatePreferences({...preferences,archived_sessions:preferences.archived_sessions.filter(value=>value!==id)})} />
         )}
       </main>
     </div>
   );
 }
 
-function Home({ sessions, projects, meta, preferences, onCreated, onOpen, onError }: { sessions: Session[]; projects: string[]; meta: Meta | null; preferences: Preferences; onCreated: (session: Session) => void; onOpen: (id: string) => void; onError: (error: string | null) => void }) {
-  const [prompt, setPrompt] = useState(() => sessionStorage.getItem("openade-template") ?? "");
-  const [repo, setRepo] = useState(projects[0] ?? "");
-  const [agent, setAgent] = useState(preferences.default_agent);
+function Home({ projects, meta, preferences, onCreated, onError }: { sessions: Session[]; projects: string[]; meta: Meta | null; preferences: Preferences; onCreated: (session: Session) => void; onOpen: (id: string) => void; onError: (error: string | null) => void }) {
+  const draft=useRef<{prompt?:string;repo?:string;agent?:string;model?:string;effort?:string;serviceTier?:string;checkout?:"current"|"worktree";base?:string}>((()=>{try{const value=JSON.parse(sessionStorage.getItem("openade.home-draft")||"{}");return value&&typeof value==="object"?value:{};}catch{return {};}})());
+  const [prompt, setPrompt] = useState(() => sessionStorage.getItem("openade-template") ?? draft.current.prompt ?? "");
+  const [repo, setRepo] = useState(draft.current.repo ?? projects[0] ?? "");
+  const [agent, setAgent] = useState(draft.current.agent ?? preferences.default_agent);
+  const [model,setModel]=useState(draft.current.model??"");const [effort,setEffort]=useState(draft.current.effort??"");const [serviceTier,setServiceTier]=useState(draft.current.serviceTier??"");const [checkout,setCheckout]=useState<"worktree"|"current">(draft.current.checkout==="current"?"current":"worktree");const [branches,setBranches]=useState<string[]>([]);const [currentBranch,setCurrentBranch]=useState("HEAD");
   const [ticket, setTicket] = useState("");
   const [ticketURL, setTicketURL] = useState("");
-  const [base, setBase] = useState("main");
+  const [base, setBase] = useState(draft.current.base??"HEAD");
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => { if (!repo && projects[0]) setRepo(projects[0]); }, [projects, repo]);
-  useEffect(() => { setAgent(preferences.default_agent); }, [preferences.default_agent]);
+  const repositoryEdited=useRef(false);
+  const updateRepository=(value:string)=>{repositoryEdited.current=true;setRepo(value);};
+  useEffect(() => { if (!repositoryEdited.current && !repo && projects[0]) setRepo(projects[0]); }, [projects, repo]);
+  const previousDefault=useRef(preferences.default_agent);
+  useEffect(() => { if(previousDefault.current!==preferences.default_agent){setAgent(preferences.default_agent);previousDefault.current=preferences.default_agent;} }, [preferences.default_agent]);
+  useEffect(()=>{sessionStorage.setItem("openade.home-draft",JSON.stringify({prompt,repo,agent,model,effort,serviceTier,checkout,base}));},[prompt,repo,agent,model,effort,serviceTier,checkout,base]);
   useEffect(() => {
     const preferredAvailable = meta?.agents.find((item) => item.id === preferences.default_agent)?.available;
     const installed = meta?.agents.find((item) => item.available)?.id;
-    if (preferredAvailable === false && installed) setAgent(installed);
-  }, [meta, preferences.default_agent]);
+    if ((preferredAvailable === false || preferences.disabled_providers.includes(preferences.default_agent)) && installed) setAgent(meta?.agents.find(item=>item.available&&!preferences.disabled_providers.includes(item.id))?.id ?? "shell");
+  }, [meta, preferences.default_agent, preferences.disabled_providers]);
 
+  useEffect(()=>{if(!repo.trim()){setBranches([]);return;}let stale=false;const timer=window.setTimeout(()=>void getBranches(repo).then(value=>{if(!stale){setBranches(value.branches);setCurrentBranch(value.current||"HEAD");}}).catch(()=>{if(!stale)setBranches([]);}),250);return()=>{stale=true;clearTimeout(timer);};},[repo]);
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (!prompt.trim() || !repo.trim()) return;
     setBusy(true);
     onError(null);
     try {
-      const session = await createSession({ title: prompt.trim().split("\n")[0].slice(0, 68), prompt: prompt.trim(), agent, mode: preferredSessionMode(preferences, agent), repo_root: repo.trim(), base_branch: base.trim() || "HEAD", ticket_key: ticket.trim(), ticket_url: ticketURL.trim() });
+      const session = await createSession({ title: prompt.trim().split("\n")[0].slice(0, 68), prompt: prompt.trim(), agent,model,effort,service_tier:serviceTier,checkout, mode: preferredSessionMode(preferences, agent), repo_root: repo.trim(), base_branch: base.trim() || "HEAD", ticket_key: ticket.trim(), ticket_url: ticketURL.trim() });
       sessionStorage.removeItem("openade-template");
+      sessionStorage.setItem("openade.home-draft",JSON.stringify({prompt:"",repo,agent,model,effort,serviceTier,checkout,base}));
       onCreated(session);
     } catch (reason) {
       onError(reason instanceof Error ? reason.message : String(reason));
@@ -300,54 +316,30 @@ function Home({ sessions, projects, meta, preferences, onCreated, onOpen, onErro
   const browse = async () => {
     try {
       const selected = await selectRepository();
-      if (selected) setRepo(selected);
+      if (selected) updateRepository(selected);
     } catch (reason) {
       onError(reason instanceof Error ? reason.message : String(reason));
     }
   };
 
-  const active = sessions.filter((item) => ["starting", "running", "waiting"].includes(item.status));
-  const visibleSessions = active.length ? active.slice(0, 3) : sessions.slice(0, 3);
   return <div className="home-page">
-    <div className="home-topline"><span className="eyebrow">Local agent workspace</span><span className="shortcut"><Command size={12} /> K to focus</span></div>
     <section className="home-hero">
-      <div className="home-heading"><span className="pulse-mark"><Lightning weight="fill" /></span><div><h1>What should an agent handle?</h1><p>Each task gets a durable session, its own branch, and an isolated worktree.</p></div></div>
+      <div className="home-context"><Select aria-label="Choose device" icon={<Desktop size={14}/>} value="local"><option value="local">Local workspace</option></Select><Select aria-label="Choose project" searchable icon={<Folder size={14}/>} value={repo} placeholder="Choose project" onChange={event=>updateRepository(event.target.value)} footer={<><input aria-label="Repository" placeholder="Or enter a repository path…" value={repo} onChange={event=>updateRepository(event.target.value)}/><button type="button" onClick={()=>void browse()}>Browse folders…</button></>}>{[...new Set([...projects,...(repo?[repo]:[])])].map(project=><option value={project} key={project}>{projectName(project)}</option>)}</Select></div>
       <form className="composer" onSubmit={submit}>
-        <textarea data-main-composer value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="Ask to make changes, link a ticket, or investigate a pull request…" rows={4} />
-        {optionsOpen && <div className="composer-options">
-          <label><span>Jira key</span><input value={ticket} onChange={(event) => setTicket(event.target.value.toUpperCase())} placeholder="ADE-123" /></label>
-          <label><span>Ticket URL</span><input value={ticketURL} onChange={(event) => setTicketURL(event.target.value)} placeholder="https://…/browse/ADE-123" /></label>
-          <label><span>Base branch</span><input value={base} onChange={(event) => setBase(event.target.value)} placeholder="main" /></label>
-        </div>}
-        <div className="composer-toolbar">
-          <div className="composer-left">
-            <button type="button" className={`round-action ${optionsOpen ? "active" : ""}`} onClick={() => setOptionsOpen((value) => !value)}><Plus size={17} /></button>
-            <div className="select-chip"><GitBranch size={15} /><input list="project-list" value={repo} onChange={(event) => setRepo(event.target.value)} placeholder="Choose repository" /><button type="button" className="browse-repo" onClick={browse}>Browse</button></div>
-            <datalist id="project-list">{projects.map((project) => <option value={project} key={project} />)}</datalist>
-          </div>
-          <div className="composer-right">
-            <label className="select-chip agent-chip"><Cpu size={15} /><select value={agent} onChange={(event) => setAgent(event.target.value)}>{agents.map((item) => <option value={item.id} key={item.id} disabled={item.id !== "shell" && meta?.agents.find((candidate) => candidate.id === item.id)?.available === false}>{item.label}</option>)}</select></label>
-            <button className="send-button" type="submit" disabled={busy || !prompt.trim() || !repo.trim()}>{busy ? <SpinnerGap className="spin" /> : <ArrowUp weight="bold" />}</button>
-          </div>
-        </div>
+        <textarea aria-label="New session prompt" data-main-composer value={prompt} onChange={event=>setPrompt(event.target.value)} placeholder="Do anything…" rows={3} onKeyDown={event=>{if(shouldSend(event,preferences.send_behavior)){event.preventDefault();event.currentTarget.form?.requestSubmit();}}}/>
+        {optionsOpen && <div className="composer-options"><label><span>Jira key</span><input value={ticket} onChange={event=>setTicket(event.target.value.toUpperCase())} placeholder="ADE-123"/></label><label><span>Ticket URL</span><input value={ticketURL} onChange={event=>setTicketURL(event.target.value)} placeholder="https://…/browse/ADE-123"/></label><label><span>Base branch</span><input value={base} onChange={event=>setBase(event.target.value)} placeholder="HEAD"/></label></div>}
+        <div className="composer-toolbar"><button aria-label="Session options" aria-expanded={optionsOpen} type="button" className="round-action" onClick={()=>setOptionsOpen(value=>!value)}><Plus size={17}/></button><ModelPicker providers={agents.filter(item=>!preferences.disabled_providers.includes(item.id)).map(item=>({...item,available:item.id==="shell"||meta?.agents.find(candidate=>candidate.id===item.id)?.available!==false}))} onProviderChange={value=>{setAgent(value);setModel("");setEffort("");setServiceTier("");}} serviceTier={serviceTier} onTierChange={setServiceTier} provider={agent} models={meta?.agents.find(item=>item.id===agent)?.models} model={model} effort={effort} onChange={(model,effort)=>{setModel(model);setEffort(effort);}}/><button className="send-button" type="submit" aria-label="Start session" disabled={busy||!prompt.trim()||!repo.trim()}>{busy?<SpinnerGap className="spin"/>:<ArrowUp weight="bold"/>}</button></div>
       </form>
-      <div className="trust-row"><span><Check /> Local-only transcripts</span><span><GitBranch /> Worktree isolated</span><span><TerminalWindow /> Bring your own CLI auth</span></div>
-    </section>
-    <section className="active-section">
-      <div className="section-heading"><div><h2>{active.length ? "Active sessions" : "Recent work"}</h2><p>{active.length ? "Agents currently running or waiting for you" : "Continue a session without searching for it"}</p></div><span>{active.length ? `${active.length} live` : "Up to date"}</span></div>
-      {visibleSessions.length ? <div className="active-grid">{visibleSessions.map((session) => <SessionCard key={session.id} session={session} onOpen={() => onOpen(session.id)} />)}</div> : <div className="quiet-empty"><strong>No sessions yet</strong><p>Describe a task above to create the first isolated worktree.</p></div>}
+      <div className="home-status"><Select icon={<Folder size={13}/>} aria-label="Checkout mode" value={checkout} onChange={e=>setCheckout(e.target.value as "current"|"worktree")}><option value="worktree">Isolated worktree</option><option value="current">Current checkout</option></Select><Select searchable icon={<GitBranch size={13}/>} aria-label="Starting branch" value={checkout==="current"?currentBranch:base} disabled={checkout==="current"} onChange={e=>setBase(e.target.value)}><option value="HEAD">HEAD</option>{[...new Set([...branches,...(currentBranch!=="HEAD"?[currentBranch]:[]),...(base!=="HEAD"?[base]:[])])].map(branch=><option key={branch}>{branch}</option>)}</Select></div>
     </section>
   </div>;
 }
 
 function preferredSessionMode(preferences: Preferences, agent: string): "chat" | "tui" {
+ if(!["claude","claude-code","codex","codex-cli","shell"].includes(agent))return "tui";
   return preferences.session_surface === "terminal" && ["codex", "codex-cli", "claude", "claude-code"].includes(agent)
     ? "tui"
     : "chat";
-}
-
-function SessionCard({ session, onOpen }: { session: Session; onOpen: () => void }) {
-  return <button className="session-card" onClick={onOpen}><div className="card-top"><span className={`status-dot ${session.status}`} /><span className="agent-label">{agentLabel(session.agent)}</span><DotsThree /></div><strong>{session.title}</strong><p>{projectName(session.repo_root)}</p><div className="card-bottom">{session.ticket_key ? <span className="ticket-chip"><TicketIcon />{session.ticket_key}</span> : <span />}<small>{relativeTime(session.updated_at)}</small></div></button>;
 }
 
 function SessionsPage({ sessions, onOpen }: { sessions: Session[]; onOpen: (id: string) => void }) {
@@ -355,7 +347,7 @@ function SessionsPage({ sessions, onOpen }: { sessions: Session[]; onOpen: (id: 
   const [status, setStatus] = useState("all");
   const filtered = sessions.filter((session) => (status === "all" || session.status === status) && `${session.title} ${session.repo_root} ${session.branch} ${session.ticket_key}`.toLowerCase().includes(query.toLowerCase()));
   return <div className="list-page"><PageHeader eyebrow="Workspace" title="Sessions" subtitle={`${sessions.length} indexed across ${new Set(sessions.map((item) => item.repo_root)).size} repositories`} />
-    <div className="list-toolbar"><label className="search-box"><ListMagnifyingGlass /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search sessions" /></label><select value={status} onChange={(event) => setStatus(event.target.value)}><option value="all">All statuses</option><option value="running">Running</option><option value="waiting">Waiting</option><option value="completed">Completed</option><option value="failed">Failed</option></select></div>
+    <div className="list-toolbar"><label className="search-box"><ListMagnifyingGlass /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search sessions" /></label><Select aria-label="Session status" value={status} onChange={(event) => setStatus(event.target.value)}><option value="all">All statuses</option><option value="running">Running</option><option value="waiting">Waiting</option><option value="completed">Completed</option><option value="failed">Failed</option></Select></div>
     <div className="session-table"><div className="table-head"><span>Task</span><span>Project</span><span>Linked work</span><span>Status</span><span>Updated</span></div>{filtered.map((session) => <button className="table-row" key={session.id} onClick={() => onOpen(session.id)} title={`Branch: ${session.branch}`}><span className="task-cell"><span className={`status-dot ${session.status}`} /><strong>{session.title}</strong><small>{agentLabel(session.agent)}</small></span><span>{projectName(session.repo_root)}</span><span className="linked-work-cell">{session.ticket_key ? <span className="ticket-chip"><TicketIcon />{session.ticket_key}</span> : <small>No linked ticket</small>}</span><span><StatusPill status={session.status} /></span><span>{relativeTime(session.updated_at)}</span></button>)}{filtered.length === 0 && <div className="table-empty">No sessions match these filters.</div>}</div>
   </div>;
 }
@@ -392,7 +384,7 @@ function ReviewPage({ projects, sessions }: { projects: string[]; sessions: Sess
   const draft = prs.filter((pr) => pr.isDraft).length;
   const needsReview = prs.filter((pr) => pr.reviewDecision === "REVIEW_REQUIRED").length;
   const filtered = prs.filter((pr) => `${pr.title} ${pr.author.login} ${pr.headRefName}`.toLowerCase().includes(query.toLowerCase()));
-  return <div className="review-page"><div className="review-top"><PageHeader eyebrow="GitHub" title="Pull requests" subtitle="Review and deliver changes across local projects" /><label className="repo-picker"><GithubLogo /><select value={repo} onChange={(event) => setRepo(event.target.value)}>{projects.map((project) => <option key={project} value={project}>{projectName(project)}</option>)}</select></label></div><div className="review-metrics"><Metric label="Open" value={prs.length} tone="green" /><Metric label="Needs review" value={needsReview} tone="orange" /><Metric label="Draft" value={draft} tone="neutral" /></div><div className="list-toolbar"><label className="search-box"><ListMagnifyingGlass /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search pull requests" /></label></div>{loading ? <div className="loading-state"><SpinnerGap className="spin" /> Loading pull requests…</div> : error ? <div className="inline-error">{error}</div> : <div className="pr-list">{filtered.map((pr) => { const linked = sessions.find((session) => session.branch === pr.headRefName); return <button key={pr.number} className="pr-row" onClick={() => window.open(pr.url, "_blank")}><span className="pr-number">#{pr.number}</span><span className="pr-main"><strong>{pr.title}</strong><small>{pr.headRefName} → {pr.baseRefName} · @{pr.author.login}</small></span>{linked?.ticket_key && <span className="ticket-chip"><TicketIcon />{linked.ticket_key}</span>}<StatusPill status={pr.isDraft ? "interrupted" : "running"} label={pr.isDraft ? "Draft" : "Open"} /></button>; })}{filtered.length === 0 && <div className="table-empty">No open pull requests found for this repository.</div>}</div>}</div>;
+  return <div className="review-page"><div className="review-top"><PageHeader eyebrow="GitHub" title="Pull requests" subtitle="Review and deliver changes across local projects" /><label className="repo-picker"><GithubLogo /><Select aria-label="Review repository" value={repo} onChange={(event) => setRepo(event.target.value)}>{projects.map((project) => <option key={project} value={project}>{projectName(project)}</option>)}</Select></label></div><div className="review-metrics"><Metric label="Open" value={prs.length} tone="green" /><Metric label="Needs review" value={needsReview} tone="orange" /><Metric label="Draft" value={draft} tone="neutral" /></div><div className="list-toolbar"><label className="search-box"><ListMagnifyingGlass /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search pull requests" /></label></div>{loading ? <div className="loading-state"><SpinnerGap className="spin" /> Loading pull requests…</div> : error ? <div className="inline-error">{error}</div> : <div className="pr-list">{filtered.map((pr) => { const linked = sessions.find((session) => session.branch === pr.headRefName); return <button key={pr.number} className="pr-row" onClick={() => window.open(pr.url, "_blank")}><span className="pr-number">#{pr.number}</span><span className="pr-main"><strong>{pr.title}</strong><small>{pr.headRefName} → {pr.baseRefName} · @{pr.author.login}</small></span>{linked?.ticket_key && <span className="ticket-chip"><TicketIcon />{linked.ticket_key}</span>}<StatusPill status={pr.isDraft ? "interrupted" : "running"} label={pr.isDraft ? "Draft" : "Open"} /></button>; })}{filtered.length === 0 && <div className="table-empty">No open pull requests found for this repository.</div>}</div>}</div>;
 }
 
 function Metric({ label, value, tone }: { label: string; value: number; tone: string }) { return <div className={`metric ${tone}`}><span>{label}</span><strong>{value}</strong></div>; }

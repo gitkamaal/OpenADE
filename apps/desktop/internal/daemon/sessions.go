@@ -22,25 +22,34 @@ import (
 const maxScrollback = 2 * 1024 * 1024
 
 type CreateSessionRequest struct {
-	Title      string `json:"title"`
-	Prompt     string `json:"prompt"`
-	Agent      string `json:"agent"`
-	Mode       string `json:"mode"`
-	ResumeID   string `json:"resume_id"`
-	RepoRoot   string `json:"repo_root"`
-	BaseBranch string `json:"base_branch"`
-	TicketKey  string `json:"ticket_key"`
-	TicketURL  string `json:"ticket_url"`
+	Model       string `json:"model"`
+	Effort      string `json:"effort"`
+	ServiceTier string `json:"service_tier"`
+	Checkout    string `json:"checkout"`
+	Title       string `json:"title"`
+	Prompt      string `json:"prompt"`
+	Agent       string `json:"agent"`
+	Mode        string `json:"mode"`
+	ResumeID    string `json:"resume_id"`
+	RepoRoot    string `json:"repo_root"`
+	BaseBranch  string `json:"base_branch"`
+	TicketKey   string `json:"ticket_key"`
+	TicketURL   string `json:"ticket_url"`
 }
 
 type liveSession struct {
-	mu          sync.Mutex
-	pty         *os.File
-	cmd         *exec.Cmd
-	scrollback  []byte
-	subscribers map[chan []byte]struct{}
-	readDone    chan struct{}
-	done        chan struct{}
+	mu                sync.Mutex
+	pty               *os.File
+	cmd               *exec.Cmd
+	scrollback        []byte
+	subscribers       map[chan []byte]struct{}
+	readDone          chan struct{}
+	done              chan struct{}
+	stopRequested     bool
+	terminationReason string
+	generation        int64
+	turnID            string
+	rawPTY            bool
 }
 
 type SessionManager struct {
@@ -49,6 +58,7 @@ type SessionManager struct {
 	mu        sync.RWMutex
 	queueMu   sync.Mutex
 	surfaceMu sync.Mutex
+	launchMu  sync.Mutex
 	live      map[string]*liveSession
 }
 
@@ -57,6 +67,18 @@ func NewSessionManager(store *Store, dataDir string) *SessionManager {
 }
 
 func (m *SessionManager) Create(ctx context.Context, request CreateSessionRequest) (Session, error) {
+	if isClaudeAgent(request.Agent) && request.Effort == "ultra" {
+		return Session{}, fmt.Errorf("unsupported Claude reasoning effort")
+	}
+	if err := validateModel(request.Model, request.Effort); err != nil {
+		return Session{}, err
+	}
+	if err := validateServiceTier(request.Agent, request.ServiceTier); err != nil {
+		return Session{}, err
+	}
+	if request.Checkout != "" && request.Checkout != "worktree" && request.Checkout != "current" {
+		return Session{}, fmt.Errorf("unknown checkout mode")
+	}
 	request.Title = strings.TrimSpace(request.Title)
 	request.RepoRoot = strings.TrimSpace(request.RepoRoot)
 	request.Agent = strings.TrimSpace(request.Agent)
@@ -83,20 +105,34 @@ func (m *SessionManager) Create(ctx context.Context, request CreateSessionReques
 	branch := makeBranch(request.TicketKey, request.Title, id)
 	repoName := filepath.Base(repo)
 	worktree := filepath.Join(m.dataDir, "worktrees", repoName, id)
-	if err := os.MkdirAll(filepath.Dir(worktree), 0o755); err != nil {
-		return Session{}, err
+	if request.Checkout == "current" {
+		worktree = repo
+		branch, err = gitOutput(ctx, repo, "branch", "--show-current")
+		if err != nil {
+			return Session{}, err
+		}
+		if branch == "" {
+			branch = "HEAD"
+		}
+	} else {
+		if err := os.MkdirAll(filepath.Dir(worktree), 0755); err != nil {
+			return Session{}, err
+		}
+		if err := createWorktree(ctx, repo, worktree, branch, request.BaseBranch); err != nil {
+			return Session{}, err
+		}
 	}
-	if err := createWorktree(ctx, repo, worktree, branch, request.BaseBranch); err != nil {
-		return Session{}, err
-	}
+
 	now := time.Now().UTC()
 	session := Session{ID: id, Title: request.Title, Prompt: request.Prompt, Agent: request.Agent, Mode: request.Mode,
 		RepoRoot: repo, WorktreePath: worktree, Branch: branch, BaseBranch: request.BaseBranch,
 		TicketKey: strings.ToUpper(strings.TrimSpace(request.TicketKey)), TicketURL: request.TicketURL,
-		Status: "starting", CreatedAt: now, UpdatedAt: now}
+		Status: "starting", CreatedAt: now, UpdatedAt: now, Model: request.Model, Effort: request.Effort, ServiceTier: request.ServiceTier}
 	if err := m.store.CreateSession(session); err != nil {
 		return Session{}, err
 	}
+	m.surfaceMu.Lock()
+	defer m.surfaceMu.Unlock()
 	var launchErr error
 	if request.ResumeID != "" {
 		launchErr = m.writeProviderSessionMarker(session, request.ResumeID)
@@ -145,6 +181,9 @@ func (m *SessionManager) writeProviderSessionMarker(session Session, providerID 
 	record := append([]byte{'\n'}, encoded...)
 	record = append(record, '\n')
 	_, err = file.Write(record)
+	if err == nil {
+		_, err = m.store.db.Exec(`UPDATE sessions SET provider_session_id=? WHERE id=?`, providerID, session.ID)
+	}
 	return err
 }
 
@@ -185,14 +224,49 @@ func (m *SessionManager) launch(session Session) error {
 }
 
 func (m *SessionManager) launchCommand(session Session, program string, args []string) error {
+	m.launchMu.Lock()
+	defer m.launchMu.Unlock()
+	if _, err := m.getLive(session.ID); err == nil {
+		return fmt.Errorf("session is already running")
+	}
+	startTree, _ := snapshotWorkingTree(context.Background(), session.WorktreePath)
+	turnID, generation, err := m.store.BeginTurn(session.ID, session.Prompt, session.queueMessageID, startTree)
+	if err != nil {
+		return err
+	}
+	if providerCapabilities(session.Agent).NativeChat {
+		args = append(providerOptions(session), args...)
+	}
 	cmd := exec.Command(program, args...)
 	cmd.Dir = session.WorktreePath
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "COLORTERM=truecolor", "OPENADE_SESSION_ID="+session.ID)
-	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 42, Cols: 120})
+	cmd.Env = processEnvironment("TERM=xterm-256color", "COLORTERM=truecolor", "OPENADE_SESSION_ID="+session.ID)
+	var ptmx *os.File
+	rawPTY := session.Mode == "tui" || !providerCapabilities(session.Agent).NativeChat
+	if rawPTY {
+		ptmx, err = pty.StartWithSize(cmd, &pty.Winsize{Rows: 42, Cols: 120})
+	} else {
+		var writer *os.File
+		ptmx, writer, err = os.Pipe()
+		if err == nil {
+			cmd.Stdout = writer
+			cmd.Stderr = writer
+			cmd.Stdin = nil
+			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+			err = cmd.Start()
+			_ = writer.Close()
+		}
+	}
 	if err != nil {
+		if ptmx != nil {
+			_ = ptmx.Close()
+		}
+		_ = m.store.UpdateRuntime(session.ID, "failed", 0, nil)
 		return fmt.Errorf("start %s: %w", session.Agent, err)
 	}
 	live := newLiveSession(ptmx, cmd)
+	live.rawPTY = rawPTY
+	live.generation = generation
+	live.turnID = turnID
 	if err := m.store.UpdateRuntime(session.ID, "running", cmd.Process.Pid, nil); err != nil {
 		terminateUnmanagedProcess(live)
 		return err
@@ -209,6 +283,8 @@ func (m *SessionManager) launchCommand(session Session, program string, args []s
 }
 
 func (m *SessionManager) Resume(session Session, prompt string) error {
+	m.surfaceMu.Lock()
+	defer m.surfaceMu.Unlock()
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" {
 		return fmt.Errorf("message is required")
@@ -217,11 +293,7 @@ func (m *SessionManager) Resume(session Session, prompt string) error {
 		return fmt.Errorf("session is already running")
 	}
 	transcriptPath := filepath.Join(m.dataDir, "transcripts", session.ID+".log")
-	transcript, err := os.ReadFile(transcriptPath)
-	if err != nil {
-		return fmt.Errorf("read session transcript: %w", err)
-	}
-	providerID := providerSessionID(transcript, session.Agent)
+	providerID := m.providerID(session)
 	if providerID == "" && isClaudeAgent(session.Agent) {
 		providerID = session.ID
 		if err := m.writeProviderSessionMarker(session, providerID); err != nil {
@@ -242,7 +314,9 @@ func (m *SessionManager) Resume(session Session, prompt string) error {
 	var program string
 	var args []string
 	if providerID == "" {
-		program, args, err = resumeLatestAgentCommand(session, prompt)
+		fresh := session
+		fresh.Prompt = prompt
+		program, args, err = agentCommand(fresh)
 	} else if needsFreshClaudeSession(session, providerID) {
 		program, args, err = startClaudeAgentCommand(session, providerID, prompt)
 	} else {
@@ -251,6 +325,7 @@ func (m *SessionManager) Resume(session Session, prompt string) error {
 	if err != nil {
 		return err
 	}
+	session.Prompt = prompt
 	return m.launchCommand(session, program, args)
 }
 
@@ -268,7 +343,7 @@ func (m *SessionManager) SwitchSurface(session Session, mode string) error {
 		return nil
 	}
 	if live, err := m.getLive(session.ID); err == nil && live.cmd.Process != nil {
-		if err := live.cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		if err := m.interrupt(live, "interrupted"); err != nil {
 			return err
 		}
 		deadline := time.Now().Add(5 * time.Second)
@@ -287,15 +362,11 @@ func (m *SessionManager) SwitchSurface(session Session, mode string) error {
 	}
 	session.Mode = mode
 	if mode == "chat" {
-		if err := m.store.UpdateRuntime(session.ID, "completed", 0, nil); err != nil {
-			return err
-		}
 		go func() { _ = m.DrainQueue(session.ID) }()
 		return nil
 	}
 
-	transcript, _ := os.ReadFile(filepath.Join(m.dataDir, "transcripts", session.ID+".log"))
-	providerID := providerSessionID(transcript, session.Agent)
+	providerID := m.providerID(session)
 	var program string
 	var args []string
 	var err error
@@ -320,14 +391,15 @@ func (m *SessionManager) SwitchSurface(session Session, mode string) error {
 }
 
 func (m *SessionManager) ResumeTUI(session Session) error {
+	m.surfaceMu.Lock()
+	defer m.surfaceMu.Unlock()
 	if session.Mode != "tui" {
 		return fmt.Errorf("session is not a direct TUI run")
 	}
 	if _, err := m.getLive(session.ID); err == nil {
 		return fmt.Errorf("session is already running")
 	}
-	transcript, _ := os.ReadFile(filepath.Join(m.dataDir, "transcripts", session.ID+".log"))
-	providerID := providerSessionID(transcript, session.Agent)
+	providerID := m.providerID(session)
 	var program string
 	var args []string
 	var err error
@@ -348,6 +420,7 @@ func (m *SessionManager) ResumeTUI(session Session) error {
 }
 
 func resumeAgentCommand(session Session, providerID, prompt string) (string, []string, error) {
+	prompt = conversationPrompt(session, prompt)
 	agent := strings.ToLower(session.Agent)
 	name := map[string]string{"claude-code": "claude", "codex-cli": "codex"}[agent]
 	if name == "" {
@@ -359,40 +432,45 @@ func resumeAgentCommand(session Session, providerID, prompt string) (string, []s
 	}
 	switch name {
 	case "claude":
-		return "/bin/sh", []string{"-lc", `exec "$1" --resume "$2" --print --verbose --output-format stream-json --include-partial-messages --permission-mode acceptEdits "$3" </dev/null`, "openade-claude-resume", program, providerID, prompt}, nil
+		return program, []string{"--resume", providerID, "--print", "--verbose", "--output-format", "stream-json", "--include-partial-messages", "--permission-mode", "acceptEdits", prompt}, nil
 	case "codex":
-		return "/bin/sh", []string{"-lc", `exec "$1" exec --json --sandbox workspace-write resume "$2" "$3" </dev/null`, "openade-codex-resume", program, providerID, prompt}, nil
+		return program, []string{"exec", "--json", "--sandbox", "workspace-write", "resume", providerID, prompt}, nil
 	default:
 		return "", nil, fmt.Errorf("follow-up messages are not supported for %s", session.Agent)
 	}
 }
 
 func startClaudeAgentCommand(session Session, providerID, prompt string) (string, []string, error) {
+	prompt = conversationPrompt(session, prompt)
 	program, err := resolveProgram("claude")
 	if err != nil {
 		return "", nil, err
 	}
-	return "/bin/sh", []string{"-lc", `exec "$1" --session-id "$2" --print --verbose --output-format stream-json --include-partial-messages --permission-mode acceptEdits "$3" </dev/null`, "openade-claude-start", program, providerID, prompt}, nil
+	return program, []string{"--session-id", providerID, "--print", "--verbose", "--output-format", "stream-json", "--include-partial-messages", "--permission-mode", "acceptEdits", prompt}, nil
 }
 
-func resumeLatestAgentCommand(session Session, prompt string) (string, []string, error) {
-	agent := strings.ToLower(session.Agent)
-	name := map[string]string{"claude-code": "claude", "codex-cli": "codex"}[agent]
-	if name == "" {
-		name = agent
+// A provider identity belongs to the session. Read a bounded prefix once for
+// legacy transcripts; subsequent turns never load the full transcript.
+func (m *SessionManager) providerID(session Session) string {
+	var id string
+	_ = m.store.db.QueryRow(`SELECT provider_session_id FROM sessions WHERE id=?`, session.ID).Scan(&id)
+	if id != "" {
+		return id
 	}
-	program, err := resolveProgram(name)
+	file, err := os.Open(filepath.Join(m.dataDir, "transcripts", session.ID+".log"))
 	if err != nil {
-		return "", nil, err
+		return ""
 	}
-	switch name {
-	case "claude":
-		return "/bin/sh", []string{"-lc", `exec "$1" --continue --print --verbose --output-format stream-json --include-partial-messages --permission-mode acceptEdits "$2" </dev/null`, "openade-claude-continue", program, prompt}, nil
-	case "codex":
-		return "/bin/sh", []string{"-lc", `exec "$1" exec --json --sandbox workspace-write resume --last "$2" </dev/null`, "openade-codex-resume-last", program, prompt}, nil
-	default:
-		return "", nil, fmt.Errorf("follow-up messages are not supported for %s", session.Agent)
+	defer file.Close()
+	scanner := bufio.NewScanner(io.LimitReader(file, 2*1024*1024))
+	scanner.Buffer(make([]byte, 4096), 1024*1024)
+	for scanner.Scan() {
+		if id = providerSessionID(scanner.Bytes(), session.Agent); id != "" {
+			_, _ = m.store.db.Exec(`UPDATE sessions SET provider_session_id=? WHERE id=?`, id, session.ID)
+			return id
+		}
 	}
+	return ""
 }
 
 func providerSessionID(transcript []byte, agent string) string {
@@ -417,6 +495,9 @@ func providerSessionID(transcript []byte, agent string) string {
 }
 
 func agentCommand(session Session) (string, []string, error) {
+	if providerCapabilities(session.Agent).NativeChat {
+		session.Prompt = conversationPrompt(session, session.Prompt)
+	}
 	agent := strings.ToLower(session.Agent)
 	if agent == "shell" {
 		if strings.TrimSpace(session.Prompt) != "" {
@@ -451,7 +532,10 @@ func agentCommand(session Session) (string, []string, error) {
 			}
 			return program, args, nil
 		default:
-			return "", nil, fmt.Errorf("direct TUI mode is only supported for Codex and Claude Code")
+			if session.Prompt != "" {
+				return program, []string{session.Prompt}, nil
+			}
+			return program, nil, nil
 		}
 	}
 	switch name {
@@ -465,14 +549,14 @@ func agentCommand(session Session) (string, []string, error) {
 		}
 	case "claude":
 		if session.Prompt != "" {
-			return "/bin/sh", []string{"-lc", `exec "$1" --name "$2" --print --verbose --output-format stream-json --include-partial-messages --permission-mode acceptEdits "$3" </dev/null`, "openade-claude", program, session.Title, session.Prompt}, nil
+			return program, []string{"--name", session.Title, "--print", "--verbose", "--output-format", "stream-json", "--include-partial-messages", "--permission-mode", "acceptEdits", session.Prompt}, nil
 		}
 		return program, []string{"--name", session.Title}, nil
 	case "codex":
 		if session.Prompt != "" {
 			// Codex reads stdin in exec mode even with a prompt. Keep stdout on the
 			// PTY for live events while closing only stdin so the run can begin.
-			return "/bin/sh", []string{"-lc", `exec "$1" exec --json --sandbox workspace-write "$2" </dev/null`, "openade-codex", program, session.Prompt}, nil
+			return program, []string{"exec", "--json", "--sandbox", "workspace-write", session.Prompt}, nil
 		}
 	default:
 		if session.Prompt != "" {
@@ -494,7 +578,7 @@ func tuiResumeCommand(session Session) (string, []string, error) {
 	}
 	switch agent {
 	case "codex":
-		return program, []string{"resume", "--last", "--no-alt-screen", "-C", session.WorktreePath}, nil
+		return program, []string{"--no-alt-screen", "-C", session.WorktreePath}, nil
 	case "claude":
 		return program, []string{"--session-id", session.ID, "--permission-mode", "acceptEdits"}, nil
 	default:
@@ -524,11 +608,15 @@ func needsFreshClaudeSession(session Session, providerID string) bool {
 }
 
 func resolveProgram(name string) (string, error) {
+	if name == "shell" {
+		return "/bin/sh", nil
+	}
 	if path, err := exec.LookPath(name); err == nil {
 		return path, nil
 	}
 	home, _ := os.UserHomeDir()
-	for _, candidate := range []string{filepath.Join(home, ".local", "bin", name), filepath.Join("/opt/homebrew/bin", name), filepath.Join("/usr/local/bin", name)} {
+	for _, candidate := range []string{filepath.Join(home, ".local", "bin", name),
+		filepath.Join(home, ".grok", "bin", name), filepath.Join("/opt/homebrew/bin", name), filepath.Join("/usr/local/bin", name)} {
 		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
 			return candidate, nil
 		}
@@ -544,18 +632,22 @@ func (m *SessionManager) readOutput(id string, live *liveSession, transcript *os
 		n, err := reader.Read(buf)
 		if n > 0 {
 			chunk := append([]byte(nil), buf[:n]...)
+			live.mu.Lock()
 			if transcript != nil {
 				_, _ = transcript.Write(chunk)
 			}
-			live.mu.Lock()
 			live.scrollback = append(live.scrollback, chunk...)
-			if len(live.scrollback) > maxScrollback {
-				live.scrollback = append([]byte(nil), live.scrollback[len(live.scrollback)-maxScrollback:]...)
+			if len(live.scrollback) > 256*1024 {
+				copy(live.scrollback, live.scrollback[len(live.scrollback)-128*1024:])
+				live.scrollback = live.scrollback[:128*1024]
 			}
+
 			for subscriber := range live.subscribers {
 				select {
 				case subscriber <- chunk:
 				default:
+					delete(live.subscribers, subscriber)
+					close(subscriber)
 				}
 			}
 			live.mu.Unlock()
@@ -571,8 +663,13 @@ func (m *SessionManager) wait(id string, live *liveSession, transcript *os.File)
 	// The agent may have left background children in its process group. Once the
 	// group leader exits, terminate any stragglers before releasing the PTY.
 	_ = signalProcessGroup(live, syscall.SIGTERM)
-	_ = live.pty.Close()
-	<-live.readDone
+	if live.rawPTY {
+		_ = live.pty.Close()
+		<-live.readDone
+	} else {
+		<-live.readDone
+		_ = live.pty.Close()
+	}
 	code := 0
 	status := "completed"
 	if err != nil {
@@ -583,12 +680,25 @@ func (m *SessionManager) wait(id string, live *liveSession, transcript *os.File)
 			code = 1
 		}
 	}
-	_ = m.store.UpdateRuntime(id, status, 0, &code)
+	live.mu.Lock()
+	if live.stopRequested {
+		status = live.terminationReason
+		if status == "" {
+			status = "stopped"
+		}
+	}
+	live.mu.Unlock()
 	m.mu.Lock()
-	delete(m.live, id)
+	if m.live[id] == live {
+		_ = m.store.updateGeneration(id, live.generation, status, 0, &code)
+		delete(m.live, id)
+	}
 	m.mu.Unlock()
 	if transcript != nil {
 		_ = transcript.Close()
+	}
+	if session, err := m.store.GetSession(id); err == nil {
+		_ = m.providerID(session)
 	}
 	live.mu.Lock()
 	for subscriber := range live.subscribers {
@@ -622,6 +732,7 @@ func (m *SessionManager) DrainQueue(id string) error {
 	if err != nil {
 		return err
 	}
+	session.queueMessageID = message.ID
 	if err := m.Resume(session, message.Text); err != nil {
 		_ = m.store.ReleaseQueuedMessage(message.ID)
 		return err
@@ -635,6 +746,9 @@ func (m *SessionManager) DrainAllQueues() {
 		return
 	}
 	for _, session := range sessions {
+		if session.Status == "stopped" {
+			continue
+		}
 		_ = m.DrainQueue(session.ID)
 	}
 }
@@ -644,6 +758,9 @@ func (m *SessionManager) Write(id, data string) error {
 	if err != nil {
 		return err
 	}
+	if !live.rawPTY {
+		return fmt.Errorf("native chat input uses the message queue")
+	}
 	_, err = io.WriteString(live.pty, data)
 	return err
 }
@@ -652,6 +769,9 @@ func (m *SessionManager) Resize(id string, rows, cols uint16) error {
 	live, err := m.getLive(id)
 	if err != nil {
 		return err
+	}
+	if !live.rawPTY {
+		return fmt.Errorf("native chat has no PTY to resize")
 	}
 	return pty.Setsize(live.pty, &pty.Winsize{Rows: rows, Cols: cols})
 }
@@ -664,25 +784,56 @@ func (m *SessionManager) Stop(id string) error {
 	if live.cmd.Process == nil {
 		return nil
 	}
-	return signalProcessGroup(live, syscall.SIGTERM)
+	return m.interrupt(live, "stopped")
+}
+
+func (m *SessionManager) interrupt(live *liveSession, reason string) error {
+	live.mu.Lock()
+	live.stopRequested = true
+	live.terminationReason = reason
+	live.mu.Unlock()
+	return stopProcessGroup(live)
+}
+
+func stopProcessGroup(live *liveSession) error {
+	if err := signalProcessGroup(live, syscall.SIGTERM); err != nil {
+		return err
+	}
+	go func() {
+		timer := time.NewTimer(time.Second)
+		defer timer.Stop()
+		select {
+		case <-live.done:
+			return
+		case <-timer.C:
+			if live.cmd.Process != nil {
+				_ = signalProcessGroup(live, syscall.SIGKILL)
+			}
+		}
+	}()
+	return nil
 }
 
 func (m *SessionManager) Shutdown(ctx context.Context) {
 	m.mu.RLock()
 	lives := make([]*liveSession, 0, len(m.live))
 	for _, live := range m.live {
+		live.mu.Lock()
+		live.stopRequested = true
+		live.terminationReason = "interrupted"
+		live.mu.Unlock()
 		lives = append(lives, live)
 	}
 	m.mu.RUnlock()
 	shutdownLiveProcesses(ctx, lives)
 }
 
-func (m *SessionManager) Subscribe(id string) ([]byte, <-chan []byte, func(), error) {
+func (m *SessionManager) Subscribe(id string, after int64) (Replay, <-chan []byte, func(), error) {
 	live, err := m.getLive(id)
 	if err != nil {
-		transcript, readErr := os.ReadFile(filepath.Join(m.dataDir, "transcripts", id+".log"))
+		transcript, readErr := readReplay(filepath.Join(m.dataDir, "transcripts", id+".log"), after)
 		if readErr != nil {
-			return nil, nil, nil, err
+			return Replay{}, nil, nil, err
 		}
 		closed := make(chan []byte)
 		close(closed)
@@ -690,9 +841,10 @@ func (m *SessionManager) Subscribe(id string) ([]byte, <-chan []byte, func(), er
 	}
 	ch := make(chan []byte, 128)
 	live.mu.Lock()
-	initial, readErr := os.ReadFile(filepath.Join(m.dataDir, "transcripts", id+".log"))
+	initial, readErr := readReplay(filepath.Join(m.dataDir, "transcripts", id+".log"), after)
 	if readErr != nil {
-		initial = append([]byte(nil), live.scrollback...)
+		initial = Replay{Data: append([]byte(nil), live.scrollback...), Reset: true}
+		initial.Cursor = int64(len(initial.Data))
 	}
 	live.subscribers[ch] = struct{}{}
 	live.mu.Unlock()
@@ -720,6 +872,7 @@ func (m *SessionManager) getLive(id string) (*liveSession, error) {
 func newLiveSession(ptmx *os.File, cmd *exec.Cmd) *liveSession {
 	return &liveSession{
 		pty:         ptmx,
+		rawPTY:      true,
 		cmd:         cmd,
 		subscribers: make(map[chan []byte]struct{}),
 		readDone:    make(chan struct{}),
@@ -784,4 +937,11 @@ func waitForLiveProcesses(ctx context.Context, lives []*liveSession) bool {
 		case <-ticker.C:
 		}
 	}
+}
+
+func conversationPrompt(session Session, prompt string) string {
+	if strings.TrimSpace(session.Instructions) == "" || strings.TrimSpace(prompt) == "" {
+		return prompt
+	}
+	return "Conversation instructions:\n" + session.Instructions + "\n\nUser message:\n" + prompt
 }

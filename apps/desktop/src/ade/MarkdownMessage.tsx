@@ -1,3 +1,4 @@
+import { copyText } from "./clipboard";
 import { Check, Copy } from "@phosphor-icons/react";
 import { isValidElement, ReactNode, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
@@ -28,6 +29,7 @@ export function MarkdownMessage({ children }: { children: string }) {
 
 function CodeBlock({ children }: { children: ReactNode }) {
   const [copied, setCopied] = useState(false);
+ const [copyFailed,setCopyFailed]=useState(false);
   const copyTimerRef = useRef<number | undefined>(undefined);
   const mountedRef = useRef(false);
   const text = textContent(children).replace(/\n$/, "");
@@ -44,7 +46,8 @@ function CodeBlock({ children }: { children: ReactNode }) {
   }, []);
 
   const copy = async () => {
-    await navigator.clipboard.writeText(text);
+    try{await copyText(text);}catch{if(mountedRef.current)setCopyFailed(true);return;}
+ setCopyFailed(false);
     if (!mountedRef.current) return;
     setCopied(true);
     if (copyTimerRef.current !== undefined) window.clearTimeout(copyTimerRef.current);
@@ -59,7 +62,7 @@ function CodeBlock({ children }: { children: ReactNode }) {
       <div className="markdown-code-head">
         <span>{language}</span>
         <button type="button" onClick={() => void copy()} aria-label="Copy code">
-          {copied ? <Check /> : <Copy />}{copied ? "Copied" : "Copy"}
+          {copied ? <Check /> : <Copy />}{copyFailed?"Unable to copy":copied ? "Copied" : "Copy"}
         </button>
       </div>
       <pre>{children}</pre>

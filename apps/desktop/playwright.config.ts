@@ -8,6 +8,7 @@ const root = path.dirname(fileURLToPath(import.meta.url));
 const tmpDir = path.resolve(root, "e2e/.tmp");
 const daemonPort = 7455;
 const uiPort = 5199;
+const sourceDir=process.env.OPENADE_E2E_SOURCE ?? root;
 
 if (process.env.OPENADE_E2E_PREPARED === undefined) {
   prepareWorld();
@@ -21,7 +22,7 @@ const executablePath = !process.env.CI && fs.existsSync(pinnedChromium)
 
 export default defineConfig({
   testDir: "e2e",
-  testMatch: "ade-lifecycle.spec.ts",
+  testMatch: ["ade-lifecycle.spec.ts","zeron-flows.spec.ts","engine-flows.spec.ts","performance.spec.ts","capture.spec.ts","parity-controls.spec.ts"],
   timeout: 60_000,
   expect: { timeout: 15_000 },
   workers: 1,
@@ -29,6 +30,7 @@ export default defineConfig({
   use: {
     baseURL: `http://127.0.0.1:${uiPort}`,
     trace: "retain-on-failure",
+    permissions:["clipboard-read","clipboard-write"],
   },
   projects: [{
     name: "chromium",
@@ -39,24 +41,30 @@ export default defineConfig({
   }],
   webServer: [
     {
-      command: `npm run build && go build -o e2e/.tmp/openade-e2e . && exec e2e/.tmp/openade-e2e --daemon --addr 127.0.0.1:${daemonPort} --data-dir ${path.join(tmpDir, "data")}`,
-      cwd: root,
+      command: `npm run build && go build -o ${path.join(tmpDir,"openade-e2e")} . && exec ${path.join(tmpDir,"openade-e2e")} --daemon --addr 127.0.0.1:${daemonPort} --data-dir ${path.join(tmpDir, "data")}`,
+      cwd: sourceDir,
       url: `http://127.0.0.1:${daemonPort}/api/health`,
       timeout: 180_000,
       reuseExistingServer: false,
       env: {
         PATH: `${path.join(tmpDir, "bin")}:${process.env.PATH ?? ""}`,
         SHELL: "/bin/sh",
+        OPENADE_AUTH_TOKEN:"openade-e2e-synthetic-token-2026",
+        OPENADE_PROVIDER_HOME:path.join(tmpDir,"provider-home"),
+        VITE_OPENADE_DAEMON_URL:`http://127.0.0.1:${daemonPort}`,
+        VITE_OPENADE_AUTH_TOKEN:"openade-e2e-synthetic-token-2026",
       },
     },
     {
-      command: `npm run dev -- --host 127.0.0.1 --port ${uiPort} --strictPort`,
-      cwd: root,
+      command: `npm run preview -- --host 127.0.0.1 --port ${uiPort} --strictPort`,
+      cwd: sourceDir,
       url: `http://127.0.0.1:${uiPort}`,
       timeout: 120_000,
       reuseExistingServer: false,
       env: {
         VITE_OPENADE_DAEMON_URL: `http://127.0.0.1:${daemonPort}`,
+        VITE_OPENADE_AUTH_TOKEN:"openade-e2e-synthetic-token-2026",
+
       },
     },
   ],

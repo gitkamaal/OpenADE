@@ -1,28 +1,31 @@
+import { ProviderIcon } from "./ProviderIcon";
+import { copyText } from "./clipboard";
 import {
   CaretDown,
   Check,
   Copy,
-  Cpu,
   Lightning,
   SpinnerGap,
   TerminalWindow,
   Wrench,
 } from "@phosphor-icons/react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { relativeTime, Session } from "./api";
-import { ChatActivity, parseChatTranscript } from "./chat-model";
+import { ChatActivity, createTranscriptParser } from "./chat-model";
 import { MarkdownMessage } from "./MarkdownMessage";
 
 export function ChatTimeline({ session, output, activityExpanded = false }: { session: Session; output: string; activityExpanded?: boolean }) {
   const running = ["starting", "running", "waiting"].includes(session.status);
-  const turns = useMemo(
-    () => parseChatTranscript(output, session.prompt, running),
-    [output, running, session.prompt],
-  );
+  const parser=useRef(createTranscriptParser(session.prompt));const previous=useRef("");const prompt=useRef(session.prompt);
+  if(prompt.current!==session.prompt||!output.startsWith(previous.current)){parser.current=createTranscriptParser(session.prompt);previous.current="";prompt.current=session.prompt;}
+  parser.current.append(output.slice(previous.current.length));previous.current=output;
+  const turns=parser.current.snapshot(running);
+  const [visibleCount,setVisibleCount]=useState(80);
 
   return (
     <div className="chat-timeline" aria-live="polite">
-      {turns.map((turn, index) =>
+      {turns.length>visibleCount&&<button className="load-earlier" onClick={()=>setVisibleCount(count=>count+80)}>Show earlier messages</button>}
+      {turns.slice(-visibleCount).map((turn, index) =>
         turn.role === "user" ? (
           <article className="chat-user-turn" key={turn.id}>
             <div>{turn.markdown}</div>
@@ -34,7 +37,7 @@ export function ChatTimeline({ session, output, activityExpanded = false }: { se
             markdown={turn.markdown}
             activities={turn.activities}
             streaming={Boolean(turn.streaming)}
-            agent={agentLabel(session.agent)}
+            agent={session.agent}
             activityExpanded={activityExpanded}
           />
         ),
@@ -43,7 +46,7 @@ export function ChatTimeline({ session, output, activityExpanded = false }: { se
   );
 }
 
-function AssistantTurn({
+const AssistantTurn=memo(function AssistantTurn({
   markdown,
   activities,
   streaming,
@@ -57,6 +60,7 @@ function AssistantTurn({
   activityExpanded: boolean;
 }) {
   const [copied, setCopied] = useState(false);
+ const [copyFailed,setCopyFailed]=useState(false);
   const copyTimerRef = useRef<number | undefined>(undefined);
   const mountedRef = useRef(false);
   const visibleMarkdown = useProgressiveMarkdown(markdown, streaming);
@@ -68,7 +72,8 @@ function AssistantTurn({
     };
   }, []);
   const copy = async () => {
-    await navigator.clipboard.writeText(markdown);
+    try{await copyText(markdown);}catch{if(mountedRef.current)setCopyFailed(true);return;}
+ setCopyFailed(false);
     if (!mountedRef.current) return;
     setCopied(true);
     if (copyTimerRef.current !== undefined) window.clearTimeout(copyTimerRef.current);
@@ -79,7 +84,7 @@ function AssistantTurn({
   };
   return (
     <article className="chat-assistant-turn">
-      <header><span className="agent-avatar"><Cpu weight="fill" /></span><strong>{agent}</strong></header>
+      <header><span className="agent-avatar"><ProviderIcon provider={agent}/></span><strong>{agentLabel(agent)}</strong></header>
       {activities.length > 0 && <ActivityGroup activities={activities} streaming={streaming} expanded={activityExpanded} />}
       {visibleMarkdown ? <MarkdownMessage>{visibleMarkdown}</MarkdownMessage> : streaming ? (
         <div className="native-thinking"><SpinnerGap className="spin" /> Working through the task…</div>
@@ -87,21 +92,23 @@ function AssistantTurn({
       {streaming && visibleMarkdown && <span className="streaming-cursor" aria-label="Streaming" />}
       {markdown && !streaming && (
         <div className="response-actions">
-          <button type="button" onClick={() => void copy()}>{copied ? <Check /> : <Copy />}<span>{copied ? "Copied" : "Copy"}</span></button>
+          <button type="button" onClick={() => void copy()}>{copied ? <Check /> : <Copy />}<span>{copyFailed?"Unable to copy":copied ? "Copied" : "Copy"}</span></button>
         </div>
       )}
     </article>
   );
-}
+});
 
 function ActivityGroup({ activities, streaming, expanded }: { activities: ChatActivity[]; streaming: boolean; expanded: boolean }) {
   const [open, setOpen] = useState(expanded && !streaming);
   useEffect(() => setOpen(streaming ? false : expanded), [expanded, streaming]);
+  const toolCount = activities.filter(activity => activity.kind === "command" || activity.kind === "tool").length;
+  const notice = activities.filter(activity => activity.kind === "notice").at(-1);
   return (
     <details className="activity-group" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
       <summary>
         {streaming ? <SpinnerGap className="spin" /> : <Check />}
-        <span>{streaming ? activities.at(-1)?.title ?? "Working" : `${activities.length} work step${activities.length === 1 ? "" : "s"}`}</span>
+        <span>{streaming ? activities.at(-1)?.title ?? "Working" : notice?.title ?? `${toolCount} tool${toolCount===1?"":"s"}${activities.some(a=>a.kind==="thinking")?" · Thought":""}`}</span>
         <CaretDown className="activity-caret" />
       </summary>
       <div className="activity-list">
