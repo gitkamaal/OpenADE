@@ -50,20 +50,23 @@ type liveSession struct {
 	generation        int64
 	turnID            string
 	rawPTY            bool
+	codex             *codexConversation
 }
 
 type SessionManager struct {
-	store     *Store
-	dataDir   string
-	mu        sync.RWMutex
-	queueMu   sync.Mutex
-	surfaceMu sync.Mutex
-	launchMu  sync.Mutex
-	live      map[string]*liveSession
+	store      *Store
+	dataDir    string
+	mu         sync.RWMutex
+	queueMu    sync.Mutex
+	surfaceMu  sync.Mutex
+	launchMu   sync.Mutex
+	live       map[string]*liveSession
+	providerMu sync.Mutex
+	codex      map[string]*codexConversation
 }
 
 func NewSessionManager(store *Store, dataDir string) *SessionManager {
-	return &SessionManager{store: store, dataDir: dataDir, live: make(map[string]*liveSession)}
+	return &SessionManager{store: store, dataDir: dataDir, live: make(map[string]*liveSession), codex: make(map[string]*codexConversation)}
 }
 
 func (m *SessionManager) Create(ctx context.Context, request CreateSessionRequest) (Session, error) {
@@ -267,6 +270,9 @@ func (m *SessionManager) launchCommand(session Session, program string, args []s
 	if _, err := m.getLive(session.ID); err == nil {
 		return fmt.Errorf("session is already running")
 	}
+	if session.Mode == "chat" && (session.Agent == "codex" || session.Agent == "codex-cli") && supportsCodexServer(program) {
+		return m.startCodexTurn(session, program)
+	}
 	var startTree string
 	if session.Branch != "" {
 		startTree, _ = snapshotWorkingTree(context.Background(), session.WorktreePath)
@@ -398,6 +404,7 @@ func (m *SessionManager) SwitchSurface(session Session, mode string) error {
 			return fmt.Errorf("timed out stopping the current %s surface", session.Mode)
 		}
 	}
+	m.closeCodex(session.ID)
 	if err := m.store.UpdateMode(session.ID, mode); err != nil {
 		return err
 	}
@@ -833,6 +840,9 @@ func (m *SessionManager) interrupt(live *liveSession, reason string) error {
 	live.stopRequested = true
 	live.terminationReason = reason
 	live.mu.Unlock()
+	if live.codex != nil {
+		return live.codex.interrupt(reason)
+	}
 	return stopProcessGroup(live)
 }
 
@@ -866,6 +876,15 @@ func (m *SessionManager) Shutdown(ctx context.Context) {
 		lives = append(lives, live)
 	}
 	m.mu.RUnlock()
+	m.providerMu.Lock()
+	clients := make([]*codexConversation, 0, len(m.codex))
+	for _, c := range m.codex {
+		clients = append(clients, c)
+	}
+	m.providerMu.Unlock()
+	for _, c := range clients {
+		c.close()
+	}
 	shutdownLiveProcesses(ctx, lives)
 }
 

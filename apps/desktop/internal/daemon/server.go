@@ -162,6 +162,8 @@ func (d *Daemon) routes() http.Handler {
 	mux.HandleFunc("POST /api/projects/scan", d.handleScanProjects)
 	mux.HandleFunc("GET /api/sessions/{id}", d.handleGetSession)
 	mux.HandleFunc("PATCH /api/sessions/{id}", d.handleSessionDetails)
+	mux.HandleFunc("GET /api/sessions/{id}/provider-state", d.handleProviderState)
+	mux.HandleFunc("POST /api/sessions/{id}/provider-requests/{requestID}", d.handleProviderReply)
 	mux.HandleFunc("GET /api/sessions/{id}/stream", d.handleStream)
 	mux.HandleFunc("POST /api/sessions/{id}/input", d.handleInput)
 	mux.HandleFunc("POST /api/sessions/{id}/messages", d.handleMessage)
@@ -256,7 +258,14 @@ func (d *Daemon) handleMeta(w http.ResponseWriter, r *http.Request) {
 	agents := []map[string]any{}
 	for _, name := range []string{"claude", "codex", "grok", "copilot", "opencode", "shell"} {
 		path, err := resolveProgram(name)
-		agents = append(agents, map[string]any{"id": name, "available": err == nil, "path": path, "capabilities": providerCapabilities(name), "models": providerModels(name)})
+		capabilities := providerCapabilities(name)
+		if name == "codex" && err == nil && supportsCodexServer(path) {
+			capabilities.PersistentTurns = true
+			capabilities.MidTurnSteering = true
+			capabilities.Usage = true
+			capabilities.Transport = "app-server-stdio"
+		}
+		agents = append(agents, map[string]any{"id": name, "available": err == nil, "path": path, "capabilities": capabilities, "models": providerModels(name)})
 	}
 	_, ghErr := resolveProgram("gh")
 	writeJSON(w, http.StatusOK, map[string]any{"agents": agents, "github_available": ghErr == nil, "data_dir": d.config.DataDir})
@@ -465,6 +474,14 @@ func (d *Daemon) handleDeleteQueuedMessage(w http.ResponseWriter, r *http.Reques
 
 func (d *Daemon) handleSteerQueuedMessage(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.PathValue("id")
+	if handled, err := d.sessions.steerCodex(sessionID, r.PathValue("messageID")); handled {
+		if err != nil {
+			writeError(w, 409, err)
+		} else {
+			w.WriteHeader(204)
+		}
+		return
+	}
 	if err := d.store.PromoteQueuedMessage(sessionID, r.PathValue("messageID")); err != nil {
 		writeError(w, http.StatusConflict, err)
 		return

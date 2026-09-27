@@ -12,7 +12,7 @@ import (
 	"strings"
 )
 
-const EngineProtocol = 6
+const EngineProtocol = 7
 
 func ProfileID(dataDir string) string {
 	root, _ := filepath.Abs(dataDir)

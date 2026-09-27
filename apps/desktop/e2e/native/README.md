@@ -12,8 +12,8 @@ From `apps/desktop`, with a compatible macOS SDK and the Wails CLI on PATH:
 OPENADE_VISUAL_E2E=1 build/bin/OpenADE.app/Contents/MacOS/OpenADE
 ```
 
-Use an isolated OpenADE profile when creating test sessions. Inspect Transparent,
-Frosted and Liquid Glass against the bands, open model/branch menus, scroll a
+Use an isolated OpenADE profile when creating test sessions. Inspect Frosted,
+Liquid Glass and Opaque against the bands, open model/branch menus, scroll a
 file and transcript, open/type/close a terminal, resize the regular window,
 and switch through Opaque, Light, Dark and System. Verify focus and text clarity.
 On macOS 26+ the Liquid Glass backing is an `NSGlassEffectView` over a public
@@ -38,5 +38,4 @@ wails build -m -skipbindings -s
 the WebKit host inside the regular window. This makes actual WebKit alpha,
 foreground opacity, editor/terminal compositing and the Opaque control testable
 with window-only captures. It is a content-alpha fixture, not a screenshot of
-the desktop or an emulation of behind-window blur. Transparent intentionally
-removes both native effect views and keeps a clear, non-opaque NSWindow.
+the desktop or an emulation of behind-window blur. Legacy Transparent preferences migrate to Frosted; clear mode is no longer offered.

@@ -26,6 +26,7 @@ export function createTranscriptParser(initialPrompt:string){
   let assistant = newAssistant(0);
   let partial = "";
   let finalMessage = "";
+  let providerMessages=new Map<string,string>();
 
   // Strip terminal escapes one line at a time. A raw TUI can leave an OSC
   // sequence unterminated; stripping the entire transcript at once would then
@@ -54,17 +55,20 @@ export function createTranscriptParser(initialPrompt:string){
       });
       assistant = newAssistant(turns.length);
       partial = "";
-      finalMessage = "";
+      finalMessage = "";providerMessages=new Map();
       return;
     }
 
     const type = String(event.type ?? "");
+    if(type==="openade.agent_delta"||type==="openade.agent_message"){const id=String(event.id??"message"),text=String(event.text??"");providerMessages.set(id,type==="openade.agent_delta"?(providerMessages.get(id)??"")+text:text);finalMessage=[...providerMessages.values()].filter(Boolean).join("\n\n");}
+
     const item = isRecord(event.item) ? event.item : null;
     if (type === "error" || type === "turn.failed") {
       const error = isRecord(event.error) ? event.error : event;
       const message = String(error.message ?? event.message ?? "Provider failed to complete this turn").slice(0, 2000);
       addActivity(assistant, "notice", noticeTitle(message), message);
     }
+    if(type==="openade.tool")addActivity(assistant,"tool",String(event.title??"Used a tool"),String(event.detail??""));
     if (type === "thread.started" || type === "turn.started") {
       addActivity(assistant, "thinking", "Thinking");
     }

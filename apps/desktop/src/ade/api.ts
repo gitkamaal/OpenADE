@@ -90,7 +90,7 @@ export interface QueuedMessage {
   id: string;
   session_id: string;
   text: string;
-  status: "queued" | "dispatching";
+  status: "queued" | "dispatching" | "provider-starting" | "steering" | "uncertain";
   priority: number;
   created_at: string;
   updated_at: string;
@@ -390,3 +390,9 @@ export const fileMediaURL=(sessionId:string,path:string)=>`/api/sessions/${encod
 // Media bytes use the same private header as JSON requests. Bearer tokens must
 // not appear in image URLs, accessibility trees, captures or the browser cache.
 export async function fetchMedia(source:string,signal:AbortSignal){await engineConnection();const path=new URL(source,DAEMON_URL);if(!/^\/api\/(?:attachments\/[^/]+\/media|sessions\/[^/]+\/file-media)$/.test(path.pathname))throw Error("Unsupported image source.");path.searchParams.delete("token");const response=await fetch(DAEMON_URL+path.pathname+path.search,{signal,headers:{Authorization:`Bearer ${authToken}`}});if(!response.ok)throw Error("Image unavailable.");return response.blob();}
+
+export interface ProviderQuestion {id:string;header:string;question:string;isOther:boolean;isSecret:boolean;options:{label:string;description:string}[]|null}
+export interface ProviderRequest {id:string;generation:number;kind:"question"|"approval";title:string;detail:string;questions:ProviderQuestion[];decisions:string[]}
+export interface ProviderState {connected:boolean;steering:boolean;requests:ProviderRequest[];context:{tokens:number|null;window:number|null}}
+export const getProviderState=(id:string,signal?:AbortSignal)=>request<ProviderState>(`/api/sessions/${id}/provider-state`,{signal});
+export const replyToProvider=(id:string,question:ProviderRequest,reply:{answers?:Record<string,string[]>;decision?:string})=>request<void>(`/api/sessions/${id}/provider-requests/${question.id}`,{method:"POST",body:JSON.stringify({generation:question.generation,...reply})});

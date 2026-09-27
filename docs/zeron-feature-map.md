@@ -28,14 +28,14 @@ Pinned Zeron v0.2.92, `68ef78bb1e6fa0b84feeb68c382230f8c560f96a`. Based on the s
 | Chat context menu | Partial | Sidebar/SessionWorkspace | Pin/section/archive at pointer; rename/instructions in session header. Source rename/delete/source details hierarchy differs. |
 
 | New chat and drafts | Implemented | AppShell/SessionWorkspace | New-chat choices persist through Settings; bounded session text draft memory through navigation. |
-| Draft attachment persistence | Partial | Attachments/daemon attachments | PNG/JPEG/GIF picker/drop/paste upload, durable staged strip, navigation/restart persistence, synchronous submit guards, lazy authenticated thumbnails and keyboard-focused lightbox. Source WebP/SVG/BMP/TIFF attachments and native structured provider image payloads remain gaps. |
+| Draft attachment persistence | Partial | Attachments/daemon attachments | PNG/JPEG/GIF picker/drop/paste upload, durable staged strip, navigation/restart persistence, synchronous submit guards, lazy authenticated thumbnails and keyboard-focused lightbox. Codex app-server receives typed localImage payloads; source WebP/SVG/BMP/TIFF formats and other structured provider image payloads remain gaps. |
 | Model/provider dropdown | Partial | ModelPicker | Custom searchable menu, provider rail, favorites, keyboard selection, focus return. Source complete provider catalogs/traits/hover behavior differs. |
 | Reasoning and service tier | Implemented | ModelPicker/SessionWorkspace | Advertised Codex model options persist and affect real fixture CLI arguments. |
 | Composer auto-grow/compact flip | Partial | AppShell/SessionWorkspace | Source 49px pill, 200px text capacity, 32px hysteresis, 150ms resize settle, 60–260px thread textarea and 76px new-chat minimum; controls move right/left and metadata sits below. Staged image attachments are implemented; exact animated morph remains different. |
 | Send/new turn/Stop | Implemented | SessionWorkspace/api | Real daemon turn lifecycle; startup failure shown, retry starts fresh identity. |
-| Steering active provider run | Partial | MessageQueue/daemon | Explicit queued next turns; not source persistent app-server/ACP mid-run steering. |
+| Steering active provider run | Partial | MessageQueue/daemon | Real persistent Codex app-server turn/steer with expected-turn ownership, atomic queue claims and uncertain-delivery quarantine. Older CLI Send next remains a queued turn; ACP/other providers remain gaps. |
 | Queued messages | Implemented | MessageQueue | Queue session/turn association, edit/remove/send-next and restart persistence. |
-| Question/approval wizard | Gap | composer.rs/harness | No source paged question wizard, number-key responses or durable approval control. |
+| Question/approval wizard | Partial | ProviderInteraction/daemon codex_server | Supported Codex uses paged custom questions, number-key choices, private answers and explicit command approvals with full command/cwd. Stale/duplicate replies fail; unknown scopes, network/extra permissions/stdin and file approvals without complete patch presentation are rejected. Historical question chips and other-provider wizards remain gaps. |
 | Skills and slash completion | Partial | AgentCommandMenu | Owning-worktree discovery and insertion; no all-harness completion preferences or full source advertised command control. |
 | Engine-injected MCP and linked tool activities | Partial | harness/engine MCP injection/daemon chat events | Existing provider CLI configuration can supply MCP tools and activity renders locally. Source engine injection, advertised tools and linked-child execution are not bridged. No active source application MCP registry/settings UI was found. |
 | Thread naming/custom naming models | Gap | settings/thread_naming.rs | Explicit titles and rename; no source automatic naming configuration. |
@@ -44,7 +44,7 @@ Pinned Zeron v0.2.92, `68ef78bb1e6fa0b84feeb68c382230f8c560f96a`. Based on the s
 | Transcript virtualization | Partial | ChatTimeline | Bounded 80 article window; not source variable-height doc projection/minimap algorithm. |
 | Message rail/minimap | Implemented | MessageRail/ChatTimeline | Source prompt ticks, active reading marker, hover/focus previews, older-turn navigation and responsive hiding. Full variable-height transcript virtualization remains a separate partial area. |
 | Activity folding | Partial | ChatTimeline | Compact/expanded thinking/tool summaries; source per-tool guides and nested subagent detail differ. |
-| Context usage display | Gap | context_usage | No source context capacity/compaction telemetry. |
+| Context usage display | Partial | ProviderInteraction/daemon codex_server | Actual Codex last usage/context-window telemetry, 16px ring, anchored custom popup and restart persistence. Unknown capacity stays unknown; context compaction and other-provider telemetry remain gaps. |
 | Generated images and attachment lightbox | Partial | Attachments/daemon file_media | Local authenticated image lightbox with owner-scoped retry/blob cache, bounded zoom/pan, fit/actual size, arrows/0/Escape and focus return. Structured generated-image ingestion and the full source format set remain absent. |
 | Chat links to embedded browser | Implemented | MarkdownMessage/WebLinkContext/WorkspacePanels | Plain HTTP(S) chat/Markdown links route to the embedded browser; modifiers open externally. Preference persists and relative Markdown images stay scoped to the owning worktree. |
 | Transcript timestamp/selection/context menus | Partial | MarkdownMessage | Basic copy/text selection; source timestamp transitions and full per-message menus differ. |
@@ -69,7 +69,7 @@ Pinned Zeron v0.2.92, `68ef78bb1e6fa0b84feeb68c382230f8c560f96a`. Based on the s
 | Direct TUI | Implemented | SessionWorkspace/Terminal | Exclusive native chat/TUI transports and resume provider identity; switch interrupts old turn. |
 | Provider install/sign-in/enable | Partial | SettingsPage | Installed CLI detection, links, enable/default choice and interactive setup; source all provider-specific preferences differ. |
 | Provider account switch/forget/quotas | Gap | settings/accounts/account_usage | Existing CLI identity only; no account vault/switch/forget or quota meters. |
-| Claude/Codex adapters | Partial | daemon | Existing chat CLI execution/resume verified with synthetic adapters; source durable app-server/stream protocol capabilities not fully replicated. |
+| Claude/Codex adapters | Partial | daemon | Codex 0.156+ persistent app-server initialize/thread/turn/start/steer/interrupt, typed inputs and ordered completion/ACK recovery verified with synthetic stdio adapter. Older Codex and Claude retain legacy CLI; complete Claude SDK/all-source protocol capabilities remain gaps. |
 | Grok/Copilot/OpenCode/Shell | Partial | daemon/ModelPicker | CLI/TUI surfaces; no complete source per-harness advertised model/option capabilities. |
 | Cursor/Devin/Hermes/Pi/Antigravity ACP | Gap | harness | No source ACP adapters or complete native catalogs. |
 | Local devices | Partial | SettingsPage | Local workspace status only; source device rename/presence/copy/targeting absent. |

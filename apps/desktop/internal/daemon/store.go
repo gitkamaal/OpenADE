@@ -105,6 +105,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   updated_at TEXT NOT NULL,
   finished_at TEXT
 );
+CREATE TABLE IF NOT EXISTS provider_context(session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,state TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS sessions_updated_idx ON sessions(updated_at DESC);
 CREATE INDEX IF NOT EXISTS sessions_repo_idx ON sessions(repo_root, updated_at DESC);
 CREATE INDEX IF NOT EXISTS sessions_ticket_idx ON sessions(ticket_key) WHERE ticket_key <> '';
@@ -137,6 +138,9 @@ CREATE INDEX IF NOT EXISTS message_queue_session_idx ON message_queue(session_id
 	}
 	if _, alterErr := s.db.Exec(`ALTER TABLE sessions ADD COLUMN mode TEXT NOT NULL DEFAULT 'chat'`); alterErr != nil && !strings.Contains(alterErr.Error(), "duplicate column") {
 		return fmt.Errorf("add session mode: %w", alterErr)
+	}
+	if _, err := s.db.Exec(`UPDATE message_queue SET status='uncertain' WHERE status IN ('steering','provider-starting')`); err != nil {
+		return err
 	}
 	s.recoverProcesses()
 	if err := s.migrateActivity(); err != nil {
@@ -231,7 +235,7 @@ WHERE id=? AND session_id=? AND status='queued'`, sessionID, encodeTime(time.Now
 }
 
 func (s *Store) DeleteQueuedMessage(sessionID, messageID string) error {
-	result, err := s.db.Exec(`DELETE FROM message_queue WHERE id=? AND session_id=? AND status='queued'`, messageID, sessionID)
+	result, err := s.db.Exec(`DELETE FROM message_queue WHERE id=? AND session_id=? AND status IN ('queued','uncertain')`, messageID, sessionID)
 	if err != nil {
 		return err
 	}
@@ -269,8 +273,37 @@ func (s *Store) ReleaseQueuedMessage(messageID string) error {
 	return err
 }
 
+// This is only for failures proved to occur before writing turn/start. Lost
+// acknowledgements stay uncertain and must never use this recovery path.
+func (s *Store) ReleaseUnsentCodexMessage(messageID string) error {
+	if messageID == "" {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.Exec(`UPDATE message_queue SET status='queued',updated_at=? WHERE id=? AND status='provider-starting'`, encodeTime(time.Now().UTC()), messageID)
+	if err != nil {
+		return err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if changed > 0 {
+		// This attempt never reached the provider. Retaining its turn ID would
+		// make a later pre-Begin retry look already sent during crash recovery.
+		if _, err = tx.Exec(`UPDATE messages SET turn_id='',status='queued' WHERE id=?`, messageID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 func (s *Store) CompleteQueuedMessage(messageID string) error {
-	_, err := s.db.Exec(`DELETE FROM message_queue WHERE id=? AND status='dispatching'`, messageID)
+	_, err := s.db.Exec(`DELETE FROM message_queue WHERE id=? AND status IN ('dispatching','steering','provider-starting')`, messageID)
 	return err
 }
 

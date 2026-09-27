@@ -56,7 +56,7 @@ func (s *Store) migrateActivity() error {
  CREATE TRIGGER IF NOT EXISTS terminal_activity_update AFTER UPDATE ON terminals BEGIN INSERT INTO activity(kind,entity_id,session_id,data) VALUES('terminal',NEW.id,NEW.session_id,json_object('id',NEW.id,'status',NEW.status)); END;
  CREATE TRIGGER IF NOT EXISTS turn_activity_update AFTER UPDATE ON turns BEGIN INSERT INTO activity(kind,entity_id,session_id,data) VALUES('turn',NEW.id,NEW.session_id,json_object('id',NEW.id,'status',NEW.status,'generation',NEW.generation)); END;
  CREATE TRIGGER IF NOT EXISTS operation_activity_update AFTER UPDATE ON operations BEGIN INSERT INTO activity(kind,entity_id,session_id,data) VALUES('operation',NEW.id,NEW.session_id,json_object('id',NEW.id,'status',NEW.status)); END;
- UPDATE turns SET status='interrupted',finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE status IN ('starting','running');
+ UPDATE turns SET status='interrupted',finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE status IN ('starting','running','waiting');
  UPDATE operations SET status='interrupted',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE status='running';
  `)
 	if err == nil {
@@ -69,6 +69,12 @@ func (s *Store) migrateActivity() error {
 }
 
 func (s *Store) BeginTurn(sessionID, prompt, messageID, startTree string) (string, int64, error) {
+	return s.beginTurn(sessionID, prompt, messageID, startTree, false)
+}
+func (s *Store) BeginCodexTurn(sessionID, prompt, messageID, startTree string) (string, int64, error) {
+	return s.beginTurn(sessionID, prompt, messageID, startTree, true)
+}
+func (s *Store) beginTurn(sessionID, prompt, messageID, startTree string, pendingProvider bool) (string, int64, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return "", 0, err
@@ -77,6 +83,15 @@ func (s *Store) BeginTurn(sessionID, prompt, messageID, startTree string) (strin
 	var generation int64
 	if err = tx.QueryRow(`SELECT generation FROM sessions WHERE id=?`, sessionID).Scan(&generation); err != nil {
 		return "", 0, err
+	}
+	if pendingProvider && messageID != "" {
+		result, claimErr := tx.Exec(`UPDATE message_queue SET status='provider-starting',updated_at=? WHERE id=? AND session_id=? AND status='dispatching'`, encodeTime(time.Now().UTC()), messageID, sessionID)
+		if claimErr != nil {
+			return "", 0, claimErr
+		}
+		if claimErr = requireAffected(result, "queued message"); claimErr != nil {
+			return "", 0, claimErr
+		}
 	}
 	generation++
 	id := uuid.NewString()
@@ -88,7 +103,7 @@ func (s *Store) BeginTurn(sessionID, prompt, messageID, startTree string) (strin
 	if messageID == "" {
 		messageID = uuid.NewString()
 	}
-	_, err = tx.Exec(`INSERT INTO messages(id,session_id,turn_id,text,status,created_at) VALUES(?,?,?,?,'sent',?) ON CONFLICT(id) DO UPDATE SET turn_id=excluded.turn_id,status='sent'`, messageID, sessionID, id, prompt, now)
+	_, err = tx.Exec(`INSERT INTO messages(id,session_id,turn_id,text,status,created_at) VALUES(?,?,?,?,'sent',?) ON CONFLICT(id) DO UPDATE SET turn_id=excluded.turn_id,text=excluded.text,status='sent'`, messageID, sessionID, id, prompt, now)
 	if err != nil {
 		return "", 0, err
 	}
