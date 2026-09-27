@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -175,7 +176,37 @@ func worktreeDiff(ctx context.Context, path, base string) (string, error) {
 func worktreeFiles(ctx context.Context, path string) ([]string, error) {
 	out, err := gitOutput(ctx, path, "ls-files", "--cached", "--others", "--exclude-standard", "-z")
 	if err != nil {
-		return nil, err
+		if !plainProjectFolder(path) {
+			return nil, err
+		}
+		files := []string{}
+		walkErr := filepath.WalkDir(path, func(current string, entry fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.Type()&os.ModeSymlink != 0 {
+				return nil
+			}
+			relative, err := filepath.Rel(path, current)
+			if err != nil {
+				return err
+			}
+			if entry.IsDir() {
+				if relative != "." && (entry.Name() == "node_modules" || entry.Name() == ".git" || entry.Name() == "target" || len(strings.Split(relative, string(filepath.Separator))) > 16) {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if len(files) >= 5000 {
+				return fs.SkipAll
+			}
+			if entry.Type().IsRegular() {
+				files = append(files, filepath.ToSlash(relative))
+			}
+			return nil
+		})
+		sort.Strings(files)
+		return files, walkErr
 	}
 	if out == "" {
 		return []string{}, nil
@@ -324,4 +355,29 @@ func snapshotWorkingTree(ctx context.Context, root string) (string, error) {
 		return "", err
 	}
 	return run("write-tree")
+}
+
+// Never reinterpret a Git access/ownership failure as an ordinary folder.
+func plainProjectFolder(path string) bool {
+	canonical, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return false
+	}
+	path = canonical
+	if filepath.Base(path) == ".git" {
+		return false
+	}
+	if _, err := os.Stat(filepath.Join(path, "HEAD")); err == nil {
+		if info, e := os.Stat(filepath.Join(path, "objects")); e == nil && info.IsDir() {
+			return false
+		}
+	}
+	for current := filepath.Clean(path); ; current = filepath.Dir(current) {
+		if _, err := os.Lstat(filepath.Join(current, ".git")); err == nil || !errors.Is(err, os.ErrNotExist) {
+			return false
+		}
+		if filepath.Dir(current) == current {
+			return true
+		}
+	}
 }

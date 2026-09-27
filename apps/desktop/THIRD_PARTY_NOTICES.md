@@ -2,7 +2,9 @@
 
 OpenADE’s desktop UI adapts layout dimensions and motion specifications from
 [Zeron](https://github.com/zeronsh/zeron), Copyright (c) 2026 Wing, MIT licensed.
-The complete notice is retained in `licenses/Zeron-MIT.txt`.
+The complete notice is retained in `licenses/Zeron-MIT.txt`. Sidebar diagonal
+hover intent and switch geometry/motion follow the pinned MIT-licensed
+`crates/ui/src/shell/spaces.rs` and `crates/ui/src/settings/widgets.rs`.
 
 Bundled Geist and Geist Mono fonts are distributed under the SIL Open Font
 License 1.1. The full notice is retained in `licenses/Geist-OFL.txt`.

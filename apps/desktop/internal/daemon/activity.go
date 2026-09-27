@@ -42,6 +42,7 @@ func (s *Store) migrateActivity() error {
  CREATE INDEX IF NOT EXISTS turns_session_idx ON turns(session_id,generation);
  CREATE TABLE IF NOT EXISTS messages(id TEXT PRIMARY KEY,session_id TEXT NOT NULL REFERENCES sessions(id),turn_id TEXT NOT NULL DEFAULT '',text TEXT NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS operations(id TEXT PRIMARY KEY,session_id TEXT NOT NULL REFERENCES sessions(id),kind TEXT NOT NULL,status TEXT NOT NULL,result TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
+ CREATE TRIGGER IF NOT EXISTS project_activity_insert AFTER INSERT ON registered_projects BEGIN INSERT INTO activity(kind,entity_id,session_id,data) VALUES('project',NEW.path,'',json_object('path',NEW.path)); END;
  CREATE TRIGGER IF NOT EXISTS sessions_activity_insert AFTER INSERT ON sessions BEGIN INSERT INTO activity(kind,entity_id,session_id,data) VALUES('session',NEW.id,NEW.id,json_object('id',NEW.id,'status',NEW.status,'generation',NEW.generation,'turn_id',NEW.current_turn_id)); END;
  CREATE TRIGGER IF NOT EXISTS sessions_activity_update AFTER UPDATE ON sessions BEGIN INSERT INTO activity(kind,entity_id,session_id,data) VALUES('session',NEW.id,NEW.id,json_object('id',NEW.id,'status',NEW.status,'generation',NEW.generation,'turn_id',NEW.current_turn_id)); END;
  CREATE TRIGGER IF NOT EXISTS queue_message_insert AFTER INSERT ON message_queue BEGIN INSERT INTO messages(id,session_id,text,status,created_at) VALUES(NEW.id,NEW.session_id,NEW.text,NEW.status,NEW.created_at); END;
@@ -131,6 +132,26 @@ func (s *Store) Snapshot(ctx context.Context) (map[string]any, error) {
 	}
 	err = rows.Err()
 	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	registered, err := tx.QueryContext(ctx, `SELECT path FROM registered_projects ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	for registered.Next() {
+		var path string
+		if err = registered.Scan(&path); err != nil {
+			registered.Close()
+			return nil, err
+		}
+		if !seen[path] {
+			projects = append(projects, path)
+			seen[path] = true
+		}
+	}
+	err = registered.Err()
+	registered.Close()
 	if err != nil {
 		return nil, err
 	}

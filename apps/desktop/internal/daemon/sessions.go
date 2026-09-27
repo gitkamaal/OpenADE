@@ -98,14 +98,34 @@ func (m *SessionManager) Create(ctx context.Context, request CreateSessionReques
 		request.BaseBranch = "HEAD"
 	}
 	repo, err := verifyRepository(ctx, request.RepoRoot)
-	if err != nil {
-		return Session{}, err
+	gitProject := err == nil
+	if !gitProject {
+		repo, err = filepath.Abs(request.RepoRoot)
+		if err != nil {
+			return Session{}, err
+		}
+		repo, err = filepath.EvalSymlinks(repo)
+		if err != nil {
+			return Session{}, err
+		}
+		info, statErr := os.Stat(repo)
+		if statErr != nil || !info.IsDir() || !plainProjectFolder(repo) {
+			return Session{}, fmt.Errorf("choose an existing project folder")
+		}
+		if request.Checkout != "current" {
+			return Session{}, fmt.Errorf("folders without Git use the current-folder checkout")
+		}
+		request.BaseBranch = ""
 	}
+
 	id := uuid.NewString()
 	branch := makeBranch(request.TicketKey, request.Title, id)
 	repoName := filepath.Base(repo)
 	worktree := filepath.Join(m.dataDir, "worktrees", repoName, id)
-	if request.Checkout == "current" {
+	if !gitProject {
+		worktree = repo
+		branch = ""
+	} else if request.Checkout == "current" {
 		worktree = repo
 		branch, err = gitOutput(ctx, repo, "branch", "--show-current")
 		if err != nil {
@@ -434,7 +454,7 @@ func resumeAgentCommand(session Session, providerID, prompt string) (string, []s
 	case "claude":
 		return program, []string{"--resume", providerID, "--print", "--verbose", "--output-format", "stream-json", "--include-partial-messages", "--permission-mode", "acceptEdits", prompt}, nil
 	case "codex":
-		return program, []string{"exec", "--json", "--sandbox", "workspace-write", "resume", providerID, prompt}, nil
+		return program, codexExecArgs(session, providerID, prompt), nil
 	default:
 		return "", nil, fmt.Errorf("follow-up messages are not supported for %s", session.Agent)
 	}
@@ -556,7 +576,7 @@ func agentCommand(session Session) (string, []string, error) {
 		if session.Prompt != "" {
 			// Codex reads stdin in exec mode even with a prompt. Keep stdout on the
 			// PTY for live events while closing only stdin so the run can begin.
-			return program, []string{"exec", "--json", "--sandbox", "workspace-write", session.Prompt}, nil
+			return program, codexExecArgs(session, "", session.Prompt), nil
 		}
 	default:
 		if session.Prompt != "" {
@@ -944,4 +964,15 @@ func conversationPrompt(session Session, prompt string) string {
 		return prompt
 	}
 	return "Conversation instructions:\n" + session.Instructions + "\n\nUser message:\n" + prompt
+}
+
+func codexExecArgs(session Session, providerID, prompt string) []string {
+	args := []string{"exec", "--json", "--sandbox", "workspace-write"}
+	if session.Branch == "" {
+		args = append(args, "--skip-git-repo-check")
+	}
+	if providerID != "" {
+		args = append(args, "resume", providerID)
+	}
+	return append(args, prompt)
 }

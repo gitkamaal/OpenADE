@@ -33,6 +33,7 @@ type Daemon struct {
 	releaseProfile  func()
 	authToken       string
 	providerSetupMu sync.Mutex
+	projectReads    chan struct{}
 }
 
 func DefaultConfig() Config {
@@ -89,8 +90,9 @@ func New(config Config) (*Daemon, error) {
 	}
 	d := &Daemon{
 		config: config, store: store, releaseProfile: release, authToken: token, listener: listener,
-		sessions:  NewSessionManager(store, config.DataDir),
-		terminals: NewTerminalManager(store, config.DataDir),
+		projectReads: make(chan struct{}, 4),
+		sessions:     NewSessionManager(store, config.DataDir),
+		terminals:    NewTerminalManager(store, config.DataDir),
 	}
 	d.server = &http.Server{Addr: config.Addr, Handler: d.routes(), ReadHeaderTimeout: 5 * time.Second}
 	return d, nil
@@ -138,6 +140,8 @@ func (d *Daemon) routes() http.Handler {
 	mux.HandleFunc("GET /api/sessions", d.handleListSessions)
 	mux.HandleFunc("POST /api/sessions", d.handleCreateSession)
 	mux.HandleFunc("GET /api/projects", d.handleProjects)
+	mux.HandleFunc("GET /api/projects/directories", d.handleProjectDirectories)
+	mux.HandleFunc("POST /api/projects", d.handleRegisterProject)
 	mux.HandleFunc("POST /api/projects/scan", d.handleScanProjects)
 	mux.HandleFunc("GET /api/sessions/{id}", d.handleGetSession)
 	mux.HandleFunc("PATCH /api/sessions/{id}", d.handleSessionDetails)
@@ -541,7 +545,7 @@ func (d *Daemon) handleFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	files, err := worktreeFiles(r.Context(), session.WorktreePath)
-	if err == nil && r.URL.Query().Get("ignored") == "1" {
+	if err == nil && r.URL.Query().Get("ignored") == "1" && session.Branch != "" {
 		var ignored string
 		ignored, err = gitOutput(r.Context(), session.WorktreePath, "ls-files", "--others", "--ignored", "--exclude-standard", "-z")
 		if err == nil {

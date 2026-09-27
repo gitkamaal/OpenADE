@@ -24,7 +24,7 @@ The desktop window is only a client. Closing it does not stop active agents or p
 - **GitHub delivery** — list pull requests and push a session branch into a draft PR through the locally authenticated `gh` CLI.
 - **Jira-linked work** — associate a Jira key and URL with a session and fetch ticket details through the local `jira` CLI.
 - **Reusable workflows** — start from focused delivery, debugging, review, and testing prompts; provider commands and local skills are available from chat.
-- **Themes** — Graphite, Dusk, Paper, System, and an optional Glass appearance.
+- **Themes** — all 30 pinned Zeron built-in variants, independent Light/Dark/System choices, adjustable Transparent/Frosted/Liquid Glass/Opaque backgrounds, and shared editor/diff/terminal palettes. Native Liquid Glass uses supported macOS 26+ APIs; browser frost is an approximation.
 - **Sites surface** — presentation-only Sites UI with search, refresh, and create hooks. Persistence and execution are intentionally not implemented here.
 
 ## Product tour
@@ -223,7 +223,7 @@ docs/                     product and historical design documentation
 
 ## Current limitations
 
-- Local UI follows Zeron while retaining the header/rail. Remote devices, Appshots, provider account switching/sync, imported themes and hunk staging are not implemented. Local-server discovery, native macOS browser previews and latest-turn diffs are available.
+- Local UI follows Zeron while retaining the header/rail. The searchable command/history palette, native local-folder picker, plain-folder Codex chats, custom editor context menu and persistent terminal ordering are implemented. Remote/cloud/mobile and Appshots are outside the current local-only scope. Remaining local differences, including custom theme imports, provider account switching and hunk staging, are explicitly mapped in [the feature map](docs/zeron-feature-map.md); this is not complete 1:1 parity. Native review and profiling evidence is described in [the audit report](docs/appearance-interaction-audit.md).
 - Native chat uses a structured pipe per turn and durable provider resume. Persistent upstream sessions, mid-turn steering and interactive permission bridging are not claimed. “Send next” reorders the queue.
 
 - Direct TUI and durable provider resume are implemented only for Claude Code and Codex CLI.

@@ -1,78 +1,75 @@
-# OpenADE transparency, themes and interaction audit
+# OpenADE local transparency and interaction audit
 
-The rebuilt desktop adds adjustable background transparency, all 30 Zeron built-in theme variants, a real project filter dropdown, side-anchored view menus, visibly different Compact rows, seamless resize grips, and Settings continuity for drafts/editors/panels. OpenADE’s header and five-icon rail remain. **This is not complete 1:1 Zeron parity.** The feature map explicitly records unsupported features and interaction differences.
+September 27, 2026. The current target is **local desktop parity**, preserving Go/Wails, OpenADE’s header and five-icon rail. Stage Manager was disabled at the user’s request; full-size native app-window captures now work. The rebuilt app adds the global command/history palette, source-style local project picker, plain-folder sessions, diagonal sidebar hover intent, source switch geometry, native editor context actions and persistent terminal ordering/closure. **Complete 1:1 local parity is not yet achieved.**
 
-## Access and source baseline
+## Source, access and scope
 
-- Repository: `feature/zeron-parity`, baseline `3f38902315461cbdf2a31110fff21cab73ff22f0`; initial request’s `458801b` had already been superseded by the transparent-window correction. Filesystem reads/writes, builds and GitHub network access verified; draft PR #1 is the personal fork’s open draft.
-- Source reference: Zeron v0.2.92, `68ef78bb1e6fa0b84feeb68c382230f8c560f96a`, including actual resolved registry export, current UI modules, settings, Shell actions and the user’s native dropdown screenshots.
-- Native OpenADE and the already-running Zeron Source build are accessible through Computer Use. No repeat Source-build approval rejection occurred in this pass. Native screenshots currently alternate between full windows and small skewed Stage Manager thumbnails; source capture also had earlier 2×2/no-window results. The thumbnails/invalid captures are not counted as full visual verification. Dock binding returned exactly `Computer Use server error -10005: timeoutReached`.
+Pinned Zeron v0.2.92, `68ef78bb1e6fa0b84feeb68c382230f8c560f96a`. Source code and the actual native source build were inspected before porting behavior. Current New project is a device/location/folder picker; no clone wizard was found in the inspected source UI. Its editor context menu is Cut/Copy/Paste/Select All; the earlier file CRUD claim was corrected.
 
-## Scores with explicit denominators
+Filesystem, builds, local engine and GitHub access work. The native production app and Zeron Source are accessible. No Source-build approval rejection repeated. Remote/cloud/mobile/account relay and previously excluded Appshots stay outside this local-only target. Source Loro/RPC implementation choices are mapped separately from the authorized Go engine architecture.
 
-| Measure | Result | Meaning |
+## Quantified checks
+
+| Measure | Result | Boundary |
 |---|---:|---|
-| Unique end-to-end checks | 43/43 passed | Final full suite includes narrow-pane layout, filtered keyboard navigation, popup dismissal and action-menu behavior. Actual Go engine; synthetic provider CLIs. |
-| Built-in variants | 30/30, 100% | 19 families; 10 light, 20 dark. UI-selected and persisted, source background/syntax/ANSI/diff role checks. |
-| Automatic custom choice inventory | 17/17, 100% | Home and Settings enabled choices open custom popups, expand, fit viewport, dismiss on Escape, restore focus. Other action/model/panel/command menus have dedicated flows. |
-| Solid-theme text contrast | 30/30, 100% | All body and muted text ≥4.5:1 against solid palette background. This is not a contrast guarantee over arbitrary desktop content. |
-| Responsiveness budgets | 2/2, 100% | Input-to-two-frames p95 <150ms; session switch p95 <600ms. Chromium production build, not native compositor timing. |
-| Source feature mapping | 87 areas + 66 settings fields | Every mapped area states counterpart, partial difference, gap or intentional OpenADE addition. Includes backend/cloud/remote/mobile, not just visible buttons. |
-| Fully implemented counterparts | 30/86, 34.9% | Excludes one intentional OpenADE addition. 30 partial, 26 gaps. This measures broad capability coverage, not pixel fidelity. |
-| Capability coverage index | 52.3/100 | Rubric: implemented=1, partial=0.5, gap=0 across the 86 source areas. Working full/partial counterparts: 60/86 (69.8%). |
-| Whole-product visual fidelity | Not scored | Full-size native after capture and comprehensive native visual review remain incomplete; assigning a high cosmetic score would be misleading. |
+| Final production-client E2Es | 49/49 passed | Real Go engine, synthetic provider CLIs; end-to-end tests only |
+| Built-in themes | 30/30 | 19 families, 10 light and 20 dark; background/syntax/ANSI/diff roles, selection and persistence |
+| Automatic custom-choice inventory | 17/17 | Home/Settings popups open, fit, dismiss and return focus; other menus have dedicated flows |
+| Solid theme contrast | 30/30 | Body and muted text ≥4.5:1 against solid palette backgrounds; arbitrary desktops vary |
+| Browser responsiveness budgets | 2/2 | Input p95 <150ms; switch p95 <600ms |
+| Actual native Codex folder turns | 2/2 completed | First/resumed turns in a non-Git folder; same provider thread, read-only fixture |
+| Local capability counterparts | 34/79 fully implemented | 28 partial and 17 gaps; capability, not pixel fidelity |
+| Local capability index | 60.8/100 | Implemented=1, partial=0.5, gap=0; exclusions and intentional architecture stay visible in the map |
+| Whole-product visual fidelity | Not scored | No automated test establishes every source interaction or pixel match |
 
-## Interaction audit and concrete fixes
+The [complete map](zeron-feature-map.md) retains 87 areas, 66 settings fields and 12 action areas. It separates five out-of-scope areas and three intentional choices from the 79 local capability areas; remaining local gaps are not hidden by narrowing the scope.
 
-1. **Project filter — improved, partial source parity.** “All projects” now opens a custom searchable popup beneath its trigger, with All projects always available during search, local host labels, selection check and New project footer. Selection filters actual sessions. New project opens the workspace-folder settings flow; source clone/create/project palette remains a gap. Evidence: `11-project-picker.png` and project-picker E2E.
-2. **Sidebar view menu — improved, partial.** The ellipsis popup is beside the trigger, with side-opening Organize/Sort choices, source “None” naming, Show details and Compact. Context menus are placed at the pointer. Whole-row clicks open Organize/Sort; radio selection keeps the parent menu open, as in the source. Source diagonal hover-intent and full context-menu hierarchy remain different. Evidence: `12-expanded-sidebar.png`, `13-compact-sidebar.png`; geometry checks wait for menu animation to settle.
-3. **Compact — fixed.** Compact hides project/branch metadata and uses 29px rows; expanded rows show metadata at 45/61px. Native AX inspection confirmed `OpenADE @ Local` disappears and returns when toggled. It is no longer a cosmetic switch without a clear content change.
-4. **Resize — fixed.** Hover/pointer dragging paints no accent stripe and does not select transcript text. RAF-coalesced resizing persists one preference write per completed drag, compared with 34 in the first instrumented audit. Keyboard arrows/Home/End, values, focus outline and double-click reset remain. A needless observer in full-width shell sessions was removed; lifecycle checks pass.
-5. **Panel picker — fixed.** Choosing Diffs while the empty right panel was open could toggle it closed because the default tab matched before it existed. The toggle now checks that the tab is already in the open-tab list. Scope/stage/split tests pass. Diff scope uses a readable text button rather than an icon-sized frame; narrow composers wrap their controls without clipping Send. Compressed resize limits report actual geometry and become keyboard-disabled until space is available.
-6. **Settings continuity — fixed.** Visiting Settings retains the session workspace, unsent draft, dirty document, editor undo/focus, panel state and preview URL. The retained workspace is hidden/inert; hidden keyboard consumers are guarded, and native preview bounds hide its overlay. Leaving to another session still protects dirty edits.
-7. **Custom popup keyboard behavior — improved.** Choices focus their actual listbox or search input; Escape/Tab/outside blur close correctly. Action menus acquire focus, support arrows/Home/End and return focus on Escape. Footer button Enter performs its action. Collapsing the sidebar dismisses its popup; a reference-counted custom-menu marker keeps the native preview hidden until all nested popups close. Filtered next/previous and numeric session jumps follow the visible sidebar order. Source hover traversal is still a listed gap.
-8. **Theme/material propagation — improved.** UI, menu, composer, chat, settings, editor, diff and terminal roles use the resolved catalog. Editors get all relevant syntax roles and terminals all 16 ANSI entries. Same-palette layout changes no longer reassign terminal theme/font options. Light accents use the source’s darker preset colors; Theme default swatch shows the actual theme accent.
-9. **Unavailable Sites actions — fixed.** Disconnected Create/Refresh controls are disabled and the empty state says Sites are not connected, instead of presenting working-looking no-op actions. Sites is an intentional OpenADE addition.
-10. **Native appearance — partially verified.** Real native mode changes report genuine Liquid Glass and solid Opaque behavior, complete dark catalog selection works, the production searchable project picker opens, and Compact changes actual native row content. The separate AppKit-band fixture shows native canvas alpha. Full-size after captures, regular-window desktop-background comparison, native slider pointer/keyboard changes, native editor/terminal/scroll/resize inspection and native frame/GPU profiling remain outstanding because captures return thumbnails. Browser checks are not substituted for those claims.
+## Implemented interactions and native audit fixes
 
-## Material behavior
+- All projects opens the custom searchable menu under its trigger. Its New project footer, global palette action and Mod+Shift+N open the local device → location/folder palette. Projects persist before a chat exists. Git subfolders normalize to one project root; ordinary folders use an explicit Folder workspace, with Git-only controls disabled or explained.
+- Mod+K and the header search button open the centered 560px action/history palette. It searches all local chats independently of sidebar filters, includes archived history, restores focus and supports arrows/Enter/Escape without repeat activation.
+- Sidebar choices include source By device/By project/None and Created/Last updated. The 300ms diagonal pointer corridor follows source intent; nested choices stay beside the trigger. Compact changes row metadata and density. Its white 24px pill thumb, 44.8px switch and 180ms motion follow current source widgets. Priority/Manual remain OpenADE additions.
+- Sidebar dragging uses a transparent seam and one persisted preference write per completed drag. Native drag and double-click reset worked. Native Window → Zoom resized 1480×920 to 2560×1050 and restored layout/editor state. Computer Use edge drags did not change the window size, so manual edge-drag behavior is not claimed from those attempts.
+- Editor Cut/Copy/Paste/Select All uses a custom 170px pointer menu, native clipboard bridge, disabled states, selection/undo and stale-edit guard. Native selection, menu dismissal and long-file scrolling were inspected; editing checks use isolated E2E workspaces.
+- Terminal tabs reorder by drag or Alt+Left/Right and close on middle-click. Closed tabs stay closed after a native relaunch; stop errors remain visible. Native shell input returned the expected marker and cleanup left zero live terminals. The TUI action now uses the selected theme accent rather than a hardcoded blue.
+- Native staging/split/scoped diffs changed a real temporary repository index and were undone. Empty scopes name staged/latest-turn/branch/working changes correctly; a filter with no matches gives a clear message and disables file navigation. The temporary file was removed.
+- Settings retains drafts, dirty documents, undo/focus and panel/browser state. Native slider pointer and keyboard adjustment worked (78 → 77), plus Home/Page Up to 50. Opaque disables the slider and stays solid; Light/Dark/System and Transparent/Frosted/Liquid were inspected.
+- A long folder path wrapped the picker heading; it now stays on one line. Failed navigation disables Add project so it cannot accidentally add the previous folder. Native directory waits are bounded to five seconds with at most four outstanding filesystem operations; FIFO/non-directory rejection and recovery are covered end to end. The rebuilt native daemon returned HTTP 504 with the native-chooser recovery hint after **5.011 seconds** for a blocked folder read, while its health endpoint remained responsive.
 
-The slider controls palette-background coverage from 0–100 while text/icons stay opaque. Fresh profiles default to 50; legacy Transparent profiles migrate to 78 and other saved materials to 45, preserving the previous look. Transparent is a clear native window; Frosted uses public behind-window NSVisualEffectView. Liquid uses genuine public NSGlassEffectView with clear style on supported macOS, plus a public behind-window material; unsupported systems use a labeled Frosted fallback. Accessibility requests resolve solid surfaces. Opaque is preserved. The slider controls tint density rather than claiming to change native blur physics.
+## Materials and actual desktop capture
 
-Browser materials are explicitly an approximation. Native accessibility events are simulated only in browser E2Es; the host’s Reduce Transparency/Increase Contrast settings were not changed. Older OS fallback is code/build verified, not exercised on an older Mac. The colorful band fixture is test-only, within the native window, and is **not** proof of desktop transmission. Its app has been closed; Zeron Dark/theme-default accent is restored in the production preview; the delivered production binary contains neither fixture code nor fixture environment flags. No wallpaper changes were made.
+Text/icons remain opaque; no global interface opacity is applied. The slider adjusts palette background coverage. Clear mode removes native material views and keeps a clear, non-opaque window. Frosted uses public behind-window NSVisualEffectView. Liquid uses genuine public NSGlassEffectView Clear on macOS 26+ over a behind-window material; unsupported systems get a labeled Frosted fallback. Composer/popover blur is a CSS approximation. Opaque and accessibility solid fallbacks remain; clear-mode text shadow was removed for crisp lettering.
 
-## Matched performance profile
+The 1480×920 app-window captures flatten the desktop backdrop. They establish native layout and foreground rendering, not wallpaper transmission. macOS’s actual Screenshot UI was recovered at `/System/Library/CoreServices/screencaptureui.app`; a genuine full-display capture was saved locally. It revealed a pending Documents-access dialog behind OpenADE and a Finder window covering the scene. That frame is diagnostic evidence, not the requested clean contrasting-desktop comparison.
 
-Baseline and rebuild were run separately from freshly prepared equivalent fixtures: 24 sessions, 2 projects, 260 historical turns; 5 cold/reload samples, 12 session switches, 5 first-stream samples. Memory measurements from the accumulated full test suite were rejected for comparison and replaced with isolated samples. Small timing differences with these sample counts are not evidence of a statistically significant speed improvement.
+Selected-folder access through the native chooser worked and enabled the real Codex folder session. A broad Documents grant has not been accepted by the agent. Computer Use refused the dialog’s system app exactly: `Computer Use is not allowed to use the app 'com.apple.UserNotificationCenter' for safety reasons.` The user was asked to handle the prompt. No coordinates, alternate app or shell command bypass that refusal. Clean desktop comparison and continuous native recording remain dependent on that handoff; the old Stage Manager thumbnail limitation is resolved.
 
-| Metric | Baseline | Rebuilt | Change |
+## Matched browser performance
+
+Fresh equivalent fixtures: 24 sessions, two projects, 260 historical turns; five cold/reload/stream samples and twelve switches. These are Chromium production-client measurements against the actual Go engine, with synthetic provider CLIs. They exclude real provider/network latency and do not establish native compositor performance.
+
+| Metric | Baseline | Rebuilt repeat | Change |
 |---|---:|---:|---:|
-| Cold ready p95 | 110.2 ms | 102.2 ms | -7.3% |
-| Reload ready p95 | 39.8 ms | 37.3 ms | -6.1% |
-| Input to two frames p95 | 16.6 ms | 17.5 ms | +5.4% |
-| Session switch p95 | 37.0 ms | 36.7 ms | -1.0% |
-| First stream visible p95 | 479.9 ms | 494.2 ms | +3.0% |
-| Renderer JS heap | 8.30 MiB | 8.93 MiB | +7.6% |
-| Engine RSS | 29.70 MiB | 29.03 MiB | -2.3% |
-| Inactive transcript article cap | 80 | 80 | bounded |
-| Remaining stream clients | 0 | 0 | released |
+| Cold ready p95 | 110.2 ms | 96.0 ms | -12.9% |
+| Reload ready p95 | 39.8 ms | 28.0 ms | -29.6% |
+| Input to two frames p95 | 16.6 ms | 15.5 ms | -6.6% |
+| Session switch p95 | 37.0 ms | 36.2 ms | -2.4% |
+| First stream visible p95 | 479.9 ms | 486.9 ms | +1.5% |
+| Renderer JS heap | 8.30 MiB | 8.99 MiB | +8.3% |
+| Engine RSS | 29.70 MiB | 29.98 MiB | +0.9% |
 
-The palette catalog increases initial compressed JS by 17.2 KiB and CSS by 7.6 KiB. Theme selection median 201.0ms includes opening/selecting/awaiting the custom menu, so it is not a pure paint benchmark. Minimum solid body contrast 6.10:1; muted 4.56:1.
+The first local run had a first-stream outlier of 816.3ms and a switch worst sample of 45.7ms. A fresh repeat produced 486.9ms/36.2ms; both runs are retained. Small samples and this variability prevent a statistically significant speed or regression-free claim. The transcript remains capped at 80 articles and remaining stream clients are zero.
 
-One recorded warm frontend build took 4.63s; native packaging 2.70s. Final builds passed after later menu fixes. Go vet and git diff checks pass. Vite still reports its existing >500KB chunk warning; terminal and editor remain lazy chunks. Source notices and hashes are retained and OpenADE’s Apache-2.0 root license is unchanged.
+## Native GPU profile
 
-A real 10-second Instruments Time Profiler attachment recorded 3 CPU samples (3ms weighted) and no potential hangs over 250ms in the idle Wails host. This excludes WebKit/XPC/GPU/provider work and does not establish interactive frame performance. Raw trace and exported tables are retained.
+A 15-second Metal System Trace attached OpenADE’s dedicated WebKit GPU process during Compact/panel/split-diff/staging interactions. After filtering process ownership, 600 active GPU intervals across 51 command buffers were measured. Overlapping Vertex/Fragment intervals were merged within each buffer: active GPU work p50 **0.609ms**, p95 **1.615ms**, max **1.835ms**. Start latency p95 **2.183ms**. CPU Metal encoding p95 **0.236ms** across 249 encoders; no command-buffer errors were recorded.
 
-A five-sample native process read showed the durable Go daemon around 21.5 MiB and the Wails host around 111.5 MiB, with ps averaged CPU 0.0%/0.5%. This excludes WebKit/XPC/GPU/provider allocations and is not a matched total-native baseline or compositor/frame-time benchmark.
+These are command-buffer measurements, not FPS or whole-frame/input-to-display latency. Global compositor tables include unrelated processes and missing latency and are excluded from OpenADE frame claims. The execution-point XML export is malformed; valid interval/submission tables were used. The trace warned about backdated signposts; final post-recording exports were analyzed. No matched native GPU baseline exists. Raw trace, valid exports and `native-gpu-profile.json` remain local.
 
-## Evidence and delivery
+## Delivery and remaining work
 
-- [Full feature/settings/action map](zeron-feature-map.md) and [theme catalog/provenance](theme-catalog.md) are checked into the draft PR. JSON profiles and captures are in `outputs/theme-interaction-audit`.
-- `01-before-sidebar-resize.png` and `14-before-native-view-menu.png` are full native baseline captures. `native-alpha-thumbnail.png` is deliberately labeled limited native evidence. Full native after screenshots remain pending; `11-project-picker.png`, `12-expanded-sidebar.png`, `13-compact-sidebar.png`, `15-narrow-workspace.png` and `theme-gallery.png` are browser captures.
-- `OpenADE-walkthrough.mp4` is an updated 32s browser walkthrough, slowed 4× for readability, with a persistent caption identifying its renderer/limitation. It does not replace the requested native walkthrough recording.
-- Rebuilt `OpenADE Preview.app` and `OpenADE-macOS-arm64.zip` are local ad-hoc-signed arm64 artifacts; signature and archive CRC verified. The same rebuilt app/archive also replace the earlier glass-refinement delivery locations. The work machine has not been exercised, and Intel/Windows/Linux builds or notarization are not part of this artifact.
-- Draft PR remains open and unmerged. Remaining source gaps include custom theme imports, source hover-intent/global palette/session tabs, rich attachments/questions/side chats/comments, complete file context actions/history columns/provider accounts/ACP adapters, remote sync/cloud/mobile and distribution updates. Details and counterpart locations are in the map, rather than hidden from the scores.
+Native before frames `14-before-native-view-menu.png` and `16-local-native-before.png`; native after frames 20–40 include materials, menus, palette, folder flow, editor/context/scroll, resize/zoom, diffs, terminal input/closure and actual Codex continuation. Browser captures are labeled separately. Native screenshots and diagnostic desktop data remain local; no private captures/transcripts are committed.
 
-## Native review still required
+The rebuilt ad-hoc-signed arm64 app/archive and the explicitly labeled snapshot-based native walkthrough are local artifacts under `outputs/theme-interaction-audit`. A snapshot walkthrough does not replace a continuous native recording. Types/build, Go vet, native build, signature/archive checks and final E2Es are the verification gates. The existing PR stays a draft and unmerged.
 
-Bring the production preview to the foreground in a session where full-window captures work, then capture regular-window Transparent/Frosted/Liquid/Opaque at 25/55/75 over contrasting desktop backgrounds; drag/resize/scroll, open each popup, switch palettes and exercise the editor, diff, native browser and terminal. Capture full-size native after frames and native walkthrough, and measure native frame/GPU/whole-process resources. Those are real unfinished verification items, not user-setting assumptions or approval rituals.
+Next handoff-dependent check: clear the pending OS prompt, capture the regular window over contrasting desktop areas and record the continuous native walkthrough through the recovered system UI. Remaining source capabilities include custom theme imports, project rename/remove and projectless chats, session tabs, rich attachments/questions/MCP/naming/minimap/context usage, side chats/comments/previews/history controls and additional provider/account adapters. Older macOS/work-machine runtime and notarized distribution remain unverified.

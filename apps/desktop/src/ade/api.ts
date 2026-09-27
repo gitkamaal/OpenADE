@@ -374,3 +374,7 @@ export const stageFile=(id:string,path:string,staged:boolean)=>request<void>(`/a
 export const signInProvider=(provider:string)=>request<Session>(`/api/providers/${encodeURIComponent(provider)}/sign-in`,{method:"POST"});
 
 export const updateSessionDetails=(id:string,details:{title?:string;instructions?:string})=>request<void>(`/api/sessions/${id}`,{method:"PATCH",body:JSON.stringify(details)});
+
+export interface ProjectDirectoryListing{path:string;parent:string;entries:{name:string;path:string}[];git?:boolean;limited?:boolean}
+export const getProjectDirectories=(path="")=>request<ProjectDirectoryListing>(`/api/projects/directories?path=${encodeURIComponent(path)}`);
+export const registerProject=(path:string)=>request<{path:string}>("/api/projects",{method:"POST",body:JSON.stringify({path})});

@@ -85,6 +85,7 @@ func (s *Store) Close() error { return s.db.Close() }
 
 func (s *Store) migrate() error {
 	_, err := s.db.Exec(`
+CREATE TABLE IF NOT EXISTS registered_projects (path TEXT PRIMARY KEY,created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')));
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
@@ -366,7 +367,7 @@ FROM sessions WHERE id=?`, id)
 }
 
 func (s *Store) ListProjects() ([]string, error) {
-	rows, err := s.db.Query(`SELECT repo_root FROM sessions GROUP BY repo_root ORDER BY MAX(updated_at) DESC`)
+	rows, err := s.db.Query(`SELECT path FROM (SELECT repo_root AS path,updated_at FROM sessions UNION ALL SELECT path,created_at AS updated_at FROM registered_projects) GROUP BY path ORDER BY MAX(updated_at) DESC`)
 	if err != nil {
 		return nil, err
 	}

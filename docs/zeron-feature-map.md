@@ -14,17 +14,17 @@ Pinned Zeron v0.2.92, `68ef78bb1e6fa0b84feeb68c382230f8c560f96a`. Based on the s
 | Blank composer artwork/effects | Gap | new_thread_background_* | No background image chooser, crop/fade/effects. |
 | Left/right pane sizing | Implemented | ResizeBoundary | Transparent seams, pointer capture, RAF coalescing, keyboard values, reset, persisted width; limits differ from source. |
 | Sidebar collapse | Implemented | AppShell/Sidebar | Persisted collapse and keyboard toggle; animated width. |
-| Project filter dropdown | Partial | Sidebar/Select | Custom searchable menu under trigger; All projects, local project rows and New project footer. Device tags local only; add opens workspace settings rather than source palette. |
-| Project clone/create/rename/remove | Gap | shell/spaces.rs | Folder selection/indexing available; full project lifecycle menu absent. |
-| Projectless chats | Gap | shell/spaces.rs | OpenADE requires repository for new session. |
-| Sidebar Organize/Sort/Show | Partial | Sidebar/Select | Side placement, source None naming, custom radio choices; Show repeated toggles. Source 300ms diagonal hover-intent differs. |
+| Project filter dropdown | Implemented | Sidebar/Select | Custom searchable popup under trigger; All projects, local rows, selection check and New project footer open the local folder palette. |
+| Project clone/create/rename/remove | Partial | ProjectPalette/daemon project_registration | Current source New project is a local device/location/folder picker, not a clone wizard. Add/persist Git and plain folders, canonical Git roots, and real first/resumed non-Git Codex chats work. Native OS folder selection supplies bookmarks; directory access waits are bounded and failed navigation cannot add the previous folder. Source rename/remove menus remain absent; no clone action found in inspected current UI. |
+| Projectless chats | Gap | shell/spaces.rs | Plain-folder workspaces now work; a chat without any folder remains absent. |
+| Sidebar Organize/Sort/Show | Partial | Sidebar/Select | Source 300ms diagonal pointer-intent corridor and 44.8px pill switch geometry, By device/By project/None and Created/Last updated; correct side anchoring and persistent choices. Priority/Manual are OpenADE additions; complete source section/context hierarchy still differs. |
 | Sidebar Compact | Implemented | Sidebar/styles | 29px single-line compact rows hide metadata; expanded rows reveal project and branch lines, 45/61px. |
 | Sidebar provider/project/branch/PR details | Partial | Sidebar | Provider, labels, branch and PR display preferences; source project avatar/glyph/status placement differs. |
 | Sidebar sections | Partial | Sidebar | Create/remove/move; no source full rename/reorder/synced profile section editing. |
 | Pinned sessions | Partial | Sidebar/preferences | Local pin/unpin persists; no cross-device pins or repair pipeline. |
 | Manual session order | Partial | Sidebar | Local drag reorder; full source section/space drag-drop and animation geometry differ. |
 | Sidebar Show more | Implemented | Sidebar | Expand/reduce project and session lists. |
-| Sidebar session search | Partial | Sidebar/AppShell | List search and Show filter; no global conversation/action palette. |
+| Sidebar session search | Implemented | Sidebar/CommandPalette | Global custom action/history palette searches all local chats independently of sidebar/project filters; keyboard selection, focus return and theme action. |
 | Chat context menu | Partial | Sidebar/SessionWorkspace | Pin/section/archive at pointer; rename/instructions in session header. Source rename/delete/source details hierarchy differs. |
 | Session tabs | Gap | shell/tabs.rs | Workspace panel tabs exist; no source top-level session tabs, middle-click or reorder. |
 | New chat and drafts | Implemented | AppShell/SessionWorkspace | New-chat choices persist through Settings; bounded session text draft memory through navigation. |
@@ -53,7 +53,7 @@ Pinned Zeron v0.2.92, `68ef78bb1e6fa0b84feeb68c382230f8c560f96a`. Based on the s
 | File tree/search/folders | Implemented | WorkspacePanels | Hierarchical tree, folder expansion, query, hidden/ignored flags. |
 | File editor/tabs/syntax/save | Implemented | WorkspacePanels/CodeEditor | CodeMirror syntax roles, tabs, save/reload, conflict detection, dirty guards, font/wrap. |
 | Settings editor continuity | Implemented | AppShell/SessionWorkspace | Retains dirty document, cursor focus, undo history, draft and panels while Settings is open. |
-| File actions/context menu | Gap | files | No source complete create/rename/delete/reveal/right-click file actions. |
+| File actions/context menu | Implemented | CodeEditor/clipboard/app.go | Inspected source editor context menu is Cut/Copy/Paste/Select All. Matching custom 170px pointer menu, disabled states, native clipboard, selection, undo and stale-edit guard. Earlier create/rename/delete/reveal claim was not supported by the inspected source UI. |
 | Markdown/image file previews | Gap | files/image_viewer | Text editing available; no source rich markdown/image/zoom/copy image previews. |
 | Diff scopes/staging | Implemented | ReviewWorkspace/daemon | Working/branch/latest turn/staged scopes, stage/unstage and commit. |
 | Diff folding/split/navigation | Implemented | ReviewWorkspace | File fold/expand, split/unified, filter, previous/next changed file. |
@@ -64,7 +64,7 @@ Pinned Zeron v0.2.92, `68ef78bb1e6fa0b84feeb68c382230f8c560f96a`. Based on the s
 | Workspace panel tabs | Implemented | SessionWorkspace | Add/select/close browser, terminal, diffs, history, PR and editor; shortcuts and focus restoration. |
 | Independent project terminals | Implemented | Terminal/daemon | Real PTYs, session tabs, input/resize/output, hide/detach and stop escalation. |
 | Terminal replay/reconnect/exit | Implemented | Terminal/daemon | Byte-cursor replay, bounded stale replay, reconnect, process exit and released sockets. |
-| Terminal reorder/middle-click | Gap | terminal | Tab select/close/new exists; source drag reorder and middle-click absent. |
+| Terminal reorder/middle-click | Implemented | Terminal | Drag reorder, Alt+Left/Right accessible reorder, persistent local order and middle-click closes/releases the terminal. Explicitly closed tabs remain closed after relaunch; stop failure remains visible. |
 | Terminal/theme/ANSI | Implemented | Terminal/themes | 16 source ANSI entries, selection/background/foreground; palette changes avoid unrelated redraw. |
 | Direct TUI | Implemented | SessionWorkspace/Terminal | Exclusive native chat/TUI transports and resume provider identity; switch interrupts old turn. |
 | Provider install/sign-in/enable | Partial | SettingsPage | Installed CLI detection, links, enable/default choice and interactive setup; source all provider-specific preferences differ. |
@@ -73,24 +73,26 @@ Pinned Zeron v0.2.92, `68ef78bb1e6fa0b84feeb68c382230f8c560f96a`. Based on the s
 | Grok/Copilot/OpenCode/Shell | Partial | daemon/ModelPicker | CLI/TUI surfaces; no complete source per-harness advertised model/option capabilities. |
 | Cursor/Devin/Hermes/Pi/Antigravity ACP | Gap | harness | No source ACP adapters or complete native catalogs. |
 | Local devices | Partial | SettingsPage | Local workspace status only; source device rename/presence/copy/targeting absent. |
-| Remote devices/control/sync | Gap | README/state/engine | No account-linked remote workspace registry, relay, device control or transcript synchronization. |
-| Account/org gate/switch/logout | Gap | shell/settings/accounts | Local app starts without account; no WorkOS membership/account phases. |
+| Remote devices/control/sync | Out of scope | README/state/engine | Local-only scope (Appshots separately excluded by prior user instruction). No account-linked remote workspace registry, relay, device control or transcript synchronization. |
+| Account/org gate/switch/logout | Out of scope | shell/settings/accounts | Local-only scope (Appshots separately excluded by prior user instruction). Local app starts without account; no WorkOS membership/account phases. |
 | Desktop notifications/sounds | Partial | AppShell/SettingsPage | Completion/input/error controls and foreground policy; browser permission dependent, no source custom sound library. |
-| Appshots | Gap | appshots | No viewer-side screenshot capture shortcut/destination controls. |
+| Appshots | Out of scope | appshots | Local-only scope (Appshots separately excluded by prior user instruction). No viewer-side screenshot capture shortcut/destination controls. |
 | Keyboard recording/conflicts | Implemented | SettingsPage/preferences | Modifier capture, conflicts, Escape and restore defaults; source bindings not all identical. |
-| Quick session jumps/global actions palette | Partial | AppShell / source shell/command_palette | Next/previous and Mod+1–9 follow the filtered visible sidebar order; no jump-hint rail or global action palette. |
+| Quick session jumps/global actions palette | Partial | AppShell/CommandPalette | Filtered Mod+1–9 and next/previous jumps; global command/history palette, Mod+K, New project Mod+Shift+N. Source held-modifier jump-hint rail remains absent. |
 | Archive/restore | Implemented | Sidebar/SettingsPage | Archive hides without stopping agent/worktree; restore retained session. |
 | Engine reconnect/recovery | Implemented | engine-store/daemon | Authenticated snapshot/sequenced SSE, daemon restart, queued turn/transcript persistence and competing owner rejection. |
 | Engine watchdog/idle/presence | Partial | daemon | Local lifecycle checks; no full source host heartbeat/idle/stall/sync resource system. |
 | Filesystem isolation/security | Implemented | daemon | Path escape/symlink/binary/large/conflicting write rejections, isolated identical-name repos. |
-| Durable distributed commands/Loro docs | Gap | crates/doc/engine | Local OpenADE engine uses its own persistence; no source Loro schema/ledger/snapshot/continuation contract. |
-| Control/Data/Auth RPC equivalents | Partial | daemon HTTP API | Local sessions/files/diffs/terminals/auth protected; no complete source relay-forwardable RPC surface. |
-| Cloudflare edge/DOs/WorkOS | Gap | apps/edge | No source SessionRoom/DeviceRoom/auth/backup/organization edge backend. |
-| Mobile/web synchronized viewport | Gap | apps/ios/landing | This deliverable is desktop macOS arm64; no source mobile remote-control client. |
+| Durable distributed commands/Loro docs | Intentional | daemon SQLite/activity | Authorized local Go/Wails architecture: SQLite state, sequenced activity and queued-turn recovery. Source Loro/distributed schema is not a required implementation choice; cloud commands remain outside local scope. |
+| Control/Data/Auth RPC equivalents | Intentional | daemon HTTP/WebSocket API | Authenticated local sessions/files/diffs/terminals use the authorized Go engine API. Relay-forwardable source RPC schema is not a requirement for this local-only build. |
+| Cloudflare edge/DOs/WorkOS | Out of scope | apps/edge | Local-only scope (Appshots separately excluded by prior user instruction). No source SessionRoom/DeviceRoom/auth/backup/organization edge backend. |
+| Mobile/web synchronized viewport | Out of scope | apps/ios/landing | Local-only scope (Appshots separately excluded by prior user instruction). This deliverable is desktop macOS arm64; no source mobile remote-control client. |
 | Updater/notarized distribution | Gap | dist/app_menus | Ad-hoc local build; no matching signed/notarized updater/release pipeline. |
 | Reduced motion/focus | Implemented | styles/Select/menuKeys | CSS reduced-motion and visible keyboard focus; custom choices and action menu navigation. |
-| Motion/hover-intent catalog | Partial | styles/Select | Basic menu/width/fold transitions; source diagonal-hover intent and full resort/minimap animations differ. |
+| Motion/hover-intent catalog | Partial | styles/Sidebar/Select | Source diagonal-hover intent ported; basic menu/width/fold transitions. Full source resort, minimap and compositor animation geometry differs. |
 | Sites/Workflows/Review rail | Intentional | AppShell/SitesPage | OpenADE additions; Sites actions explicitly disabled when disconnected. Not counted as Zeron matches. |
+
+The current target is **local desktop parity**. Remote/cloud/mobile/account relay and previously excluded Appshots remain mapped for completeness but are outside this target. Loro schema/RPC architecture is not a requirement to replace the authorized Go/Wails engine; local observable capability gaps remain explicit. Local-only does not imply that remaining local features are complete.
 
 ## Complete persisted-settings field index
 
@@ -188,12 +190,16 @@ All 66 public fields of current `UiSettings` are enumerated. “No counterpart�
 |---|---|---|
 | All projects / Filter projects | Custom searchable popup under selector, left aligned, 6px gap; selected project @ Local; New project footer | Selection filters actual sidebar rows, keyboard/Escape/focus; duplicate names disambiguation by full path still a gap |
 | Sidebar ellipsis | Custom menu beside ellipsis, level with trigger; flips left near viewport edge | Organize/Sort/Show/Compact/create section; Compact changes metadata and geometry |
-| Organize/Sort | Custom nested choice to right of view menu, flip left when constrained | Whole row opens nested choices; checked radio selection persists and keeps parent open; None naming. Source hover-intent gap remains |
+| Organize/Sort | Custom nested choice to right of view menu, flip left when constrained | Whole row opens nested choices; checked radio selection persists and keeps parent open; None naming; source 300ms diagonal hover intent |
 | Show | Custom nested checkbox list beside menu | Repeated toggles, Escape returns to Show; settings persisted |
 | Chat context menu | Custom menu at pointer, clamped to viewport | Pin, section, archive; full source submenu gap listed above |
-| Model/provider | Custom model menu above composer, provider icons/search/favorites | Search, selection, effort/tier, arguments, focus |
+| Model/provider | Custom model menu below Home composer / above session composer, provider icons/search/favorites | Search, selection, effort/tier, arguments, focus; Home stacking keeps provider choices clickable |
 | Reasoning/service tier | Custom popup near row, viewport clamped | Selection reaches next turn |
-| Home device/project/branch/checkout | Custom choice popup at triggering pill; project path/folder footer | Actual checkout/provider isolation checks; source clone/create gaps |
+| Home device/project/branch/checkout | Custom choice popup at triggering pill; project path/folder footer | Actual checkout/provider isolation checks; local folder registration; source project rename/remove gaps |
+| Global search / Mod+K | Centered 560px custom action/history palette | Independent of sidebar filters; archived history, arrows/Enter/Escape, theme switching and focus restore |
+| New project | Custom local device/location/folder palette; native folder chooser fallback | Canonical root registration, non-Git sessions, invalid-path recovery and bounded directory waits |
+| Editor context | Custom 170px pointer menu, clamped to viewport | Cut/Copy/Paste/Select All, native clipboard, selection/undo and stale-document guard |
+| Terminal tabs | Tab actions and direct manipulation | Drag/Alt+arrow reorder, middle-click close, persistence across native relaunch and visible stop errors |
 | Home plus | Inline session-options disclosure | Intentional OpenADE layout difference from source attachments menu |
 | Skills/commands | Custom completion menu above composer | Owning-worktree discovery and keyboard insertion |
 | Session ellipsis | Custom action menu below titlebar trigger | Rename/instructions/copy/archive; arrow navigation/Escape |
@@ -205,4 +211,4 @@ All 66 public fields of current `UiSettings` are enumerated. “No counterpart�
 
 ## Verification boundaries
 
-The browser inventory discovers each enabled visible `button[role=combobox]` across Home and Settings; separate E2Es cover model menus, sidebar actions, commands, scope choices and workspace panel menus. The source-wide map includes unsupported menus instead of hiding them from a denominator. No automated test establishes pixel-perfect fidelity for every source feature. Native captures/inspection and the audit report provide separate visual evidence. Source cloud/remote/mobile/account features are mapped but not implemented in this desktop appearance pass.
+The browser inventory discovers each enabled visible `button[role=combobox]` across Home and Settings; separate E2Es cover model menus, sidebar actions, commands, scope choices and workspace panel menus. The source-wide map includes unsupported menus instead of hiding them from a denominator. No automated test establishes pixel-perfect fidelity for every source feature. Native captures/inspection and the audit report provide separate visual evidence. Source cloud/remote/mobile/account features are mapped and explicitly outside the user's local-only scope.

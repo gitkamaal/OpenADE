@@ -66,3 +66,23 @@ test("an engine-generated private token survives restart and authenticates only 
 test('terminal stop escalates when an interactive shell ignores termination and releases its PTY',async({request})=>{
  const session=await create(request,'Stubborn terminal cleanup');await expect.poll(()=>status(request,session.id)).toBe('completed');const terminal=await(await request.post(`${daemon}/api/sessions/${session.id}/terminals`,{data:{title:'Stubborn shell'}})).json();fs.writeFileSync(path.join(session.worktree_path,'.e2e-stubborn.sh'),"trap '' TERM\nprintf 'STUBBORN_READY\\n'\nwhile :; do sleep 1; done\n");await request.post(`${daemon}/api/terminals/${terminal.id}/input`,{data:{data:'sh .e2e-stubborn.sh\n'}});await expect.poll(async()=> (await replay(`ws://127.0.0.1:7455/api/terminals/${terminal.id}/stream?token=${token}`)).data).toContain('STUBBORN_READY');await request.post(`${daemon}/api/terminals/${terminal.id}/stop`);await expect.poll(async()=>{const list=await(await request.get(`${daemon}/api/sessions/${session.id}/terminals`)).json();return list.terminals.find((item:{id:string})=>item.id===terminal.id)?.status;}).toBe('stopped');await expect.poll(async()=>(await(await request.get(`${daemon}/api/diagnostics`)).json()).live_terminals).toBe(0);
 });
+
+test('registered projects survive an engine restart, normalize Git subfolders, and non-Git Codex turns keep their sandbox',async()=>{
+ const os=await import('node:os');const folder=fs.mkdtempSync(path.join(os.tmpdir(),'openade-local-project-e2e-'));fs.writeFileSync(path.join(folder,'README.md'),'Local project fixture\n');const base='http://127.0.0.1:7470',data=path.join(tmp,'project-recovery');let child=start(7470,data);
+ const send=(url:string,method='GET',body?:unknown)=>fetch(base+url,{method,headers,body:body===undefined?undefined:JSON.stringify(body)});
+ try{
+ await expect.poll(async()=>{try{return(await fetch(base+'/api/health')).status;}catch{return 0;}}).toBe(200);
+ expect((await send('/api/projects','POST',{path:folder})).status).toBe(201);
+ const fifo=path.join(folder,'blocked-pipe');spawnSync('mkfifo',[fifo]);expect((await send('/api/projects/directories?path='+encodeURIComponent(fifo))).status).toBe(400);fs.unlinkSync(fifo);
+ const normalized=await(await send('/api/projects','POST',{path:path.join(repo,'.agents')})).json();expect(normalized.path).toBe(fs.realpathSync(repo));
+ expect((await send('/api/projects','POST',{path:path.join(tmp,'fixture-repo.git')})).status).toBe(400);
+ const broken=path.join(folder,'broken-git');fs.mkdirSync(broken);fs.mkdirSync(path.join(broken,'.git'));const alias=path.join(folder,'git-alias');fs.symlinkSync(broken,alias);expect((await send('/api/projects','POST',{path:alias})).status).toBe(400);expect((await send('/api/sessions','POST',{title:'Reject broken Git alias',agent:'codex',prompt:'Do not run',checkout:'current',repo_root:alias})).status).toBeGreaterThanOrEqual(400);
+ await stopped(child);child=start(7470,data);await expect.poll(async()=>{try{return(await fetch(base+'/api/health')).status;}catch{return 0;}}).toBe(200);
+ const snapshot=await(await send('/api/state')).json();expect(snapshot.projects).toContain(fs.realpathSync(folder));expect(snapshot.projects).toContain(fs.realpathSync(repo));
+ const session=await(await send('/api/sessions','POST',{title:'Folder round trip',prompt:'Folder first turn',agent:'codex',checkout:'current',repo_root:folder})).json();expect(session.branch).toBe('');expect(session.worktree_path).toBe(fs.realpathSync(folder));
+ await expect.poll(async()=>(await(await send('/api/sessions/'+session.id)).json()).status).toBe('completed');
+ const argsPath=path.join(tmp,'provider-home/args',session.id+'.json');const args=()=>JSON.parse(fs.readFileSync(argsPath,'utf8')) as string[];expect(args()).toContain('--skip-git-repo-check');expect(args().slice(0,5)).toEqual(['exec','--json','--sandbox','workspace-write','--skip-git-repo-check']);
+ expect((await send('/api/sessions/'+session.id+'/messages','POST',{text:'Folder follow-up'})).status).toBe(202);await expect.poll(async()=>(await(await send('/api/sessions/'+session.id)).json()).status).toBe('completed');expect(args()).toContain('resume');expect(args()).toContain('--skip-git-repo-check');
+ fs.symlinkSync(path.join(repo,'README.md'),path.join(folder,'outside-link'));const files=await(await send('/api/sessions/'+session.id+'/files')).json();expect(files.files).toContain('README.md');expect(files.files).not.toContain('outside-link');expect((await send('/api/sessions/'+session.id+'/file?path=outside-link')).status).toBeGreaterThanOrEqual(400);
+ }finally{await stopped(child);fs.rmSync(folder,{recursive:true,force:true});}
+});

@@ -71,7 +71,7 @@ func (a *App) SelectRepository() (string, error) {
 		return "", fmt.Errorf("desktop window is not ready")
 	}
 	root, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
-		Title:                "Choose a Git repository",
+		Title:                "Choose a project folder",
 		CanCreateDirectories: true,
 	})
 	if err != nil || root == "" {
@@ -220,6 +220,13 @@ func (a *App) CopyText(text string) error {
 		return fmt.Errorf("desktop window is not ready")
 	}
 	return runtime.ClipboardSetText(a.ctx, text)
+}
+
+func (a *App) ReadClipboard() (string, error) {
+	if a.ctx == nil {
+		return "", fmt.Errorf("desktop window is not ready")
+	}
+	return runtime.ClipboardGetText(a.ctx)
 }
 
 func (a *App) Reconnect() error {

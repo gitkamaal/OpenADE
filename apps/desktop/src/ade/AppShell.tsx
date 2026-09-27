@@ -21,7 +21,7 @@ import {
 } from "@phosphor-icons/react";
 import { CSSProperties, FormEvent, Suspense, useEffect, useRef, useState } from "react";
 import {
-  createSession, getBranches,
+  createSession, getBranches, getProjectDirectories,
   ExternalConversation,
   listPullRequests,
   scanWorkspace,
@@ -38,6 +38,8 @@ import { SettingsNavigation, SettingsPage, SettingsSection } from "./SettingsPag
 import { Page, Sidebar } from "./Sidebar";
 import { useEngine, refreshEngine } from "./engine-store";
 import { ModelPicker } from "./ModelPicker";
+import {ProjectPalette} from "./ProjectPalette";
+import {CommandPalette} from "./CommandPalette";
 import { SitesPage } from "./SitesPage";
 
 const agents = [
@@ -59,6 +61,7 @@ const templates = [
 ];
 
 function AppShell() {
+  const [paletteOpen,setPaletteOpen]=useState(false);const [projectPaletteOpen,setProjectPaletteOpen]=useState(false);
   const [page, setPage] = useState<Page>("home");
   const [sessions, setSessions] = useState<Session[]>([]);
   const [projects, setProjects] = useState<string[]>([]);
@@ -212,7 +215,9 @@ function AppShell() {
       if(event.defaultPrevented || event.isComposing || event.repeat || (event.target instanceof Element && event.target.closest("[role=dialog]"))) return;
       if(shortcutMatches(event,preferences.shortcuts.sidebar)){event.preventDefault();toggleSidebar();}
       else if(shortcutMatches(event,preferences.shortcuts.settings)){event.preventDefault();page === "settings"?closeSettings():openPage("settings");}
-      else if(shortcutMatches(event,preferences.shortcuts.newSession)||(event.metaKey||event.ctrlKey)&&event.key.toLowerCase()==="k"){event.preventDefault();openComposer();}
+      else if(shortcutMatches(event,preferences.shortcuts.commandPalette)){event.preventDefault();window.dispatchEvent(new Event("openade-dismiss-menus"));setPaletteOpen(value=>!value);}
+      else if(shortcutMatches(event,preferences.shortcuts.newProject)){event.preventDefault();window.dispatchEvent(new Event("openade-dismiss-menus"));setProjectPaletteOpen(true);}
+      else if(shortcutMatches(event,preferences.shortcuts.newSession)){event.preventDefault();openComposer();}
       else if(page!=="settings"&&shortcutMatches(event,preferences.shortcuts.model)){event.preventDefault();window.dispatchEvent(new Event("openade-model-picker"));}
       else if(shortcutMatches(event,preferences.shortcuts.focusComposer)&&!selectedId){event.preventDefault();document.querySelector<HTMLTextAreaElement>("[data-main-composer]")?.focus();}
       else if(shortcutMatches(event,preferences.shortcuts.next)||shortcutMatches(event,preferences.shortcuts.previous)) {
@@ -282,11 +287,15 @@ function AppShell() {
         onResumeExternal={resumeExternalConversation}
         onProjectOrganization={(projectOrganization) => updatePreferences({ ...preferences, project_organization: projectOrganization })}
         onProjectSort={(projectSort) => updatePreferences({ ...preferences, project_sort: projectSort })}
+        onNewProject={()=>{window.dispatchEvent(new Event("openade-dismiss-menus"));setProjectPaletteOpen(true);}}
+        onSearch={()=>{window.dispatchEvent(new Event("openade-dismiss-menus"));setPaletteOpen(true);}}
         onNewSession={openComposer}
         onToggle={toggleSidebar}
       />}</div>}
       {sidebarOpen && page !== "settings" && <ResizeBoundary className="sidebar-resizer" label="Resize sidebar" width={preferences.sidebar_width} min={224} max={400} defaultWidth={256} onResize={width=>updatePreferences({...preferences,sidebar_width:width},false)} onCommit={width=>updatePreferences({...preferences,sidebar_width:width})}/> }
 
+      {paletteOpen&&<CommandPalette sessions={sessions} preferences={preferences} isDark={activeTheme.appearance==="dark"} onClose={()=>setPaletteOpen(false)} onOpen={id=>{void openSession(id);}} onAction={action=>{if(action==="new")openComposer();else if(action==="theme")updatePreferences({...preferences,color_scheme:activeTheme.appearance==="dark"?"light":"dark"});else if(action==="project")setProjectPaletteOpen(true);else openPage("settings");}}/>}
+      {projectPaletteOpen&&<ProjectPalette onClose={()=>setProjectPaletteOpen(false)} onCommands={()=>setPaletteOpen(true)} onAdded={path=>{void refresh();try{const draft=JSON.parse(sessionStorage.getItem("openade.home-draft")||"{}");sessionStorage.setItem("openade.home-draft",JSON.stringify({...draft,repo:path}));}catch{sessionStorage.setItem("openade.home-draft",JSON.stringify({repo:path}));}window.dispatchEvent(new CustomEvent("openade-select-project",{detail:path}));openComposer();}}/>}
       <main className="main-shell">
         {!sidebarOpen && <button className="sidebar-toggle icon-button" onClick={() => setSidebarOpen(true)} aria-label="Toggle sidebar"><SidebarSimple size={18} /></button>}
         {!connected && <div className="connection-banner"><SpinnerGap className="spin" /> {error || "Connecting to the local daemon…"}<button onClick={()=>{const bridge=window as typeof window & {go?:{main?:{App?:{Reconnect?:()=>Promise<void>}}}};void (bridge.go?.main?.App?.Reconnect?.()||Promise.resolve()).then(refresh).catch(reason=>setError(String(reason)));}}>Reconnect</button></div>}
@@ -315,7 +324,7 @@ function Home({ projects, meta, preferences, onCreated, onError }: { sessions: S
   const [prompt, setPrompt] = useState(() => sessionStorage.getItem("openade-template") ?? draft.current.prompt ?? "");
   const [repo, setRepo] = useState(draft.current.repo ?? projects[0] ?? "");
   const [agent, setAgent] = useState(draft.current.agent ?? preferences.default_agent);
-  const [model,setModel]=useState(draft.current.model??"");const [effort,setEffort]=useState(draft.current.effort??"");const [serviceTier,setServiceTier]=useState(draft.current.serviceTier??"");const [checkout,setCheckout]=useState<"worktree"|"current">(draft.current.checkout==="current"?"current":"worktree");const [branches,setBranches]=useState<string[]>([]);const [currentBranch,setCurrentBranch]=useState("HEAD");
+  const [model,setModel]=useState(draft.current.model??"");const [effort,setEffort]=useState(draft.current.effort??"");const [serviceTier,setServiceTier]=useState(draft.current.serviceTier??"");const [checkout,setCheckout]=useState<"worktree"|"current">(draft.current.checkout==="current"?"current":"worktree");const [branches,setBranches]=useState<string[]>([]);const [gitProject,setGitProject]=useState(true);const [currentBranch,setCurrentBranch]=useState("HEAD");
   const [ticket, setTicket] = useState("");
   const [ticketURL, setTicketURL] = useState("");
   const [base, setBase] = useState(draft.current.base??"HEAD");
@@ -324,6 +333,7 @@ function Home({ projects, meta, preferences, onCreated, onError }: { sessions: S
 
   const repositoryEdited=useRef(false);
   const updateRepository=(value:string)=>{repositoryEdited.current=true;setRepo(value);};
+  useEffect(()=>{const select=(event:Event)=>updateRepository((event as CustomEvent<string>).detail);window.addEventListener("openade-select-project",select);return()=>window.removeEventListener("openade-select-project",select);},[]);
   useEffect(() => { if (!repositoryEdited.current && !repo && projects[0]) setRepo(projects[0]); }, [projects, repo]);
   const previousDefault=useRef(preferences.default_agent);
   useEffect(() => { if(previousDefault.current!==preferences.default_agent){setAgent(preferences.default_agent);previousDefault.current=preferences.default_agent;} }, [preferences.default_agent]);
@@ -334,7 +344,7 @@ function Home({ projects, meta, preferences, onCreated, onError }: { sessions: S
     if ((preferredAvailable === false || preferences.disabled_providers.includes(preferences.default_agent)) && installed) setAgent(meta?.agents.find(item=>item.available&&!preferences.disabled_providers.includes(item.id))?.id ?? "shell");
   }, [meta, preferences.default_agent, preferences.disabled_providers]);
 
-  useEffect(()=>{if(!repo.trim()){setBranches([]);return;}let stale=false;const timer=window.setTimeout(()=>void getBranches(repo).then(value=>{if(!stale){setBranches(value.branches);setCurrentBranch(value.current||"HEAD");}}).catch(()=>{if(!stale)setBranches([]);}),250);return()=>{stale=true;clearTimeout(timer);};},[repo]);
+  useEffect(()=>{if(!repo.trim()){setBranches([]);return;}let stale=false;const timer=window.setTimeout(()=>void getBranches(repo).then(value=>{if(!stale){setGitProject(true);setBranches(value.branches);setCurrentBranch(value.current||"HEAD");}}).catch(async reason=>{try{const folder=await getProjectDirectories(repo);if(!stale){setBranches([]);setGitProject(folder.git!==false);if(folder.git===false)setCheckout("current");else onError(reason instanceof Error?reason.message:String(reason));}}catch{if(!stale)onError(reason instanceof Error?reason.message:String(reason));}}),250);return()=>{stale=true;clearTimeout(timer);};},[repo]);
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (!prompt.trim() || !repo.trim()) return;
@@ -367,7 +377,7 @@ function Home({ projects, meta, preferences, onCreated, onError }: { sessions: S
         {optionsOpen && <div className="composer-options"><label><span>Jira key</span><input value={ticket} onChange={event=>setTicket(event.target.value.toUpperCase())} placeholder="ADE-123"/></label><label><span>Ticket URL</span><input value={ticketURL} onChange={event=>setTicketURL(event.target.value)} placeholder="https://…/browse/ADE-123"/></label><label><span>Base branch</span><input value={base} onChange={event=>setBase(event.target.value)} placeholder="HEAD"/></label></div>}
         <div className="composer-toolbar"><button aria-label="Session options" aria-expanded={optionsOpen} type="button" className="round-action" onClick={()=>setOptionsOpen(value=>!value)}><Plus size={17}/></button><ModelPicker providers={agents.filter(item=>!preferences.disabled_providers.includes(item.id)).map(item=>({...item,available:item.id==="shell"||meta?.agents.find(candidate=>candidate.id===item.id)?.available!==false}))} onProviderChange={value=>{setAgent(value);setModel("");setEffort("");setServiceTier("");}} serviceTier={serviceTier} onTierChange={setServiceTier} provider={agent} models={meta?.agents.find(item=>item.id===agent)?.models} model={model} effort={effort} onChange={(model,effort)=>{setModel(model);setEffort(effort);}}/><button className="send-button" type="submit" aria-label="Start session" disabled={busy||!prompt.trim()||!repo.trim()}>{busy?<SpinnerGap className="spin"/>:<ArrowUp weight="bold"/>}</button></div>
       </form>
-      <div className="home-status"><Select icon={<Folder size={13}/>} aria-label="Checkout mode" value={checkout} onChange={e=>setCheckout(e.target.value as "current"|"worktree")}><option value="worktree">Isolated worktree</option><option value="current">Current checkout</option></Select><Select searchable icon={<GitBranch size={13}/>} aria-label="Starting branch" value={checkout==="current"?currentBranch:base} disabled={checkout==="current"} onChange={e=>setBase(e.target.value)}><option value="HEAD">HEAD</option>{[...new Set([...branches,...(currentBranch!=="HEAD"?[currentBranch]:[]),...(base!=="HEAD"?[base]:[])])].map(branch=><option key={branch}>{branch}</option>)}</Select></div>
+      <div className="home-status"><Select icon={<Folder size={13}/>} aria-label="Checkout mode" disabled={!gitProject} value={checkout} onChange={e=>setCheckout(e.target.value as "current"|"worktree")}><option value="worktree">Isolated worktree</option><option value="current">{gitProject?"Current checkout":"Folder workspace"}</option></Select><Select searchable icon={<GitBranch size={13}/>} aria-label="Starting branch" value={checkout==="current"?currentBranch:base} disabled={!gitProject||checkout==="current"} onChange={e=>setBase(e.target.value)}><option value="HEAD">HEAD</option>{[...new Set([...branches,...(currentBranch!=="HEAD"?[currentBranch]:[]),...(base!=="HEAD"?[base]:[])])].map(branch=><option key={branch}>{branch}</option>)}</Select></div>
     </section>
   </div>;
 }

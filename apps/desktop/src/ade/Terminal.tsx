@@ -23,7 +23,10 @@ export function TerminalWorkspace({ session, preferences }: { session: Session; 
   const engine=useEngine();
   const [terminals, setTerminals] = useState<ProjectTerminal[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [hidden, setHidden] = useState<Set<string>>(new Set());
+  const [tabOrder,setTabOrder]=useState<string[]>(()=>{try{const saved=JSON.parse(localStorage.getItem(`openade.terminal-order.${sessionId}`)??"[]");return Array.isArray(saved)&&saved.every(id=>typeof id==="string")?saved:[];}catch{return[];}});
+  const dragging=useRef<string|null>(null);
+  const loadClosed=()=>{try{const saved=JSON.parse(localStorage.getItem(`openade.closed-terminals.${sessionId}`)??"[]");return new Set<string>(Array.isArray(saved)?saved.filter(id=>typeof id==="string"):[]);}catch{return new Set<string>();}};
+  const [hidden, setHidden] = useState<Set<string>>(loadClosed);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const mountedRef = useRef(false);
@@ -43,7 +46,7 @@ export function TerminalWorkspace({ session, preferences }: { session: Session; 
   useEffect(() => {
     void refresh().catch((reason) => setError(String(reason)));
   }, [refresh,engine.sequence]);
-  useEffect(()=>setHidden(new Set()),[sessionId]);
+  useEffect(()=>setHidden(loadClosed()),[sessionId]);
 
   const openTerminal = async () => {
     setBusy(true);
@@ -76,13 +79,14 @@ export function TerminalWorkspace({ session, preferences }: { session: Session; 
   };
 
   const closeTerminal = async (terminal: ProjectTerminal) => {
-    if (terminal.status === "running") await stopTerminal(terminal.id).catch(() => undefined);
+    try{if (terminal.status === "running") await stopTerminal(terminal.id);}catch(reason){if(mountedRef.current)setError(reason instanceof Error?reason.message:String(reason));return;}
     if (!mountedRef.current) return;
-    setHidden((current) => new Set(current).add(terminal.id));
+    setHidden((current) => {const next=new Set(current).add(terminal.id);localStorage.setItem(`openade.closed-terminals.${sessionId}`,JSON.stringify([...next]));return next;});
     setActiveId((current) => current === terminal.id ? null : current);
   };
 
-  const visible = terminals.filter((terminal) => !hidden.has(terminal.id));
+  const visible = terminals.filter((terminal) => !hidden.has(terminal.id)).sort((a,b)=>(tabOrder.indexOf(a.id)+1||999999)-(tabOrder.indexOf(b.id)+1||999999));
+  const moveTab=(from:string,to:string)=>{const order=visible.map(item=>item.id);const start=order.indexOf(from),end=order.indexOf(to);if(start<0||end<0||start===end)return;order.splice(start,1);order.splice(end,0,from);setTabOrder(order);localStorage.setItem(`openade.terminal-order.${sessionId}`,JSON.stringify(order));};
   const active = visible.find((terminal) => terminal.id === activeId) ?? visible.at(-1) ?? null;
 
   return (
@@ -93,6 +97,15 @@ export function TerminalWorkspace({ session, preferences }: { session: Session; 
             type="button"
             className={active?.id === terminal.id ? "active" : ""}
             key={terminal.id}
+            data-terminal-id={terminal.id}
+            draggable
+            onDragStart={event=>{dragging.current=terminal.id;event.dataTransfer.effectAllowed="move";event.dataTransfer.setData("text/plain",terminal.id);}}
+            onDragOver={event=>{if(dragging.current){event.preventDefault();event.dataTransfer.dropEffect="move";}}}
+            onDrop={event=>{event.preventDefault();if(dragging.current)moveTab(dragging.current,terminal.id);dragging.current=null;}}
+            onDragEnd={()=>{dragging.current=null;}}
+            onAuxClick={event=>{if(event.button===1){event.preventDefault();void closeTerminal(terminal);}}}
+            onMouseDown={event=>{if(event.button===1)event.preventDefault();}}
+            onKeyDown={event=>{if(event.altKey&&(event.key==="ArrowLeft"||event.key==="ArrowRight")){event.preventDefault();event.stopPropagation();const index=visible.findIndex(item=>item.id===terminal.id),target=visible[index+(event.key==="ArrowRight"?1:-1)];if(target)moveTab(terminal.id,target.id);}}}
             onClick={() => setActiveId(terminal.id)}
           >
             <TerminalWindow /><span>{terminal.title}</span>
@@ -116,7 +129,7 @@ export function TerminalWorkspace({ session, preferences }: { session: Session; 
         <div className="terminal-empty">
           <span><TerminalWindow /></span>
           <strong>Project terminal</strong>
-          <p>Open an independent shell in this session’s isolated worktree.</p>
+          <p>{session.branch?"Open an independent shell in this session’s isolated worktree.":"Open an independent shell in this project folder."}</p>
           <div className="terminal-empty-actions"><button type="button" onClick={() => void openTerminal()} disabled={busy}><Plus /> New terminal</button>{["codex", "codex-cli", "claude", "claude-code"].includes(session.agent) && <button type="button" className="primary" onClick={() => void openAgentTUI()} disabled={busy}><Cpu /> Open {agentName(session.agent)} TUI</button>}</div>
         </div>
       )}

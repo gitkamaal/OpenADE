@@ -2,9 +2,9 @@ import {themeId,resolveTheme} from "./themes";
 export type ThemePreference = "graphite" | "dusk" | "paper" | "glass" | "system";
 export type SessionSurface = "chat" | "terminal";
 export type ActivityDetail = "compact" | "expanded";
-export type ProjectOrganization = "project" | "list";
-export type ProjectSort = "priority" | "updated" | "manual";
-export const defaultShortcuts: Record<string,string> = { sidebar:"Mod+B", panel:"Mod+R", files:"Mod+E", terminal:"Mod+J", newSession:"Mod+N", model:"Mod+/", settings:"Mod+,", next:"Ctrl+Tab", previous:"Ctrl+Shift+Tab", focusComposer:"Mod+L", browser:"Mod+Shift+B", diffs:"Mod+Shift+D", history:"Mod+Shift+H", closePanel:"Mod+Shift+W", nextPanel:"Mod+Alt+ArrowRight", previousPanel:"Mod+Alt+ArrowLeft", searchFiles:"Mod+P" };
+export type ProjectOrganization = "project" | "device" | "list";
+export type ProjectSort = "priority" | "updated" | "created" | "manual";
+export const defaultShortcuts: Record<string,string> = { commandPalette:"Mod+K",newProject:"Mod+Shift+N", sidebar:"Mod+B", panel:"Mod+R", files:"Mod+E", terminal:"Mod+J", newSession:"Mod+N", model:"Mod+/", settings:"Mod+,", next:"Ctrl+Tab", previous:"Ctrl+Shift+Tab", focusComposer:"Mod+L", browser:"Mod+Shift+B", diffs:"Mod+Shift+D", history:"Mod+Shift+H", closePanel:"Mod+Shift+W", nextPanel:"Mod+Alt+ArrowRight", previousPanel:"Mod+Alt+ArrowLeft", searchFiles:"Mod+P" };
 export interface Preferences {
  theme: ThemePreference; color_scheme: "system" | "light" | "dark"; dark_theme: string; light_theme: string; transparency:number; default_agent: string; session_surface: SessionSurface; activity_detail: ActivityDetail;
  sidebar_project_filter:string; project_root: string; project_organization: ProjectOrganization; project_sort: ProjectSort;
@@ -45,8 +45,8 @@ export function loadPreferences(): Preferences {
   result.transparency=Math.min(100,Math.max(0,result.transparency));
   if (!["default","opaque","frosted","liquid","transparent"].includes(result.glass)) result.glass="default";
   if (!["chat","terminal"].includes(result.session_surface)) result.session_surface="chat";
-  if (!["project","list"].includes(result.project_organization)) result.project_organization="project";
-  if (!["priority","updated","manual"].includes(result.project_sort)) result.project_sort="updated";
+  if (!["project","device","list"].includes(result.project_organization)) result.project_organization="project";
+  if (!["priority","updated","created","manual"].includes(result.project_sort)) result.project_sort="updated";
   result.sidebar_width=Math.min(400,Math.max(224,result.sidebar_width)); result.panel_width=Math.min(900,Math.max(360,result.panel_width));
   result.conversation_width=Math.min(1200,Math.max(560,result.conversation_width));
   result.interface_size=Math.min(20,Math.max(12,result.interface_size)); result.terminal_size=Math.min(32,Math.max(8,result.terminal_size)); result.code_size=Math.min(32,Math.max(8,result.code_size));
@@ -66,5 +66,5 @@ export function shouldSend(event:{key:string;shiftKey:boolean;metaKey:boolean;ct
  return !event.nativeEvent.isComposing && event.key === "Enter" && !event.shiftKey && (behavior === "enter" || event.metaKey || event.ctrlKey);
 }
 
-export const shortcutLabels:Record<string,string>={sidebar:"Toggle left sidebar",panel:"Toggle right sidebar",files:"Toggle files panel",terminal:"Toggle terminal",newSession:"New chat",model:"Open model picker",settings:"Settings",next:"Next chat",previous:"Previous chat",focusComposer:"Focus composer",browser:"Open browser",diffs:"Open diffs",history:"Open history",closePanel:"Close current panel",nextPanel:"Next panel",previousPanel:"Previous panel",searchFiles:"Search files"};
+export const shortcutLabels:Record<string,string>={commandPalette:"Search commands and chats",newProject:"New project",sidebar:"Toggle left sidebar",panel:"Toggle right sidebar",files:"Toggle files panel",terminal:"Toggle terminal",newSession:"New chat",model:"Open model picker",settings:"Settings",next:"Next chat",previous:"Previous chat",focusComposer:"Focus composer",browser:"Open browser",diffs:"Open diffs",history:"Open history",closePanel:"Close current panel",nextPanel:"Next panel",previousPanel:"Previous panel",searchFiles:"Search files"};
 export function displayShortcut(binding:string){return binding.split("+").map(key=>({Mod:/Mac|iPhone|iPad/.test(navigator.platform)?"⌘":"Ctrl",Ctrl:"⌃",Alt:"⌥",Shift:"⇧",ArrowLeft:"←",ArrowRight:"→",Tab:"⇥"} as Record<string,string>)[key]||key.toUpperCase()).join(" ");}
