@@ -101,3 +101,34 @@ Native app-only startup/idle samples were approximately 116 MiB before and 114 M
 after. Following the native flows the app was 139.6 MiB with sampled CPU 0.0%;
 no matched warm native baseline was captured. WebKit, WindowServer, GPU and
 providers are excluded.
+
+## September 26 — actual Transparent treatment
+
+User inspection found the refined Frosted treatment still too opaque. A separate
+Transparent choice now removes the entire native material/backdrop layer, leaves
+the NSWindow clear and non-opaque, and reduces only the HTML background wash to
+22%, with 6% sidebar/panel washes. It uses ordinary native window transparency,
+not Liquid Glass. New profiles default to Transparent; existing material choices
+are preserved. The native preview profile was explicitly switched to Transparent.
+Text/icons retain full opacity; a one-pixel text-edge shadow improves readability
+over bright backgrounds. Local dropdowns retain stronger fills and CSS frost.
+Opaque and native accessibility fallbacks remain solid, including light-theme
+shadow removal. macOS 10.13 uses Sidebar material for the optional Frosted fallback
+instead of the macOS 10.14 UnderWindowBackground material.
+
+The real native content-alpha fixture shows contrasting colors through the chat,
+sidebar, editor and terminal. Its sampled dark-mode canvas pixels across four
+columns were (189,50,9), (202,158,27), (0,138,165), (27,50,190); Opaque covered the
+same colors with solid (6,6,6)/(13,13,13). This verifies actual native WebKit
+compositing, not desktop capture. Foreground focus, editor paging, fresh fish shell
+echo/close, custom menus, light/dark/system transitions and native zoom/restore
+were exercised. Fourteen parity E2Es passed; affected material/accessibility checks
+were repeated after the text-shadow adjustment. Full-desktop color transmission
+and continuous recording remain unverified because the available Computer Use
+window capture replaces the backdrop and sometimes captures Stage Manager
+thumbnails. A native-snapshot walkthrough labels its content-alpha fixture.
+
+The delivered Transparent app's post-settings sample was 114,128 KiB RSS (111.5
+MiB) and 0.0% sampled CPU. This is app-only, excluding WebKit, WindowServer, GPU,
+providers and the daemon; there is no matched warm workload baseline. No
+whole-app performance or universal text-contrast claim is made.

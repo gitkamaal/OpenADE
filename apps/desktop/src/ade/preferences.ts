@@ -7,7 +7,7 @@ export const defaultShortcuts: Record<string,string> = { sidebar:"Mod+B", panel:
 export interface Preferences {
  theme: ThemePreference; color_scheme: "system" | "light" | "dark"; dark_theme: "graphite" | "dusk"; default_agent: string; session_surface: SessionSurface; activity_detail: ActivityDetail;
  project_root: string; project_organization: ProjectOrganization; project_sort: ProjectSort;
- send_behavior: "enter" | "mod-enter"; stop_on_escape: boolean; accent: string; glass: "default" | "opaque" | "frosted" | "liquid";
+ send_behavior: "enter" | "mod-enter"; stop_on_escape: boolean; accent: string; glass: "default" | "opaque" | "frosted" | "liquid" | "transparent";
  interface_font: "Geist" | "System UI"; interface_size: number; terminal_font:string; code_font:string; terminal_size: number; code_size: number; conversation_width:number;
  sidebar_width:number; panel_width:number; sidebar_open:boolean; sidebar_compact:boolean; sidebar_show_branch:boolean; sidebar_show_pr:boolean; sidebar_show_provider:boolean; sidebar_show_project_icon:boolean; sidebar_show_project_label:boolean;
  notifications:boolean; background_only:boolean; sounds:boolean; sound_completed:boolean; sound_input:boolean; sound_errors:boolean;
@@ -16,7 +16,7 @@ export interface Preferences {
 }
 export const defaultPreferences: Preferences = {
  theme:"graphite", color_scheme:"dark", dark_theme:"graphite", default_agent:"claude", session_surface:"chat", activity_detail:"compact", project_root:"", project_organization:"project", project_sort:"updated",
- send_behavior:"enter", stop_on_escape:false, accent:"default", glass:"frosted", interface_font:"Geist", interface_size:16, terminal_font:"Geist Mono", code_font:"Geist Mono", terminal_size:13, code_size:12.5, conversation_width:736,
+ send_behavior:"enter", stop_on_escape:false, accent:"default", glass:"transparent", interface_font:"Geist", interface_size:16, terminal_font:"Geist Mono", code_font:"Geist Mono", terminal_size:13, code_size:12.5, conversation_width:736,
  sidebar_width:256, panel_width:520, sidebar_open:true, sidebar_compact:true,sidebar_show_branch:false,sidebar_show_pr:false,sidebar_show_provider:true,sidebar_show_project_icon:false,sidebar_show_project_label:true,
  notifications:false, background_only:true, sounds:false, sound_completed:true, sound_input:true, sound_errors:true,
  word_wrap:false, show_hidden:false, show_ignored:false, autosave:false, sidebar_sections:[],session_sections:{},session_order:[], disabled_providers:[], archived_sessions:[], pinned_sessions:[], shortcuts:defaultShortcuts,
@@ -39,7 +39,7 @@ export function loadPreferences(): Preferences {
   if (!("dark_theme" in raw)) result.dark_theme = result.theme === "dusk" ? "dusk" : "graphite";
   if (!["system","light","dark"].includes(result.color_scheme)) result.color_scheme="dark";
   if (!["graphite","dusk"].includes(result.dark_theme)) result.dark_theme="graphite";
-  if (!["default","opaque","frosted","liquid"].includes(result.glass)) result.glass="default";
+  if (!["default","opaque","frosted","liquid","transparent"].includes(result.glass)) result.glass="default";
   if (!["chat","terminal"].includes(result.session_surface)) result.session_surface="chat";
   if (!["project","list"].includes(result.project_organization)) result.project_organization="project";
   if (!["priority","updated","manual"].includes(result.project_sort)) result.project_sort="updated";

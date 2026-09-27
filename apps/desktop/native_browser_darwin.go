@@ -60,14 +60,14 @@ var appearanceApp *App
 var appearanceMu sync.RWMutex
 
 func appearanceStatus(status int) string {
-	return map[int]string{0: "opaque", 1: "frosted", 2: "liquid", 3: "reduced-transparency", 4: "increased-contrast", 5: "liquid-fallback"}[status]
+	return map[int]string{0: "opaque", 1: "frosted", 2: "liquid", 3: "reduced-transparency", 4: "increased-contrast", 5: "liquid-fallback", 6: "transparent"}[status]
 }
 func (a *App) SetAppearance(scheme, material string) string {
 	appearanceMu.Lock()
 	appearanceApp = a
 	appearanceMu.Unlock()
 	appearance := map[string]int{"system": 0, "light": 1, "dark": 2}[scheme]
-	treatment := map[string]int{"opaque": 0, "frosted": 1, "liquid": 2}[material]
+	treatment := map[string]int{"opaque": 0, "frosted": 1, "liquid": 2, "transparent": 6}[material]
 	return appearanceStatus(int(C.openadeAppearance(C.int(appearance), C.int(treatment))))
 }
 

@@ -25,6 +25,16 @@ __attribute__((constructor)) static void prepareVisualE2E(void) {
    NSWindow *main=nil;
    for(NSWindow *candidate in NSApp.windows)if([candidate.title isEqualToString:@"OpenADE"])main=candidate;
    if(!main)return;
+   if (strcmp(getenv("OPENADE_VISUAL_E2E"),"content")==0) {
+    // Window-only captures omit other windows. This alternate fixture checks
+    // real WebKit alpha over a native sibling, not desktop transmission.
+    NSView *root=main.contentView;
+    NSView *bands=[[[OpenADEContrastBackdrop alloc]initWithFrame:root.bounds]autorelease];
+    bands.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable;
+    [root addSubview:bands positioned:NSWindowBelow relativeTo:nil];
+    fprintf(stderr,"Native content-alpha fixture installed (not desktop capture)\n");
+    return;
+   }
    backdrop=[[NSWindow alloc]initWithContentRect:main.screen.visibleFrame styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
    backdrop.title=@"OpenADE visual E2E backdrop";
    backdrop.contentView=[[[OpenADEContrastBackdrop alloc]initWithFrame:backdrop.contentView.bounds]autorelease];

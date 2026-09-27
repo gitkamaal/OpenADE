@@ -18,6 +18,10 @@ extern void openadeAppearanceChanged(int status);
 @end
 
 static const char materialKey;
+static NSVisualEffectMaterial desktopMaterial(void) {
+ if (@available(macOS 10.14, *)) return NSVisualEffectMaterialUnderWindowBackground;
+ return NSVisualEffectMaterialSidebar;
+}
 NSView *openadeContentHost(NSWindow *window) {
  OpenADEMaterial *material = objc_getAssociatedObject(window, &materialKey);
  return material.host ?: window.contentView;
@@ -55,7 +59,8 @@ NSView *openadeContentHost(NSWindow *window) {
  if (@available(macOS 26.0, *)) liquid = self.status == 2 && NSClassFromString(@"NSGlassEffectView") != nil;
  #endif
  if (self.status == 2 && !liquid) self.status = 5;
- BOOL translucent = self.status == 1 || self.status == 2 || self.status == 5;
+ BOOL clear = self.status == 6;
+ BOOL translucent = clear || self.status == 1 || self.status == 2 || self.status == 5;
  window.opaque = !translucent;
  window.backgroundColor = translucent ? NSColor.clearColor : NSColor.windowBackgroundColor;
  NSView *root = window.contentView;
@@ -70,11 +75,13 @@ NSView *openadeContentHost(NSWindow *window) {
   [root addSubview:self.host];
  }
  // Reuse the material while changing palettes; rebuild only when its type changes.
- NSString *kind = !translucent ? @"solid" : liquid ? @"liquid" : @"frosted";
- if (![self.effect.identifier isEqualToString:kind]) {
+ NSString *kind = !translucent ? @"solid" : clear ? @"clear" : liquid ? @"liquid" : @"frosted";
+ // Clear intentionally has no material view: desktop pixels pass through the
+ // transparent window and WebKit canvas. Only CSS palette washes remain.
+ if (clear || ![self.effect.identifier isEqualToString:kind]) {
   [self.effect removeFromSuperview]; self.effect = nil;
   [self.backdrop removeFromSuperview]; self.backdrop = nil;
-  if (translucent) {
+  if (translucent && !clear) {
    #if __MAC_OS_X_VERSION_MAX_ALLOWED >= 260000
    if (@available(macOS 26.0, *)) {
     if (liquid) {
@@ -83,7 +90,7 @@ NSView *openadeContentHost(NSWindow *window) {
      // Glass samples within this window. A public behind-window material
      // supplies the actual desktop before glass adds its optical edge.
      NSVisualEffectView *backdrop = [[[NSVisualEffectView alloc] initWithFrame:root.bounds] autorelease];
-     backdrop.material = NSVisualEffectMaterialUnderWindowBackground;
+     backdrop.material = desktopMaterial();
      backdrop.blendingMode = NSVisualEffectBlendingModeBehindWindow;
      backdrop.state = NSVisualEffectStateActive;
      // Thin only the background material, never the window or WebKit content.
@@ -100,7 +107,7 @@ NSView *openadeContentHost(NSWindow *window) {
    #endif
    if (!self.effect) {
     NSVisualEffectView *frost = [[[NSVisualEffectView alloc] initWithFrame:root.bounds] autorelease];
-    frost.material = NSVisualEffectMaterialUnderWindowBackground;
+    frost.material = desktopMaterial();
     frost.blendingMode = NSVisualEffectBlendingModeBehindWindow;
     frost.state = NSVisualEffectStateActive;
     frost.alphaValue = 0.40;
