@@ -59,8 +59,7 @@ NSView *openadeContentHost(NSWindow *window) {
  if (@available(macOS 26.0, *)) liquid = self.status == 2 && NSClassFromString(@"NSGlassEffectView") != nil;
  #endif
  if (self.status == 2 && !liquid) self.status = 5;
- BOOL clear = self.status == 6;
- BOOL translucent = clear || self.status == 1 || self.status == 2 || self.status == 5;
+ BOOL translucent = self.status == 1 || self.status == 2 || self.status == 5;
  window.opaque = !translucent;
  window.backgroundColor = translucent ? NSColor.clearColor : NSColor.windowBackgroundColor;
  NSView *root = window.contentView;
@@ -75,13 +74,11 @@ NSView *openadeContentHost(NSWindow *window) {
   [root addSubview:self.host];
  }
  // Reuse the material while changing palettes; rebuild only when its type changes.
- NSString *kind = !translucent ? @"solid" : clear ? @"clear" : liquid ? @"liquid" : @"frosted";
- // Clear intentionally has no material view: desktop pixels pass through the
- // transparent window and WebKit canvas. Only CSS palette washes remain.
- if (clear || ![self.effect.identifier isEqualToString:kind]) {
+ NSString *kind = !translucent ? @"solid" : liquid ? @"liquid" : @"frosted";
+ if (![self.effect.identifier isEqualToString:kind]) {
   [self.effect removeFromSuperview]; self.effect = nil;
   [self.backdrop removeFromSuperview]; self.backdrop = nil;
-  if (translucent && !clear) {
+  if (translucent) {
    #if __MAC_OS_X_VERSION_MAX_ALLOWED >= 260000
    if (@available(macOS 26.0, *)) {
     if (liquid) {
@@ -110,7 +107,10 @@ NSView *openadeContentHost(NSWindow *window) {
     frost.material = desktopMaterial();
     frost.blendingMode = NSVisualEffectBlendingModeBehindWindow;
     frost.state = NSVisualEffectStateActive;
-    frost.alphaValue = 0.40;
+    // Fading this view mixes a sharp desktop copy back into its blur. Keep
+    // the native material at full strength; palette background washes supply
+    // adjustable coverage above it, independently of foreground content.
+    frost.alphaValue = 1.0;
     self.effect = frost;
    }
    self.effect.identifier = kind;

@@ -786,12 +786,6 @@ img.provider-claude{filter:brightness(0) saturate(100%) invert(58%) sepia(44%) s
  --line-soft:color-mix(in srgb,var(--text) 8%,transparent);
 }
 .ade.native-window:is(.material-frosted,.material-default.default-frosted) :is(.composer,.session-composer){border-color:var(--line);box-shadow:inset 0 1px 0 color-mix(in srgb,var(--text) 7%,transparent),0 5px 18px #00000012}
-/* Clear is real window alpha, with restrained background-only palette tints.
-   Keep readable foregrounds and stronger local popovers over arbitrary desktops. */
-.ade.native-window.material-transparent{
- --popup-fill:color-mix(in srgb,var(--popup-surface,var(--surface)) 88%,transparent);
- text-shadow:none;
-}
 /* All solid fallbacks share the selected palette, including xterm. */
 .ade.native-window:is([data-native-material="opaque"],[data-native-material="reduced-transparency"],[data-native-material="increased-contrast"],[data-native-material="unsupported"]){
  text-shadow:none;
@@ -884,3 +878,43 @@ img.provider-claude{filter:brightness(0) saturate(100%) invert(58%) sepia(44%) s
 .preference-switch>span,.sidebar-compact-switch>i{position:absolute;display:block;z-index:2;top:5.6px;left:1.6px;width:24px;height:17.6px;box-sizing:border-box;border:1px solid #0000001a;border-radius:999px;background:linear-gradient(#fafafa,#e9e9e9);box-shadow:0 1px 2px #0003;transform:translateX(0);transition:transform 180ms cubic-bezier(.33,1,.68,1)}
 .preference-switch[aria-checked=true]>span,.sidebar-compact-switch.on>i{transform:translateX(17.6px);background:linear-gradient(#fafafa,#e9e9e9)}
 .sidebar-view-menu>button[role=menuitemcheckbox]{height:30px;min-height:30px;padding-block:0}
+
+/* Zeron established-thread composer: a 49px pill morphs into a two-row draft. */
+.session-composer-dock{margin-bottom:12px}
+.ade .session-composer{position:relative;border-radius:26px;padding:0;min-height:49px;display:block}
+.ade .session-composer textarea{display:block;box-sizing:border-box;resize:none;min-height:0;max-height:260px;font-size:calc(14px * var(--interface-scale));line-height:calc(22.75px * var(--interface-scale));padding:10px 16px;border:0;background:transparent;width:100%;height:var(--composer-text-height);overflow-y:auto}
+.ade .session-composer.compact textarea{padding:12px var(--composer-cluster-width) 12px 44px;overflow:hidden}
+.ade .session-composer>.composer-footer{display:flex;flex-wrap:nowrap;min-height:42px;height:42px;padding:0 12px 8px;gap:8px;box-sizing:border-box}
+.ade .session-composer.compact>.composer-footer{position:absolute;inset:0 8px;height:47px;min-height:0;padding:0;pointer-events:none}
+.session-composer.compact .command-trigger{position:absolute;left:0}
+.session-composer.compact .model-picker{margin-left:auto;flex:0 1 auto;max-width:calc(100% - 80px)}
+.session-composer .composer-footer>button,.session-composer .model-picker{pointer-events:auto}
+.ade .session-composer .command-trigger{width:28px;height:28px;flex:0 0 28px;padding:6px}
+.ade .session-composer .model-trigger{font-size:12px;max-width:100%;padding:4px;gap:5px}
+.ade .session-composer .model-trigger>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:0 1 auto}
+.ade .session-composer .model-picker{min-width:0;flex:0 1 auto}
+.ade .session-composer .send-button{width:32px;height:32px;flex:0 0 32px;margin-left:auto;border-radius:50%;order:0}
+.session-composer.compact .send-button{margin-left:0}
+.session-composer.compact .model-menu{left:auto;right:0}
+.session-composer.expanded .model-menu{left:0;right:auto}
+.composer-stop-glyph{width:11px;height:11px;background:currentColor;border-radius:2px}
+.ade .session-context{display:flex;align-items:center;justify-content:flex-start;gap:12px;min-height:26px;padding:3px 12px 0;margin:0;font-size:11px;overflow:hidden}
+.session-context>span{display:flex;align-items:center;gap:5px;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.session-context svg{width:12px;height:12px;flex-shrink:0}
+.session-context .runtime-chip{margin-left:auto;flex:0 1 auto;font-size:10px;overflow:hidden;text-overflow:ellipsis}
+.ade .chat-user-turn{max-width:80%;margin:0 0 22px;align-self:flex-end;width:fit-content}
+.ade .chat-user-turn>div{max-width:100%;width:100%;box-sizing:border-box;padding:10px 16px;font-size:calc(14px * var(--interface-scale));line-height:calc(22px * var(--interface-scale));border:0;background:color-mix(in srgb,var(--text) 8%,transparent)}
+.ade.theme-light .chat-user-turn>div{background:color-mix(in srgb,var(--text) 4%,transparent)}
+.ade .chat-assistant-turn,.ade .markdown-body{font-size:calc(14px * var(--interface-scale));line-height:calc(22px * var(--interface-scale))}
+.ade .chat-assistant-turn{margin-bottom:22px}
+@container composer (max-width:460px){.session-context .runtime-chip{max-width:35%;margin-left:auto}.ade .session-composer .model-trigger{width:auto}}
+
+.ade .home-hero{width:min(100%,calc(var(--conversation-width) + 32px))}
+.ade .home-hero>.source-new-composer{width:100%;max-width:none;border-radius:26px}
+.ade .source-new-composer textarea{display:block;min-height:76px;max-height:260px;padding:10px 16px;font-size:calc(14px * var(--interface-scale));line-height:calc(22.75px * var(--interface-scale));resize:none;overflow-y:auto;box-sizing:border-box}
+.ade .source-new-composer .composer-toolbar{height:42px;min-height:42px;padding:0 12px 8px;box-sizing:border-box}
+.user-prompt-text{white-space:pre-wrap;overflow-wrap:anywhere;line-height:inherit}
+.user-prompt-text.folded{max-height:calc(110px * var(--interface-scale));overflow:hidden}
+.user-prompt-fold{display:flex;margin:4px auto -6px;padding:2px 12px;border:0;background:transparent;color:var(--muted);cursor:pointer}
+.user-prompt-fold svg{width:14px;height:14px}.user-prompt-fold svg.expanded{transform:rotate(180deg)}
+@media(prefers-reduced-motion:reduce){.composer-morphing{transition:none}}

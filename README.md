@@ -24,7 +24,7 @@ The desktop window is only a client. Closing it does not stop active agents or p
 - **GitHub delivery** — list pull requests and push a session branch into a draft PR through the locally authenticated `gh` CLI.
 - **Jira-linked work** — associate a Jira key and URL with a session and fetch ticket details through the local `jira` CLI.
 - **Reusable workflows** — start from focused delivery, debugging, review, and testing prompts; provider commands and local skills are available from chat.
-- **Themes** — all 30 pinned Zeron built-in variants, independent Light/Dark/System choices, adjustable Transparent/Frosted/Liquid Glass/Opaque backgrounds, and shared editor/diff/terminal palettes. Native Liquid Glass uses supported macOS 26+ APIs; browser frost is an approximation.
+- **Themes** — all 30 pinned Zeron built-in variants, independent Light/Dark/System choices, adjustable Frosted/Liquid Glass backgrounds and Opaque mode, and shared editor/diff/terminal palettes. Native Liquid Glass uses supported macOS 26+ APIs; browser frost is an approximation.
 - **Sites surface** — presentation-only Sites UI with search, refresh, and create hooks. Persistence and execution are intentionally not implemented here.
 
 ## Product tour

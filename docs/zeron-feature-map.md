@@ -5,7 +5,7 @@ Pinned Zeron v0.2.92, `68ef78bb1e6fa0b84feeb68c382230f8c560f96a`. Based on the s
 | Feature | Capability status | OpenADE/source location | Behavior, visual alignment or gap |
 |---|---|---|---|
 | Window shell | Partial | AppShell/native_material | Regular AppKit window, header and five-icon OpenADE rail retained intentionally; Zeron tabs/chrome differ. |
-| Transparent/Frosted/Liquid/Opaque | Implemented | AppShell/preferences/native_material | Adjustable background washes; public NSGlassEffectView on macOS 26; public NSVisualEffectView fallback; no whole-interface opacity. |
+| Frosted/Liquid/Opaque | Implemented | AppShell/preferences/native_material | Adjustable background washes capped at 90%; legacy Transparent migrates to Frosted per user preference; public NSGlassEffectView on macOS 26; public NSVisualEffectView fallback; no whole-interface opacity. |
 | Accessibility material fallback | Implemented | AppShell/native_material | Reduce Transparency and Increase Contrast resolve solid surfaces. Browser test simulates bridge events; host OS setting unchanged. |
 | Built-in theme library | Implemented | themes/SettingsPage | All 19 source families and 30 resolved variants; independent light/dark selection and System following. |
 | Theme import/remove/reload | Gap | theme_library.rs | Built-in catalog only; no custom theme import UI or watcher. |
@@ -31,7 +31,7 @@ Pinned Zeron v0.2.92, `68ef78bb1e6fa0b84feeb68c382230f8c560f96a`. Based on the s
 | Draft attachment persistence | Gap | attachments.rs | No image/file attachment draft strip, picker/drop/paste upload or lightbox. |
 | Model/provider dropdown | Partial | ModelPicker | Custom searchable menu, provider rail, favorites, keyboard selection, focus return. Source complete provider catalogs/traits/hover behavior differs. |
 | Reasoning and service tier | Implemented | ModelPicker/SessionWorkspace | Advertised Codex model options persist and affect real fixture CLI arguments. |
-| Composer auto-grow/compact flip | Partial | AppShell/SessionWorkspace | Auto-size text area; source exact measured pill/expanded morph differs. |
+| Composer auto-grow/compact flip | Partial | AppShell/SessionWorkspace | Source 49px pill, 200px text capacity, 32px hysteresis, 150ms resize settle, 60–260px thread textarea and 76px new-chat minimum; controls move right/left and metadata sits below. Rich attachments and exact animated morph remain different. |
 | Send/new turn/Stop | Implemented | SessionWorkspace/api | Real daemon turn lifecycle; startup failure shown, retry starts fresh identity. |
 | Steering active provider run | Partial | MessageQueue/daemon | Explicit queued next turns; not source persistent app-server/ACP mid-run steering. |
 | Queued messages | Implemented | MessageQueue | Queue session/turn association, edit/remove/send-next and restart persistence. |
@@ -176,7 +176,7 @@ All 66 public fields of current `UiSettings` are enumerated. “No counterpart�
 | ToggleChanges | Toggle right sidebar / Mod+R |
 | ToggleFiles | Toggle files / Mod+E |
 | AddSpacePalette | Workspace settings; partial, no palette |
-| ToggleCommandPalette | Gap; session search + composer commands are separate |
+| ToggleCommandPalette | Global command/history palette; keyboard navigation, source action shortcuts and theme action |
 | OpenModelPicker | Mod+/ + Choose model |
 | NewSession | Mod+N + header plus |
 | OpenSettings | Mod+, + footer gear |

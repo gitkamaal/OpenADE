@@ -9,8 +9,8 @@ import {
   TerminalWindow,
   Wrench,
 } from "@phosphor-icons/react";
-import { memo, useEffect, useRef, useState } from "react";
-import { relativeTime, Session } from "./api";
+import { memo, useLayoutEffect, useEffect, useRef, useState } from "react";
+import { Session } from "./api";
 import { ChatActivity, createTranscriptParser } from "./chat-model";
 import { MarkdownMessage } from "./MarkdownMessage";
 
@@ -25,12 +25,9 @@ export function ChatTimeline({ session, output, activityExpanded = false }: { se
   return (
     <div className="chat-timeline" aria-live="polite">
       {turns.length>visibleCount&&<button className="load-earlier" onClick={()=>setVisibleCount(count=>count+80)}>Show earlier messages</button>}
-      {turns.slice(-visibleCount).map((turn, index) =>
+      {turns.slice(-visibleCount).map((turn) =>
         turn.role === "user" ? (
-          <article className="chat-user-turn" key={turn.id}>
-            <div>{turn.markdown}</div>
-            <small>You · {index === 0 ? relativeTime(session.created_at) : "now"}</small>
-          </article>
+          <UserTurn key={turn.id} text={turn.markdown} />
         ) : (
           <AssistantTurn
             key={turn.id}
@@ -45,6 +42,18 @@ export function ChatTimeline({ session, output, activityExpanded = false }: { se
     </div>
   );
 }
+
+const UserTurn=memo(function UserTurn({text}:{text:string}){
+ const ref=useRef<HTMLDivElement>(null);
+ const [long,setLong]=useState(false),[expanded,setExpanded]=useState(false);
+ useLayoutEffect(()=>{
+  const node=ref.current;if(!node)return;
+  const measure=()=>setLong(node.scrollHeight>parseFloat(getComputedStyle(node).lineHeight)*5+1);
+  const observer=new ResizeObserver(measure);observer.observe(node);measure();
+  return()=>observer.disconnect();
+ },[text]);
+ return <article className="chat-user-turn"><div><div ref={ref} className={`user-prompt-text ${!expanded?"folded":""}`}>{text}</div>{long&&<button className="user-prompt-fold" aria-label={expanded?"Collapse message":"Expand message"} aria-expanded={expanded} onClick={()=>setExpanded(value=>!value)}><CaretDown className={expanded?"expanded":""}/></button>}</div></article>;
+});
 
 const AssistantTurn=memo(function AssistantTurn({
   markdown,

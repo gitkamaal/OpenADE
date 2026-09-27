@@ -7,7 +7,7 @@ const themes:Theme[]=(JSON.parse(fs.readFileSync(new URL('../src/ade/theme-catal
 const output=process.env.OPENADE_AUDIT_OUTPUT;
 async function shot(page:import('@playwright/test').Page,name:string){if(output){fs.mkdirSync(output,{recursive:true});await page.screenshot({path:path.join(output,name+'.png')});}}
 async function bridge(page:import('@playwright/test').Page,legacy=false){await page.addInitScript(({legacy})=>{
- if(legacy&&!localStorage.getItem("openade.audit-seeded"))localStorage.setItem('openade.preferences',JSON.stringify({theme:'dusk',dark_theme:'dusk',glass:'transparent',accent:'default'}));
+ if(legacy&&!localStorage.getItem("openade.audit-seeded"))localStorage.setItem('openade.preferences',JSON.stringify({theme:'dusk',dark_theme:'dusk',glass:'transparent',transparency:100,accent:'default'}));
  Object.assign(window,{go:{main:{App:{SetAppearance:async(_scheme:string,material:string)=>material}}},runtime:{EventsOn:(_name:string,callback:(status:string)=>void)=>{Object.assign(window,{appearanceChanged:callback});return()=>{};}}});
 },{legacy});}
 
@@ -15,7 +15,7 @@ test('theme catalog, legacy migration, independent System variants and transpare
  test.setTimeout(90000);await page.setViewportSize({width:1480,height:920});await bridge(page,true);await ready(page);
  await page.getByLabel('Open settings').click();await page.getByRole('tab',{name:'Appearance',exact:true}).click();
  await expect(page.getByLabel('Dark theme',{exact:true})).toHaveAttribute('data-value','gruvbox-dark');
- await expect(page.getByLabel('Background transparency')).toHaveValue('78');
+ await expect(page.getByLabel('Background transparency')).toHaveValue('90');await expect(page.getByLabel('Glass',{exact:true})).toHaveAttribute('data-value','frosted');await page.getByLabel('Glass',{exact:true}).click();await expect(page.getByRole('option',{name:'Transparent',exact:true})).toHaveCount(0);await page.keyboard.press('Escape');
  // Subsequent reloads must read saved preferences, not re-seed the legacy fixture.
  await page.evaluate(()=>localStorage.setItem('openade.audit-seeded','1'));
  const timings:number[]=[];
@@ -31,7 +31,7 @@ test('theme catalog, legacy migration, independent System variants and transpare
  await choose(page,'Dark theme','catppuccin-mocha');await choose(page,'Light theme','catppuccin-latte');await page.getByRole('button',{name:'System',exact:true}).click();
  await page.emulateMedia({colorScheme:'light'});await expect(page.locator('.ade')).toHaveAttribute('data-theme-id','catppuccin-latte');
  await page.emulateMedia({colorScheme:'dark'});await expect(page.locator('.ade')).toHaveAttribute('data-theme-id','catppuccin-mocha');
- await choose(page,'Glass','transparent');const slider=page.getByLabel('Background transparency');await slider.focus();await slider.press('Home');await slider.press('ArrowRight');await expect(slider).toHaveValue('1');await slider.press('End');await expect(slider).toHaveValue('100');
+ await choose(page,'Glass','frosted');const slider=page.getByLabel('Background transparency');await slider.focus();await slider.press('Home');await slider.press('ArrowRight');await expect(slider).toHaveValue('1');await slider.press('End');await expect(slider).toHaveValue('90');
  await slider.press('Home');for(let step=0;step<55;step++)await slider.press('ArrowRight');await expect(page.locator('.ade')).toHaveCSS('opacity','1');
  expect(await page.locator('.ade').evaluate(el=>getComputedStyle(el).getPropertyValue('--glass-coverage'))).toBe('45%');
  await choose(page,'Glass','liquid');await expect(slider).toHaveValue('55');await shot(page,'03-liquid-appearance');
@@ -60,7 +60,7 @@ test('live themes reach editor and terminal while accessibility fallbacks preser
  await bridge(page);await create(request,'Palette workspace audit');await ready(page);await open(page,'Palette workspace audit');await page.getByLabel('Toggle files panel').click();await page.getByRole('treeitem',{name:'README.md',exact:true}).click();await page.getByRole('textbox',{name:'Edit README.md',exact:true}).focus();await shot(page,'06-editor-focus');await panel(page,'Diffs');await shot(page,'07-diff-workspace');await panel(page,'Terminal');await page.getByLabel('New terminal',{exact:true}).click();
  await page.getByLabel('Open settings').click();await page.getByRole('tab',{name:'Appearance',exact:true}).click();await choose(page,'Glass','opaque');await choose(page,'Dark theme','dracula');await page.getByRole('button',{name:'Back',exact:true}).click();await panel(page,'Terminal');await expect(page.locator('.xterm-viewport').first()).toHaveCSS('background-color','rgb(40, 42, 54)');
  const input=page.locator('.xterm-helper-textarea').first();await input.focus();await input.pressSequentially('echo THEME-FOCUS-OK');await input.press('Enter');await expect(page.locator('.xterm-rows').first()).toContainText('THEME-FOCUS-OK');await shot(page,'08-terminal-theme');
- await page.getByLabel('Open settings').click();await page.getByRole('tab',{name:'Appearance',exact:true}).click();await choose(page,'Dark theme','nord');await choose(page,'Glass','transparent');await page.getByRole('button',{name:'Back',exact:true}).click();await panel(page,'Terminal');await input.focus();await expect(page.locator('.xterm-viewport').first()).toHaveCSS('background-color','rgba(0, 0, 0, 0)');
+ await page.getByLabel('Open settings').click();await page.getByRole('tab',{name:'Appearance',exact:true}).click();await choose(page,'Dark theme','nord');await choose(page,'Glass','frosted');await page.getByRole('button',{name:'Back',exact:true}).click();await panel(page,'Terminal');await input.focus();await expect(page.locator('.xterm-viewport').first()).toHaveCSS('background-color','rgba(0, 0, 0, 0)');
  await page.evaluate(()=>(window as typeof window&{appearanceChanged:(status:string)=>void}).appearanceChanged('reduced-transparency'));await expect(page.locator('.xterm-viewport').first()).toHaveCSS('background-color','rgb(46, 52, 64)');await expect(input).toBeFocused();await page.locator('.terminal-workspace').getByRole('button',{name:/^Close Terminal/}).click();
 });
 
@@ -128,4 +128,28 @@ test('New project uses a local folder palette, registers without a chat and supp
  await ready(page);await page.getByLabel('Filter projects',{exact:true}).click();await page.getByRole('button',{name:'New project…',exact:true}).click();const dialog=page.getByRole('dialog',{name:'New project',exact:true});await expect(dialog).toBeVisible();await dialog.getByRole('option',{name:'Local',exact:true}).click();const search=dialog.getByRole('combobox',{name:'Search locations and folders',exact:true});await expect(search).toBeFocused();await search.fill(folder);await search.press('Enter');await expect(dialog.locator('.project-palette-add>span')).toHaveText('Folder workspace');await search.fill(path.join(folder,'README.md'));await search.press('Enter');await expect(dialog.getByRole('alert')).toContainText('choose an existing folder');await expect(dialog.getByRole('button',{name:'Add project',exact:true})).toBeDisabled();await search.fill(folder);await search.press('Enter');await expect(dialog.getByRole('button',{name:'Add project',exact:true})).toBeEnabled();await dialog.getByRole('button',{name:'Add project',exact:true}).click();await expect(dialog).toHaveCount(0);await expect(page.getByRole('combobox',{name:'Choose project',exact:true})).toHaveAttribute('data-value',fs.realpathSync(folder));await expect(page.getByRole('combobox',{name:'Checkout mode',exact:true})).toBeDisabled();await page.getByLabel('New session prompt').fill('Plain folder native chat');await choose(page,'Provider','codex');await page.getByLabel('Start session',{exact:true}).click();await expect(page.locator('.session-title h1')).toHaveText('Plain folder native chat');await expect(page.locator('.session-title code')).toHaveText('Folder workspace');await page.getByLabel('Toggle files panel').click();await page.getByRole('treeitem',{name:'README.md',exact:true}).click();await expect(page.getByRole('textbox',{name:'Edit README.md',exact:true})).toContainText('Plain folder');await panel(page,'Diffs');await expect(page.getByText('Git diffs and staging are available in Git projects.',{exact:true})).toBeVisible();await page.getByRole('button',{name:'Home',exact:true}).click();await page.reload();await page.getByLabel('Filter projects',{exact:true}).click();await expect(page.locator(`.select-popover [role=option][data-value="${fs.realpathSync(folder)}"]`)).toBeVisible();await page.keyboard.press('Escape');
  const relative=await request.get('http://127.0.0.1:7455/api/projects/directories?path=../../');expect(relative.status()).toBe(400);const invalid=await request.post('http://127.0.0.1:7455/api/projects',{data:{path:path.join(folder,'README.md')}});expect(invalid.status()).toBe(400);
  }finally{fs.rmSync(folder,{recursive:true,force:true});}
+});
+
+
+test('Zeron composer pill expands, grows, collapses and anchors its custom model menu',async({page,request})=>{
+ await page.setViewportSize({width:1480,height:920});await create(request,'Composer geometry audit');await ready(page);const home=(await page.locator('.source-new-composer').boundingBox())!;expect(home.width).toBe(768);expect(home.height).toBeCloseTo(120,1);await open(page,'Composer geometry audit');
+ const form=page.locator('.session-composer'),input=page.getByLabel('Session message');
+ await expect(form).toHaveAttribute('data-layout','compact');expect((await form.boundingBox())!.height).toBe(49);
+ await input.fill('Short draft');await expect(form).toHaveAttribute('data-layout','compact');
+ await input.fill('First line\nSecond line');await expect(form).toHaveAttribute('data-layout','expanded');expect((await form.boundingBox())!.height).toBeGreaterThanOrEqual(104);
+ await page.getByLabel('Choose model',{exact:true}).click();await expect(page.getByLabel('Search models')).toBeFocused();await page.keyboard.press('Escape');await expect(page.getByLabel('Choose model',{exact:true})).toBeFocused();
+ await input.fill(Array.from({length:30},(_,i)=>`Draft line ${i}`).join('\n'));expect((await form.boundingBox())!.height).toBeLessThanOrEqual(304);expect(await input.evaluate(el=>el.scrollHeight>el.clientHeight)).toBe(true);
+ await input.fill('');await expect(form).toHaveAttribute('data-layout','compact');expect((await form.boundingBox())!.height).toBe(49);
+ await input.fill('A longer single line '.repeat(8));await expect(form).toHaveAttribute('data-layout','expanded');await input.fill('Draft preserved');await expect(form).toHaveAttribute('data-layout','compact');
+ await page.setViewportSize({width:580,height:700});await expect(input).toHaveValue('Draft preserved');expect(await form.evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBe(true);
+ await page.setViewportSize({width:1480,height:920});await expect(form).toHaveAttribute('data-layout','compact');
+ await page.getByLabel('Choose model',{exact:true}).click();const menu=(await page.locator('.model-menu').boundingBox())!,trigger=(await page.getByLabel('Choose model',{exact:true}).boundingBox())!;expect(menu.y+menu.height).toBeLessThanOrEqual(trigger.y+3);await page.keyboard.press('Escape');
+ await shot(page,'52-browser-source-composer-compact');await input.fill('First line\nSecond line');await shot(page,'53-browser-source-composer-expanded');
+});
+
+test('long user messages use the source width and accessible five-line fold',async({page,request})=>{
+ const prompt=Array.from({length:12},(_,i)=>`Source prompt line ${i}`).join('\n');await create(request,'Message fold audit',{prompt});await ready(page);await open(page,'Message fold audit');
+ const bubble=page.locator('.chat-user-turn').first(),text=bubble.locator('.user-prompt-text');await expect(bubble.getByLabel('Expand message')).toBeVisible();
+ const before=(await text.boundingBox())!.height;expect(before).toBe(110);await bubble.getByLabel('Expand message').click();expect((await text.boundingBox())!.height).toBeGreaterThan(before);await bubble.getByLabel('Collapse message').click();expect((await text.boundingBox())!.height).toBe(before);
+ const width=(await bubble.boundingBox())!.width,timeline=(await page.locator('.chat-timeline').boundingBox())!.width;expect(width).toBeLessThanOrEqual(timeline*.8+1);
 });

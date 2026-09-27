@@ -1,3 +1,4 @@
+import {useComposerLayout} from "./useComposerLayout";
 import {menuKeys} from "./menuKeys";
 import {ResizeBoundary} from "./ResizeBoundary";
 import {
@@ -73,6 +74,7 @@ export function SessionWorkspace({ activeView=true, session, preferences, onBack
   const [ticket, setTicket] = useState<Ticket | null>(null);
   const [panelError, setPanelError] = useState<string | null>(null);
   const [input, setInput] = useState(()=>sessionDrafts.get(session.id)??"");
+  const composerLayout=useComposerLayout(input,preferences.interface_size);
   useEffect(()=>{sessionDrafts.delete(session.id);if(input){sessionDrafts.set(session.id,input);if(sessionDrafts.size>32)sessionDrafts.delete(sessionDrafts.keys().next().value!);}},[session.id,input]);
   useEffect(()=>{if(!activeView){setTabMenu(false);setActionsOpen(false);setCommandOpen(false);}},[activeView]);
   const [editingMessageId,setEditingMessageId]=useState<string|null>(null);
@@ -321,15 +323,15 @@ export function SessionWorkspace({ activeView=true, session, preferences, onBack
         {!following&&<button className="jump-latest" onClick={()=>{followLatest.current=true;setFollowing(true);outputRef.current?.scrollTo({top:outputRef.current.scrollHeight,behavior:"auto"});}}>Jump to latest</button>}
         {canMessage ? <div className={`session-composer-dock ${queuedMessages.length ? "with-queue" : ""}`}>
           <MessageQueue messages={queuedMessages} sendingId={queuedMessages.find((item) => item.status === "dispatching")?.id ?? null} onSteer={(id) => void steerQueuedMessage(id)} onRemove={(id) => void removeQueuedMessage(id)} onEdit={(id) => void editQueuedMessage(id)} />
-          <div className="session-context"><span>Local</span><span title={session.worktree_path}><Folder/>{projectName(session.repo_root)}</span><span title={session.branch}><GitBranch/>{!session.branch?"Folder workspace":session.worktree_path===session.repo_root?"Current checkout":"Worktree"}</span>{session.instructions&&<button onClick={()=>{setDetailsEditor("instructions");setDetailsValue(session.instructions);}}>Instructions</button>}</div>
-          <form className="session-composer" onSubmit={submit}>
+
+          <form ref={composerLayout.form} data-layout={composerLayout.expanded?"expanded":"compact"} className={`session-composer ${composerLayout.expanded?"expanded":"compact"} ${composerLayout.morphing?"composer-morphing":""}`} style={{"--composer-text-height":`${composerLayout.textHeight}px`,"--composer-cluster-width":`${composerLayout.clusterWidth}px`} as CSSProperties} onSubmit={submit}>
           {commandOpen && <AgentCommandMenu commands={commands} input={input} onSelect={insertCommand} />}
-          <textarea
+          <textarea ref={composerLayout.textarea}
             aria-label="Session message"
             value={input}
             onChange={(event) => { const value = event.target.value; setInput(value); if (/^\s*[/ $]/.test(value)) setCommandOpen(true); }}
             placeholder={canMessage ? "Do anything…" : "This run does not support follow-up messages"}
-            rows={2}
+            rows={1}
             disabled={!canMessage}
             onKeyDown={(event) => {
               if (event.key === "Escape" && commandOpen) {
@@ -353,10 +355,11 @@ export function SessionWorkspace({ activeView=true, session, preferences, onBack
           />
           <div className="composer-footer">
             <button type="button" className={`command-trigger ${commandOpen ? "active" : ""}`} onClick={() => setCommandOpen((value) => !value)} aria-label="Skills and commands" title="Skills and commands"><Plus /></button>
-            <ModelPicker serviceTier={session.service_tier} onTierChange={tier=>{void updateModel(session.id,session.model,session.effort,tier).then(onRefresh).catch(reason=>setPanelError(String(reason)));}} provider={session.agent} models={engine.meta?.agents.find(item=>item.id===session.agent)?.models} model={session.model} effort={session.effort} onChange={(model,effort)=>{void updateModel(session.id,model,effort,session.service_tier).then(onRefresh).catch(reason=>setPanelError(String(reason)));}}/><span className="runtime-chip"><span className={`status-dot ${session.status}`} />{active ? queuedMessages.length ? `${queuedMessages.length} queued · agent working` : `${agentLabel(session.agent)} is attached` : queuedMessages.some((item) => item.status === "dispatching") ? "Sending next message" : resumable ? "Conversation can continue" : `Run ${session.status}`}</span>
-            <button className="send-button" disabled={!canMessage || !input.trim()} aria-label="Send message"><ArrowUp weight="bold" /></button>
+            <ModelPicker compactLabel serviceTier={session.service_tier} onTierChange={tier=>{void updateModel(session.id,session.model,session.effort,tier).then(onRefresh).catch(reason=>setPanelError(String(reason)));}} provider={session.agent} models={engine.meta?.agents.find(item=>item.id===session.agent)?.models} model={session.model} effort={session.effort} onChange={(model,effort)=>{void updateModel(session.id,model,effort,session.service_tier).then(onRefresh).catch(reason=>setPanelError(String(reason)));}}/>
+            <button type={active&&!input.trim()?"button":"submit"} className="send-button" disabled={busy||!canMessage||(!active&&!input.trim())} aria-label={active&&!input.trim()?"Stop agent":"Send message"} onClick={active&&!input.trim()?()=>{void stopSession(session.id).then(onRefresh).catch(reason=>setPanelError(String(reason)));}:undefined}>{active&&!input.trim()?<span className="composer-stop-glyph" aria-hidden="true"/>:<ArrowUp weight="bold"/>}</button>
           </div>
           </form>
+          <div className="session-context"><span title={session.worktree_path}><Folder/>{session.branch?"Local checkout":"Folder workspace"}</span>{session.branch&&<span title={session.branch}><GitBranch/>{session.branch}</span>}{session.instructions&&<button onClick={()=>{setDetailsEditor("instructions");setDetailsValue(session.instructions);}}>Instructions</button>}<span className="runtime-chip" role="status"><span className={`status-dot ${session.status}`} />{active ? queuedMessages.length ? `${queuedMessages.length} queued · agent working` : `${agentLabel(session.agent)} is attached` : queuedMessages.some((item) => item.status === "dispatching") ? "Sending next message" : resumable ? "Conversation can continue" : `Run ${session.status}`}</span></div>
         </div> : <div className="session-closed-state"><span className={`status-dot ${session.status}`} />{chatCapable ? `This ${agentLabel(session.agent)} run is ${session.status}` : "Use the Terminal panel to inspect this run"}</div>}</>}
       </section>
       <div className="work-panel-clip" inert={!rightOpen}>
