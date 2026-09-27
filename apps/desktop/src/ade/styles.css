@@ -411,7 +411,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .profile>span:last-child small{font-size:9px;color:var(--muted-2)}
 .sidebar-footer .icon-button{width:28px;height:28px}
 .sidebar-resizer{position:absolute;z-index:8;left:calc(var(--sidebar-width) - 3px);top:38px;bottom:38px;width:6px;cursor:col-resize;touch-action:none}
-.sidebar-resizer:hover{background:color-mix(in srgb,var(--accent) 45%,transparent)}
+.sidebar-resizer:hover{background:transparent}
 .main-shell{grid-column:2;grid-row:1;min-width:0;position:relative;overflow:hidden}
 .sidebar-toggle{position:absolute;top:9px;left:10px;z-index:10}
 button,input,textarea,select{font-family:inherit}
@@ -539,7 +539,7 @@ select option{background:var(--surface);color:var(--text)}
 .panel-picker>button:hover{background:var(--surface-2)}
 .panel-resizer{position:absolute;z-index:7;right:calc(min(var(--panel-width),55%) - 3px);top:38px;bottom:0;width:6px;cursor:col-resize;touch-action:none}
 .with-files .panel-resizer{right:calc(min(var(--panel-width),45%) + 283px)}
-.panel-resizer:hover{background:color-mix(in srgb,var(--accent) 45%,transparent)}
+.panel-resizer:hover{background:transparent}
 .files-panel-clip{grid-column:3;grid-row:1/3;min-width:0;overflow:hidden;border-left:1px solid var(--line);background:var(--sidebar)}
 .inspector-rail{position:absolute;top:7px;right:80px;height:30px;grid-column:auto;grid-row:auto;flex-direction:row;gap:2px;padding:0;background:transparent;border:0;display:none}
 .inline-error{display:flex;align-items:center;gap:5px;padding:10px;font-size:12px}
@@ -744,7 +744,7 @@ img.provider-claude{filter:brightness(0) saturate(100%) invert(58%) sepia(44%) s
 @media(prefers-color-scheme:light){.ade.theme-system.material-default{--panel-fill:color-mix(in srgb,var(--bg) 40%,transparent);--popup-fill:color-mix(in srgb,var(--surface) 45%,transparent)}}
 .select-option-label{display:flex;align-items:center;gap:8px}.select-option-label .provider-icon{width:14px;height:14px;flex:0 0 14px}
 .sidebar-view-menu{padding:4px;width:100%;background:transparent}.sidebar-menu-row{display:flex;align-items:center;gap:8px;min-height:30px;padding:0 6px;font-size:12px;color:var(--text)}.sidebar-menu-row>span{flex:1}.sidebar-menu-row .custom-select{font-size:11px;color:var(--muted);max-width:140px}.sidebar-view-menu>button{display:flex;width:100%;align-items:center;gap:8px;justify-content:space-between;padding:7px 6px;background:transparent;border:0;border-radius:5px;font-size:12px;color:var(--text);cursor:pointer}.sidebar-view-menu>button:hover{background:var(--surface-2)}.sidebar-view-menu>button>svg{width:12px;height:12px}.sidebar-view-menu>button:last-of-type{border-top:1px solid var(--line);border-radius:0;margin-top:3px;justify-content:flex-start}.sidebar-compact-switch{width:32px;height:18px;border-radius:12px;background:var(--surface-3);padding:2px;display:block}.sidebar-compact-switch i{display:block;width:14px;height:14px;border-radius:50%;background:var(--muted);transition:transform 140ms ease}.sidebar-compact-switch.on{background:var(--accent)}.sidebar-compact-switch.on i{transform:translateX(14px);background:var(--bg)}.sidebar-show-menu button{display:flex;align-items:center;justify-content:space-between;min-height:29px;padding:5px 8px;border:0;border-radius:5px;background:transparent;color:var(--text);font-size:12px;text-align:left;cursor:pointer}.sidebar-show-menu button:hover{background:var(--surface-2)}.sidebar-show-menu svg{width:12px;height:12px}.sidebar-show-menu input{margin:5px;border:1px solid var(--line);background:transparent;color:var(--text);padding:6px;font-size:11px;border-radius:5px;min-width:0}
-.sidebar-draggable-row>.sidebar-chat-row,.project-sessions>.sidebar-chat-row{display:grid;grid-template-columns:5px 14px minmax(0,1fr) auto;gap:7px;padding:0 12px;align-items:center;border:0;border-radius:6px;background:transparent;width:100%;min-height:29px;text-align:left;color:var(--muted);cursor:pointer}.sidebar-chat-row:hover,.sidebar-chat-row.active{background:var(--surface-2);color:var(--text)}.sidebar-chat-row>span:not(.status-dot){overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}.sidebar-chat-row>small{font-size:11px;color:var(--muted-2)}.sidebar-chat-row em{display:block;font-size:10px;font-style:normal;color:var(--faint);overflow:hidden;text-overflow:ellipsis}.sidebar:not(.compact-sidebar) .sidebar-chat-row{min-height:40px}.sidebar-chat-row.hide-provider{grid-template-columns:5px minmax(0,1fr) auto}.sidebar-chat-row.hide-provider>.provider-icon{display:none}.sidebar.show-project-icons .project-row>svg:first-child{display:block;width:14px;margin-right:6px}.sidebar.hide-project-labels .project-row>span{visibility:hidden}
+.sidebar-draggable-row>.sidebar-chat-row,.project-sessions>.sidebar-chat-row{display:grid;grid-template-columns:5px 14px minmax(0,1fr) auto;gap:7px;padding:0 12px;align-items:center;border:0;border-radius:6px;background:transparent;width:100%;min-height:29px;text-align:left;color:var(--muted);cursor:pointer}.sidebar-chat-row:hover,.sidebar-chat-row.active{background:var(--surface-2);color:var(--text)}.sidebar-chat-row>span:not(.status-dot){overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}.sidebar-chat-row>small{font-size:11px;color:var(--muted-2)}.sidebar-chat-row em{display:block;font-size:10px;font-style:normal;color:var(--faint);overflow:hidden;text-overflow:ellipsis}.sidebar:not(.compact-sidebar) .sidebar-chat-row{min-height:40px}.sidebar-chat-row.hide-provider{grid-template-columns:5px minmax(0,1fr) auto}.sidebar-chat-row.hide-provider>.provider-icon{display:none}.sidebar.show-project-icons .project-row>svg:first-child{display:block;width:14px;margin-right:6px}
 .scheme-system::after{display:none}.scheme-system>.scheme-frame{position:absolute;inset:8px;padding:0;display:flex;gap:8px;background:transparent;border:0;border-radius:0;width:auto}.scheme-frame>span{padding:9px 7px}.scheme-frame>span:first-child{width:28%;border-right:1px solid #0001}.scheme-frame>span:last-child{flex:1;background:#fff;border:1px solid #0001;border-radius:5px}.scheme-system>.preview-light{color:#62626a;clip-path:inset(0 50% 0 0)}.scheme-system>.preview-dark{color:#bdae93;clip-path:inset(0 0 0 50%)}.scheme-frame.preview-dark>span:last-child{background:#252525;border-color:#ffffff18}
 .scheme-preview.scheme-system>.scheme-frame{width:auto;background:transparent;border:0;flex:initial}
 /* Settings blocks use the source's faint ink wash in either material. */
@@ -773,11 +773,11 @@ img.provider-claude{filter:brightness(0) saturate(100%) invert(58%) sepia(44%) s
 
 /* One native backdrop, light palette washes above it. Foregrounds stay opaque. */
 .ade.native-window[data-native-material]:where(.material-frosted,.material-default.default-frosted){
- --shell-fill:color-mix(in srgb,var(--sidebar) 55%,transparent);
- --sidebar-fill:color-mix(in srgb,var(--bg) 12%,transparent);
- --panel-fill:color-mix(in srgb,var(--bg) 12%,transparent);
- --card-fill:color-mix(in srgb,var(--surface) 14%,transparent);
- --composer-fill:color-mix(in srgb,var(--bg) 24%,transparent);
+ --shell-fill:color-mix(in srgb,var(--sidebar) var(--glass-coverage,55%),transparent);
+ --sidebar-fill:color-mix(in srgb,var(--bg) var(--glass-wash,12%),transparent);
+ --panel-fill:color-mix(in srgb,var(--bg) var(--glass-wash,12%),transparent);
+ --card-fill:color-mix(in srgb,var(--surface) var(--glass-card,14%),transparent);
+ --composer-fill:color-mix(in srgb,var(--bg) var(--glass-composer,24%),transparent);
  --popup-fill:color-mix(in srgb,var(--surface) 68%,transparent);
  --muted:var(--text);
  --muted-2:var(--text);
@@ -789,16 +789,10 @@ img.provider-claude{filter:brightness(0) saturate(100%) invert(58%) sepia(44%) s
 /* Clear is real window alpha, with restrained background-only palette tints.
    Keep readable foregrounds and stronger local popovers over arbitrary desktops. */
 .ade.native-window.material-transparent{
- --shell-fill:color-mix(in srgb,var(--sidebar) 22%,transparent);
- --sidebar-fill:color-mix(in srgb,var(--bg) 6%,transparent);
- --panel-fill:color-mix(in srgb,var(--bg) 6%,transparent);
- --card-fill:color-mix(in srgb,var(--surface) 12%,transparent);
- --composer-fill:color-mix(in srgb,var(--bg) 32%,transparent);
- --popup-fill:color-mix(in srgb,var(--surface) 88%,transparent);
+ --popup-fill:color-mix(in srgb,var(--popup-surface,var(--surface)) 88%,transparent);
  text-shadow:0 1px 1px #000c;
 }
 .ade.native-window.material-transparent:where(.theme-light){text-shadow:0 1px 1px #fffc}
-@media(prefers-color-scheme:light){.ade.native-window.material-transparent:where(.theme-system){text-shadow:0 1px 1px #fffc}}
 /* All solid fallbacks share the selected palette, including xterm. */
 .ade.native-window:is([data-native-material="opaque"],[data-native-material="reduced-transparency"],[data-native-material="increased-contrast"],[data-native-material="unsupported"]){
  text-shadow:none;
@@ -824,3 +818,46 @@ img.provider-claude{filter:brightness(0) saturate(100%) invert(58%) sepia(44%) s
 @media(prefers-color-scheme:light){.ade.native-window:where(.material-frosted,.material-default.default-frosted):where(.theme-system){--text:#202024}}
 
 .ade :is(.composer,.session-composer):focus-within{outline:2px solid var(--accent);outline-offset:2px}
+
+/* Pointer resizing stays invisible; keyboard focus retains a neutral outline. */
+.ade .resize-boundary{background:transparent;outline:none;user-select:none}
+.ade .resize-boundary:focus-visible{outline:1px solid var(--text);outline-offset:-2px}
+.ade.is-resizing,.ade.is-resizing *{user-select:none!important;cursor:col-resize!important;transition:none!important}
+.theme-choice-label{display:flex;align-items:center;gap:8px}
+.theme-choice-swatch{display:inline-flex;overflow:hidden;width:32px;height:16px;border:1px solid #8885;border-radius:3px;flex-shrink:0}
+.theme-choice-swatch i{height:100%;flex:1}
+.transparency-control{display:flex;align-items:center;gap:12px;min-width:180px}
+.transparency-control input{width:150px;accent-color:var(--accent)}
+.transparency-control output{min-width:3.5ch;text-align:right;font-variant-numeric:tabular-nums}
+
+.retained-workspace{display:flex;flex:1;min-width:0;min-height:0;height:100%}
+.retained-workspace[hidden]{display:none}
+.sites-page button:disabled{opacity:.45;cursor:default}
+
+.retained-workspace>.session-workspace{width:100%;min-width:0;flex:1}
+
+.projects-toggle.custom-select{background:transparent;border:0;height:29px;font-size:13px;font-weight:500;box-shadow:none}
+.projects-toggle.custom-select[aria-expanded=true],.projects-toggle.custom-select:hover{background:var(--surface-2)}
+.project-picker-choice{display:flex;align-items:center;gap:10px;justify-content:space-between;width:100%}.project-picker-choice>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.project-picker-choice small{font-size:10px;color:var(--muted-2)}.projects-toggle .project-picker-choice small{display:none}
+.new-project-action{display:flex;align-items:center;gap:8px;width:100%;border:0;background:transparent;color:var(--text);padding:6px;text-align:left;cursor:pointer}.new-project-action svg{width:14px}.new-project-action:hover{background:var(--surface-2)}
+.compact-sidebar .sidebar-chat-row em{display:none}.sidebar:not(.compact-sidebar) .sidebar-chat-row{min-height:45px}.sidebar:not(.compact-sidebar) .sidebar-chat-row:has(.branch-metadata){min-height:61px}
+.sidebar-menu-row .custom-select>svg{transform:rotate(-90deg)}
+
+.sidebar-view-menu>button[aria-haspopup] >svg{transform:rotate(-90deg)}
+
+/* Keep descriptive choices and actions usable in a narrow shared workspace. */
+.diff-toolbar{flex-wrap:wrap}
+.diff-toolbar .custom-select{width:auto;min-width:112px;flex-shrink:0}
+.diff-toolbar input{min-width:80px}
+.session-composer-dock{container-type:inline-size;container-name:composer;z-index:20}
+@container composer (max-width:460px){
+ .session-composer>.composer-footer{flex-wrap:wrap}
+ .session-composer .model-picker{flex:1;min-width:0}
+ .session-composer .model-trigger{width:100%;min-width:0}
+ .session-composer .model-trigger>span{flex:1;text-align:left;min-width:0}
+ .session-composer .runtime-chip{order:4;flex-basis:100%;max-width:calc(100% - 27px);margin-left:27px;justify-content:flex-start}
+ .session-composer .send-button{order:3}
+ .session-context span{max-width:36%}
+}
+
+.sidebar-menu-row{cursor:pointer;border-radius:5px}.sidebar-menu-row:hover{background:var(--surface-2)}

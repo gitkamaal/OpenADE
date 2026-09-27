@@ -1,3 +1,5 @@
+import {menuKeys} from "./menuKeys";
+import {ResizeBoundary} from "./ResizeBoundary";
 import {
   ArrowLeft,
   ArrowUp,
@@ -49,9 +51,11 @@ import { useEngine, refreshEngine } from "./engine-store";
 import { ModelPicker } from "./ModelPicker";
 import { MessageQueue } from "./MessageQueue";
 
+const sessionDrafts=new Map<string,string>();
+
 type WorkTab = "review" | "terminal" | "pull-request" | "ticket" | "browser" | "history" | "editor";
 
-export function SessionWorkspace({ session, preferences, onBack, onRefresh, onPreferences, onArchive }: { session: Session; preferences: Preferences; onPreferences:(next:Preferences)=>void; onArchive:()=>void; onBack: () => void; onRefresh: () => Promise<void> }) {
+export function SessionWorkspace({ activeView=true, session, preferences, onBack, onRefresh, onPreferences, onArchive }: { activeView?:boolean; session: Session; preferences: Preferences; onPreferences:(next:Preferences,persist?:boolean)=>void; onArchive:()=>void; onBack: () => void; onRefresh: () => Promise<void> }) {
   const tuiMode = session.mode === "tui";
   const defaultTab: WorkTab = session.agent === "shell" || (preferences.session_surface === "terminal" && !tuiMode) ? "terminal" : "review";
   const [tab, setTab] = useState<WorkTab>(defaultTab);
@@ -68,7 +72,9 @@ export function SessionWorkspace({ session, preferences, onBack, onRefresh, onPr
   const onDirtyChange=useCallback((dirty:boolean)=>{dirtyRef.current=dirty;window.dispatchEvent(new CustomEvent("openade-editor-dirty",{detail:dirty}));},[]);
   const [ticket, setTicket] = useState<Ticket | null>(null);
   const [panelError, setPanelError] = useState<string | null>(null);
-  const [input, setInput] = useState("");
+  const [input, setInput] = useState(()=>sessionDrafts.get(session.id)??"");
+  useEffect(()=>{sessionDrafts.delete(session.id);if(input){sessionDrafts.set(session.id,input);if(sessionDrafts.size>32)sessionDrafts.delete(sessionDrafts.keys().next().value!);}},[session.id,input]);
+  useEffect(()=>{if(!activeView){setTabMenu(false);setActionsOpen(false);setCommandOpen(false);}},[activeView]);
   const [editingMessageId,setEditingMessageId]=useState<string|null>(null);
   const [output, setOutput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -262,7 +268,7 @@ export function SessionWorkspace({ session, preferences, onBack, onRefresh, onPr
   const toggleSurface = (surface: WorkTab) => {
     setTabs(current=>current.includes(surface)?current:[...current,surface]);
     setTabMenu(false);
-    if (rightOpen && tab === surface) {
+    if (rightOpen && tab === surface && tabs.includes(surface)) {
       setRightOpen(false);
       return;
     }
@@ -274,7 +280,7 @@ export function SessionWorkspace({ session, preferences, onBack, onRefresh, onPr
   useEffect(()=>{if(filesOpen||tabs.includes("editor")){setFilesMounted(true);return;}const timer=window.setTimeout(()=>setFilesMounted(false),200);return()=>window.clearTimeout(timer);},[filesOpen,tabs]);
   const toggleFiles=()=>{if(filesOpen&&dirtyRef.current){setPanelError("Save or discard file changes before closing the files panel.");return;}setFilesOpen(value=>!value);};
   useEffect(()=>{const key=(event:KeyboardEvent)=>{
-    if(event.defaultPrevented||event.isComposing||event.repeat)return;
+    if(!activeView||event.defaultPrevented||event.isComposing||event.repeat)return;
     if(detailsEditor){if(event.key==="Escape"){event.preventDefault();setDetailsEditor(null);}return;}
     if(shortcutMatches(event,preferences.shortcuts.panel)){event.preventDefault();setRightOpen(value=>!value);}
     else if(shortcutMatches(event,preferences.shortcuts.files)){event.preventDefault();toggleFiles();}
@@ -289,7 +295,9 @@ export function SessionWorkspace({ session, preferences, onBack, onRefresh, onPr
       else if(commandOpen||tabMenu||actionsOpen){event.preventDefault();setCommandOpen(false);setTabMenu(false);setActionsOpen(false);}
       else if(preferences.stop_on_escape&&active&&!tuiMode){event.preventDefault();void stopSession(session.id).then(onRefresh);}
     }
-  };window.addEventListener("keydown",key);return()=>window.removeEventListener("keydown",key);},[preferences,rightOpen,filesOpen,tab,commandOpen,tabMenu,actionsOpen,active,tuiMode,session.id,tabs,detailsEditor]);
+  };window.addEventListener("keydown",key);return()=>window.removeEventListener("keydown",key);},[activeView,preferences,rightOpen,filesOpen,tab,commandOpen,tabMenu,actionsOpen,active,tuiMode,session.id,tabs,detailsEditor]);
+  useEffect(()=>{const dismiss=()=>{setActionsOpen(false);setTabMenu(false);setCommandOpen(false);};window.addEventListener("openade-dismiss-menus",dismiss);return()=>window.removeEventListener("openade-dismiss-menus",dismiss);},[]);
+  useEffect(()=>{if(actionsOpen)document.querySelector<HTMLElement>(".session-actions button")?.focus();if(tabMenu)document.querySelector<HTMLElement>(".panel-tab-menu button")?.focus();},[actionsOpen,tabMenu]);
   useEffect(()=>{if(!tabMenu&&!actionsOpen)return;const close=(event:PointerEvent)=>{if(!(event.target as Element).closest(".panel-tab-menu,.panel-add,.session-actions,.session-actions-trigger")){setTabMenu(false);setActionsOpen(false);}};document.addEventListener("pointerdown",close);return()=>document.removeEventListener("pointerdown",close);},[tabMenu,actionsOpen]);
   const closeTab=(surface:WorkTab)=>{if(surface==="editor"&&dirtyRef.current){setPanelError("Save or discard changes before closing the editor.");return;}const remaining=tabs.filter(value=>value!==surface);setTabs(remaining);if(tab===surface){if(remaining.length)setTab(remaining[remaining.length-1]);else setRightOpen(false);}};
   return (
@@ -300,7 +308,7 @@ export function SessionWorkspace({ session, preferences, onBack, onRefresh, onPr
         <div className="session-title"><h1>{session.title}</h1><p>{projectName(session.repo_root)} <span>·</span> <code title={session.branch}>{session.branch}</code></p></div>
         <span className="session-header-spacer"/>
         {active && <button className="header-stop" onClick={() => void stopSession(session.id).then(onRefresh)}><Square weight="fill" /> Stop</button>}
-        <div className="session-actions-anchor"><button className="icon-button session-actions-trigger" aria-label="Session actions" aria-expanded={actionsOpen} onClick={()=>setActionsOpen(value=>!value)}><DotsThree/></button>{actionsOpen&&<div className="session-actions" role="menu"><button role="menuitem" onClick={()=>{setDetailsEditor("title");setDetailsValue(session.title);setActionsOpen(false);}}>Rename chat</button><button role="menuitem" onClick={()=>{setDetailsEditor("instructions");setDetailsValue(session.instructions||"");setActionsOpen(false);}}>Chat instructions</button><button role="menuitem" onClick={()=>{void copyText(session.worktree_path).catch(()=>setPanelError("Unable to copy workspace path."));setActionsOpen(false);}}>Copy workspace path</button><button role="menuitem" onClick={onArchive}><Archive/>Archive session</button></div>}</div>
+        <div className="session-actions-anchor"><button className="icon-button session-actions-trigger" aria-label="Session actions" aria-expanded={actionsOpen} onClick={()=>setActionsOpen(value=>!value)}><DotsThree/></button>{actionsOpen&&<div className="session-actions" role="menu" onKeyDown={event=>menuKeys(event,()=>setActionsOpen(false),()=>document.querySelector<HTMLElement>(".session-actions-trigger")?.focus())}><button role="menuitem" onClick={()=>{setDetailsEditor("title");setDetailsValue(session.title);setActionsOpen(false);}}>Rename chat</button><button role="menuitem" onClick={()=>{setDetailsEditor("instructions");setDetailsValue(session.instructions||"");setActionsOpen(false);}}>Chat instructions</button><button role="menuitem" onClick={()=>{void copyText(session.worktree_path).catch(()=>setPanelError("Unable to copy workspace path."));setActionsOpen(false);}}>Copy workspace path</button><button role="menuitem" onClick={onArchive}><Archive/>Archive session</button></div>}</div>
         <button className="icon-button" aria-label="Toggle files panel" aria-pressed={filesOpen} onClick={toggleFiles}><Folder/></button>
         <button className="icon-button" aria-label="Toggle right sidebar" aria-pressed={rightOpen} onClick={()=>setRightOpen(value=>!value)}><SidebarSimple/></button>
       </header>
@@ -353,11 +361,11 @@ export function SessionWorkspace({ session, preferences, onBack, onRefresh, onPr
       </section>
       <div className="work-panel-clip" inert={!rightOpen}>
       {panelMounted&&<aside className="work-panel" aria-label={`${workTabLabel(tab)} panel`}>
-        <header className="work-panel-header"><div className="panel-tabs" role="tablist" aria-label="Workspace panels">{tabs.map(surface=><div className={surface===tab?"active":""} key={surface}><button role="tab" aria-selected={surface===tab} onClick={()=>setTab(surface)}>{workTabIcon(surface)}{workTabLabel(surface)}</button><button className="panel-tab-close" aria-label={`Close ${workTabLabel(surface)} tab`} onClick={()=>closeTab(surface)}><X/></button></div>)}</div><div className="panel-add-anchor"><button className="icon-button panel-add" aria-label="Add panel" aria-expanded={tabMenu} onClick={()=>setTabMenu(value=>!value)}><Plus/></button>{tabMenu&&<div className="panel-tab-menu" role="menu">{(["browser","terminal","review","history","pull-request",...(session.ticket_key?["ticket"]:[])] as WorkTab[]).map(surface=><button role="menuitem" key={surface} onClick={()=>{setTabs(current=>current.includes(surface)?current:[...current,surface]);setTab(surface);setRightOpen(true);setTabMenu(false);}}>{workTabIcon(surface)}{workTabLabel(surface)}</button>)}</div>}</div><button className="icon-button" onClick={()=>setRightOpen(false)} aria-label="Close right sidebar"><SidebarSimple/></button></header>
+        <header className="work-panel-header"><div className="panel-tabs" role="tablist" aria-label="Workspace panels">{tabs.map(surface=><div className={surface===tab?"active":""} key={surface}><button role="tab" aria-selected={surface===tab} onClick={()=>setTab(surface)}>{workTabIcon(surface)}{workTabLabel(surface)}</button><button className="panel-tab-close" aria-label={`Close ${workTabLabel(surface)} tab`} onClick={()=>closeTab(surface)}><X/></button></div>)}</div><div className="panel-add-anchor"><button className="icon-button panel-add" aria-label="Add panel" aria-expanded={tabMenu} onClick={()=>setTabMenu(value=>!value)}><Plus/></button>{tabMenu&&<div className="panel-tab-menu" role="menu" onKeyDown={event=>menuKeys(event,()=>setTabMenu(false),()=>document.querySelector<HTMLElement>(".panel-add")?.focus())}>{(["browser","terminal","review","history","pull-request",...(session.ticket_key?["ticket"]:[])] as WorkTab[]).map(surface=><button role="menuitem" key={surface} onClick={()=>{setTabs(current=>current.includes(surface)?current:[...current,surface]);setTab(surface);setRightOpen(true);setTabMenu(false);}}>{workTabIcon(surface)}{workTabLabel(surface)}</button>)}</div>}</div><button className="icon-button" onClick={()=>{setRightOpen(false);requestAnimationFrame(()=>document.querySelector<HTMLElement>("[data-main-composer]")?.focus());}} aria-label="Close right sidebar"><SidebarSimple/></button></header>
         <div className="panel-body">{panelError&&<div className="inline-error" role="alert"><span>{panelError}</span><button aria-label="Dismiss panel error" onClick={()=>setPanelError(null)}><X/></button></div>}<div className="file-editor-outlet" ref={setEditorTarget} hidden={tab!=="editor"}/>{tabs.length===0?<div className="panel-picker">{(["browser","terminal","review","history","pull-request"] as WorkTab[]).map(surface=><button key={surface} onClick={()=>toggleSurface(surface)}>{workTabIcon(surface)}{workTabLabel(surface)}</button>)}</div>:tab==="editor"?null:tab==="terminal"?<Suspense fallback={<div role="status">Opening terminal…</div>}><TerminalWorkspace session={session} preferences={preferences}/></Suspense>:tab==="review"?<ReviewWorkspace sessionId={session.id}/>:tab==="history"?<HistoryPanel session={session}/>:tab==="browser"?<BrowserPanel session={session}/>:tab==="ticket"?<TicketPanel ticket={ticket} session={session}/>:<PRPanel session={session} busy={busy} onCreate={createPR} onTicket={()=>setTab("ticket")}/>}</div>
       </aside>}
       </div>
-      {rightOpen&&<div className="panel-resizer" role="separator" aria-label="Resize right sidebar" aria-orientation="vertical" onDoubleClick={()=>onPreferences({...preferences,panel_width:520})} onPointerDown={event=>event.currentTarget.setPointerCapture(event.pointerId)} onPointerMove={event=>{if(event.currentTarget.hasPointerCapture(event.pointerId)){const rect=event.currentTarget.parentElement!.getBoundingClientRect();onPreferences({...preferences,panel_width:Math.max(360,Math.min(rect.width-300,rect.right-event.clientX-(filesOpen?286:0)))});}}}/>}
+      {rightOpen&&!(session.agent==="shell"&&!tuiMode)&&<ResizeBoundary className="panel-resizer" label="Resize right sidebar" width={preferences.panel_width} min={360} max={900} fraction={filesOpen?.45:.55} defaultWidth={520} direction={-1} onResize={width=>onPreferences({...preferences,panel_width:width},false)} onCommit={width=>onPreferences({...preferences,panel_width:width})}/>}
       <div className="files-panel-clip" inert={!filesOpen}>{filesMounted&&<FilesPanel session={session} preferences={preferences} onDirtyChange={onDirtyChange} editorTarget={editorTarget} onOpenEditor={openEditor}/>}</div>
       <aside className="inspector-rail" aria-label="Session tools"><InspectorButton active={rightOpen&&tab==="review"} onClick={()=>toggleSurface("review")} icon={<GitDiff/>} label="Changes"/><InspectorButton active={rightOpen&&tab==="terminal"} onClick={()=>toggleSurface("terminal")} icon={<TerminalWindow/>} label="Terminal"/><InspectorButton active={rightOpen&&tab==="pull-request"} onClick={()=>toggleSurface("pull-request")} icon={<GithubLogo/>} label="PR"/></aside>
     </div>

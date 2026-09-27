@@ -295,6 +295,18 @@ function agentName(agent: string): string {
 
 function observeTerminalTheme(host:HTMLElement, terminal:Terminal){
  const root=host.closest(".ade")!;
- const update=()=>{const css=getComputedStyle(host);const value=(key:string,fallback:string)=>css.getPropertyValue(key).trim()||fallback;terminal.options.theme={...terminal.options.theme,background:!["opaque","reduced-transparency","increased-contrast","unsupported"].includes(root.getAttribute("data-native-material")??"")&&(root.classList.contains("material-frosted")||root.classList.contains("material-default")&&root.classList.contains("default-frosted"))?"#00000000":value("--bg","#0d0d0d"),foreground:value("--text","#e8e8ea"),cursor:value("--text","#e8e8ea"),selectionBackground:value("--accent","#8b7cf6")+"66"};terminal.options.fontFamily=value("--terminal-font",'"Geist Mono", monospace');terminal.options.fontSize=parseFloat(value("--terminal-size","13"));};
- update();const observer=new MutationObserver(update);observer.observe(root,{attributes:true,attributeFilter:["class","style","data-native-material"]});const media=matchMedia("(prefers-color-scheme: light)");media.addEventListener("change",update);return()=>{observer.disconnect();media.removeEventListener("change",update);};
+ const ansiSlots=["black","red","green","yellow","blue","magenta","cyan","white","brightBlack","brightRed","brightGreen","brightYellow","brightBlue","brightMagenta","brightCyan","brightWhite"];
+ const update=()=>{
+  const css=getComputedStyle(host);const value=(key:string,fallback:string)=>css.getPropertyValue(key).trim()||fallback;
+  const solid=["opaque","reduced-transparency","increased-contrast","unsupported"].includes(root.getAttribute("data-native-material")??"");
+  const glass=!solid&&(root.classList.contains("material-frosted")||root.classList.contains("material-default")&&root.classList.contains("default-frosted"));
+  const palette={...Object.fromEntries(ansiSlots.map(slot=>[slot,value(`--ansi-${slot.replace(/[A-Z]/g,letter=>`-${letter.toLowerCase()}`)}`,"#e8e8ea")])),background:glass?"#00000000":value("--terminal-bg","#090909"),foreground:value("--terminal-fg","#e8e8ea"),cursor:value("--terminal-fg","#e8e8ea"),selectionBackground:value("--terminal-selection","#ffffff38")};
+  if(Object.entries(palette).some(([key,color])=>(terminal.options.theme as Record<string,string>|undefined)?.[key]!==color))terminal.options.theme={...terminal.options.theme,...palette};
+  const font=value("--terminal-font",'"Geist Mono", monospace'),size=parseFloat(value("--terminal-size","13"));
+  if(terminal.options.fontFamily!==font)terminal.options.fontFamily=font;
+  if(terminal.options.fontSize!==size)terminal.options.fontSize=size;
+ };
+ update();const observer=new MutationObserver(update);observer.observe(root,{attributes:true,attributeFilter:["class","style","data-native-material","data-theme-id"]});
+ const media=matchMedia("(prefers-color-scheme: light)");media.addEventListener("change",update);
+ return()=>{observer.disconnect();media.removeEventListener("change",update);};
 }

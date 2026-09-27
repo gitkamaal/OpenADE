@@ -16,7 +16,8 @@
     "skipLibCheck": true,
     "isolatedModules": true,
     "noEmit": true,
-    "useDefineForClassFields": true
+    "useDefineForClassFields": true,
+    "resolveJsonModule": true
   },
   "include": [
     "src"

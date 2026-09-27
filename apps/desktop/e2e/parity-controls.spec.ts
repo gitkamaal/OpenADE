@@ -60,14 +60,14 @@ test('Liquid Glass persists and native accessibility changes restore solid surfa
  });
  await create(request,'Accessible glass workspace');await ready(page);
  await page.getByLabel('Open settings').click();await page.getByRole('tab',{name:'Appearance',exact:true}).click();
- await choose(page,'Dark theme','dusk');await choose(page,'Glass','default');await page.getByRole('button',{name:'System',exact:true}).click();
+ await choose(page,'Dark theme','gruvbox-dark');await choose(page,'Glass','default');await page.getByRole('button',{name:'System',exact:true}).click();
  await page.emulateMedia({colorScheme:'light'});await expect(page.locator('.ade')).toHaveClass(/default-frosted/);await expect(page.locator('.ade')).toHaveAttribute('data-native-material','frosted');
  await page.emulateMedia({colorScheme:'dark'});await expect(page.locator('.ade')).toHaveClass(/default-opaque/);await expect(page.locator('.ade')).toHaveAttribute('data-native-material','opaque');
- await choose(page,'Dark theme','graphite');await page.getByRole('button',{name:'Dark',exact:true}).click();
+ await choose(page,'Dark theme','zeron-dark');await page.getByRole('button',{name:'Dark',exact:true}).click();
  await choose(page,'Glass','transparent');await expect(page.locator('.ade')).toHaveAttribute('data-native-material','transparent');
  await expect(page.getByText('Transparent native window — desktop visible, no native blur',{exact:true})).toBeVisible();
  await expect(page.locator('.ade')).toHaveCSS('opacity','1');
- expect(await page.locator('.ade').evaluate(el=>getComputedStyle(el).getPropertyValue('--shell-fill'))).toContain('22%');
+ expect(await page.locator('.ade').evaluate(el=>getComputedStyle(el).getPropertyValue('--shell-fill'))).toContain('50%');
  await expect(page.locator('html')).toHaveCSS('background-color','rgba(0, 0, 0, 0)');
  await page.reload();await page.getByLabel('Open settings').click();await page.getByRole('tab',{name:'Appearance',exact:true}).click();
  await expect(page.getByLabel('Glass',{exact:true})).toHaveAttribute('data-value','transparent');
@@ -81,9 +81,9 @@ test('Liquid Glass persists and native accessibility changes restore solid surfa
  await choose(page,'Glass','liquid');await expect(page.locator('.ade')).toHaveAttribute('data-native-material','liquid');
  await expect(page.getByText('Native macOS Liquid Glass',{exact:true})).toBeVisible();
  await expect(page.locator('.ade')).toHaveCSS('opacity','1');
- await choose(page,'Glass','default');expect(await page.locator('.ade').evaluate(el=>getComputedStyle(el).getPropertyValue('--shell-fill'))).toContain('55%');await choose(page,'Glass','liquid');
+ await choose(page,'Glass','default');expect(await page.locator('.ade').evaluate(el=>getComputedStyle(el).getPropertyValue('--shell-fill'))).toContain('50%');await choose(page,'Glass','liquid');
  const fill=await page.locator('.ade').evaluate(el=>getComputedStyle(el).getPropertyValue('--shell-fill'));
- expect(fill).toContain('55%');
+ expect(fill).toContain('50%');
  await page.reload();await page.getByLabel('Open settings').click();await page.getByRole('tab',{name:'Appearance',exact:true}).click();
  await expect(page.getByLabel('Glass',{exact:true})).toHaveAttribute('data-value','liquid');
  await page.getByLabel('Glass',{exact:true}).focus();
@@ -103,7 +103,7 @@ test('Liquid Glass persists and native accessibility changes restore solid surfa
  const viewport=page.locator('.xterm-viewport').first();await expect(viewport).toHaveCSS('background-color','rgba(0, 0, 0, 0)');
  await page.locator('.xterm-helper-textarea').first().focus();
  await page.evaluate(()=>(window as typeof window & {appearanceChanged:(status:string)=>void}).appearanceChanged('reduced-transparency'));
- await expect(viewport).toHaveCSS('background-color','rgb(6, 6, 6)');await expect(page.locator('.xterm-helper-textarea').first()).toBeFocused();
+ await expect(viewport).toHaveCSS('background-color','rgb(9, 9, 9)');await expect(page.locator('.xterm-helper-textarea').first()).toBeFocused();
  await page.evaluate(()=>(window as typeof window & {appearanceChanged:(status:string)=>void}).appearanceChanged('liquid'));
  await expect(viewport).toHaveCSS('background-color','rgba(0, 0, 0, 0)');await page.locator('.terminal-workspace').getByRole('button',{name:/^Close Terminal/}).click();
 });

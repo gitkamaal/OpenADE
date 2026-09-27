@@ -1,3 +1,4 @@
+import {markCustomMenu,menuKeys} from "./menuKeys";
 import { createPortal } from "react-dom";
 import { Select } from "./Select";
 import {
@@ -15,7 +16,7 @@ import {
   SquaresFour,
   SpinnerGap,
 } from "@phosphor-icons/react";
-import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ProviderIcon } from "./ProviderIcon";
 import { ExternalConversation, projectName, relativeTime, Session } from "./api";
 import { Preferences, ProjectOrganization, ProjectSort } from "./preferences";
@@ -63,14 +64,21 @@ export function Sidebar({
   onToggle: () => void;
 }) {
   const [createSection,setCreateSection]=useState(false);
+  const [contextPosition,setContextPosition]=useState({left:12,top:100});
   const [context,setContext]=useState<Session|null>(null);const [sectionName,setSectionName]=useState("");const [filter,setFilter]=useState("");
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(projects.slice(0, 3)));
   const [showAll, setShowAll] = useState<Set<string>>(new Set());
   const [showAllProjects, setShowAllProjects] = useState(false);
-  const [projectsCollapsed, setProjectsCollapsed] = useState(false);
+  const projectsCollapsed=false;
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const projectMenuRef = useRef<HTMLDivElement>(null);
+  const viewTrigger=useRef<HTMLButtonElement>(null);const contextTrigger=useRef<HTMLButtonElement|null>(null);const [viewBounds,setViewBounds]=useState({left:0,top:0});
+  useLayoutEffect(()=>{if(!projectMenuOpen)return;const place=()=>{const r=viewTrigger.current!.getBoundingClientRect();setViewBounds({left:r.right+238<window.innerWidth?r.right+6:Math.max(8,r.left-238),top:Math.max(8,Math.min(r.top,window.innerHeight-280))});};place();window.addEventListener("resize",place);window.addEventListener("scroll",place,true);return()=>{window.removeEventListener("resize",place);window.removeEventListener("scroll",place,true);};},[projectMenuOpen,preferences.sidebar_width]);
 
+  useEffect(()=>{if(projectMenuOpen)document.querySelector<HTMLElement>(".sidebar-view-menu button")?.focus();},[projectMenuOpen]);
+  useEffect(()=>{if(context)document.querySelector<HTMLElement>(".sidebar-session-menu button")?.focus();},[context]);
+  useEffect(()=>{if(projectMenuOpen||context)return markCustomMenu(projectMenuRef.current);},[projectMenuOpen,Boolean(context)]);
+  useEffect(()=>{const dismiss=()=>{setProjectMenuOpen(false);setContext(null);setCreateSection(false);};window.addEventListener("openade-dismiss-menus",dismiss);return()=>window.removeEventListener("openade-dismiss-menus",dismiss);},[]);
   const allItems = useMemo<SidebarItem[]>(() => [
     ...sessions.filter(session=>!preferences.pinned_sessions.includes(session.id)&&!preferences.session_sections[session.id]&&`${session.title} ${session.repo_root}`.toLowerCase().includes(filter.toLowerCase())).map((session) => ({ kind: "session" as const, updatedAt: session.updated_at, session })),
     ...externalConversations.filter(conversation=>`${conversation.title} ${conversation.project_root}`.toLowerCase().includes(filter.toLowerCase())).map((conversation) => ({ kind: "external" as const, updatedAt: conversation.updated_at, conversation })),
@@ -102,8 +110,10 @@ export function Sidebar({
   }, [allItems, externalConversations, projectSort, projects, sessions,preferences.session_order]);
 
   const sortedItems = useMemo(() => sortSidebarItems(allItems, projectSort).sort((a,b)=>projectSort==="manual"?orderIndex(a)-orderIndex(b):0), [allItems, projectSort,preferences.session_order]);
-  const visibleGroups = showAllProjects ? grouped : grouped.slice(0, 10);
-  const visibleFlatItems = showAllProjects ? sortedItems : sortedItems.slice(0, 10);
+  const filteredGroups=grouped.filter(group=>!preferences.sidebar_project_filter||group.root===preferences.sidebar_project_filter);
+  const visibleGroups = showAllProjects ? filteredGroups : filteredGroups.slice(0, 10);
+  const filteredItems=sortedItems.filter(item=>!preferences.sidebar_project_filter||itemRoot(item)===preferences.sidebar_project_filter);
+  const visibleFlatItems = showAllProjects ? filteredItems : filteredItems.slice(0, 10);
 
   useEffect(() => {
     setExpanded((current) => current.size ? current : new Set(grouped.slice(0, 3).map((group) => group.root)));
@@ -112,11 +122,11 @@ export function Sidebar({
   useEffect(() => {
     if (!projectMenuOpen&&!context) return;
     const closeOnOutsidePointer = (event: PointerEvent) => {
-      if (!projectMenuRef.current?.contains(event.target as Node)) setProjectMenuOpen(false);
+      if (!projectMenuRef.current?.contains(event.target as Node)&&!(event.target as Element).closest(".project-menu-wrap,.select-popover")) setProjectMenuOpen(false);
       if(!(event.target as Element).closest(".sidebar-session-menu"))setContext(null);
     };
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape"){setProjectMenuOpen(false);setContext(null);}
+      if (event.key === "Escape"){setProjectMenuOpen(false);setContext(null);viewTrigger.current?.focus();}
     };
     document.addEventListener("pointerdown", closeOnOutsidePointer);
     document.addEventListener("keydown", closeOnEscape);
@@ -135,16 +145,14 @@ export function Sidebar({
   const chooseOrganization = (organization: ProjectOrganization) => {
     onProjectOrganization(organization);
     setShowAllProjects(false);
-    setProjectMenuOpen(false);
   };
 
   const chooseSort = (sort: ProjectSort) => {
     onProjectSort(sort);
-    setProjectMenuOpen(false);
   };
 
   const archive=(id:string)=>{onPreferences({...preferences,archived_sessions:[...preferences.archived_sessions,id]});setContext(null);};
-  const sessionButton=(session:Session)=><button className={`sidebar-chat-row ${selectedId===session.id?"active":""} ${preferences.sidebar_show_provider?"":"hide-provider"}`} key={session.id} onClick={()=>onOpen(session.id)} onContextMenu={event=>{event.preventDefault();setContext(session);}} title={session.title}><span className={`status-dot ${session.status}`}/><ProviderIcon provider={session.agent}/><span>{session.title}{preferences.sidebar_show_branch&&<em>{session.branch}</em>}{preferences.sidebar_show_pr&&session.pr_url&&<em>Pull request</em>}</span><small>{relativeTime(session.updated_at)}</small></button>;
+  const sessionButton=(session:Session)=><button data-session-id={session.id} className={`sidebar-chat-row ${selectedId===session.id?"active":""} ${preferences.sidebar_show_provider?"":"hide-provider"}`} key={session.id} onClick={()=>onOpen(session.id)} onContextMenu={event=>{event.preventDefault();contextTrigger.current=event.currentTarget;setContextPosition({left:Math.max(8,Math.min(event.clientX,window.innerWidth-238)),top:Math.max(8,Math.min(event.clientY,window.innerHeight-190))});setContext(session);}} title={session.title}><span className={`status-dot ${session.status}`}/><ProviderIcon provider={session.agent}/><span>{preferences.sidebar_show_project_label&&<em className="project-metadata">{projectName(session.repo_root)} @ Local</em>}{session.title}{preferences.sidebar_show_branch&&<em className="branch-metadata">{session.branch}</em>}{preferences.sidebar_show_pr&&session.pr_url&&<em>Pull request</em>}</span><small>{relativeTime(session.updated_at)}</small></button>;
   const move=(from:string,to:string)=>{const order=[...new Set([...preferences.session_order,...allItems.map(itemKey)])];order.splice(order.indexOf(from),1);order.splice(order.indexOf(to),0,from);onPreferences({...preferences,session_order:order,project_sort:"manual"});};
   return (
     <aside className={`sidebar ${preferences.sidebar_compact?"compact-sidebar":""} ${preferences.sidebar_show_project_icon?"show-project-icons":""} ${preferences.sidebar_show_project_label?"":"hide-project-labels"}`} >
@@ -162,14 +170,12 @@ export function Sidebar({
         {preferences.sidebar_sections.map(name=><section key={name} className="project-group custom-sidebar-section"><div className="sidebar-section-title">{name}<button aria-label={`Remove ${name} section`} onClick={()=>onPreferences({...preferences,sidebar_sections:preferences.sidebar_sections.filter(x=>x!==name),session_sections:Object.fromEntries(Object.entries(preferences.session_sections).filter(([,value])=>value!==name))})}>×</button></div><div className="project-sessions">{sessions.filter(s=>preferences.session_sections[s.id]===name&&!preferences.pinned_sessions.includes(s.id)).map(sessionButton)}</div></section>)}
 
         <div className="projects-heading" ref={projectMenuRef}>
-          <button className="projects-toggle" onClick={() => setProjectsCollapsed((value) => !value)} aria-expanded={!projectsCollapsed}>
-            <Folder/><span>All projects</span><CaretDown className={projectsCollapsed ? "collapsed" : ""} />
-          </button>
+          <Select className="projects-toggle" aria-label="Filter projects" icon={<Folder/>} searchable stickyValue="" popupWidth={224} searchPlaceholder="Search projects…" value={preferences.sidebar_project_filter} onChange={event=>{onPreferences({...preferences,sidebar_project_filter:event.target.value});setShowAllProjects(false);setExpanded(new Set(grouped.map(group=>group.root)));}} footer={<button type="button" className="new-project-action" onClick={()=>{window.dispatchEvent(new Event("openade-dismiss-menus"));onPage("settings");}}><Plus/>New project…</button>}><option value="">All projects</option>{grouped.map(({root})=><option key={root} value={root}><span className="project-picker-choice"><span>{projectName(root)}</span><small>@ Local</small></span></option>)}</Select>
           <div className="projects-actions">
-            <button onClick={() => setProjectMenuOpen((value) => !value)} aria-label="Project display settings" aria-haspopup="menu" aria-expanded={projectMenuOpen} title="Organize projects"><DotsThree /></button>
+            <button ref={viewTrigger} onClick={() => setProjectMenuOpen((value) => !value)} aria-label="Project display settings" aria-haspopup="menu" aria-expanded={projectMenuOpen} title="Organize projects"><DotsThree /></button>
             <button onClick={() => onPage("settings")} aria-label="Add project" title="Add a workspace folder"><Plus /></button>
           </div>
-          {projectMenuOpen&&<div className="project-menu-wrap"><ProjectMenu organization={projectOrganization} sort={projectSort} onOrganization={chooseOrganization} onSort={chooseSort} preferences={preferences} onPreferences={onPreferences} filter={filter} onFilter={setFilter} onCreate={()=>setCreateSection(v=>!v)}/>{createSection&&<div className="sidebar-menu-extras"><form onSubmit={e=>{e.preventDefault();const name=sectionName.trim();if(name&&!preferences.sidebar_sections.includes(name)){onPreferences({...preferences,sidebar_sections:[...preferences.sidebar_sections,name]});setSectionName("");setProjectMenuOpen(false);}}}><input aria-label="New sidebar section" placeholder="New section…" maxLength={40} value={sectionName} onChange={e=>setSectionName(e.target.value)}/><button disabled={!sectionName.trim()}>Add</button></form></div>}</div>}
+          {projectMenuOpen&&createPortal(<div className="project-menu-wrap" style={{position:"fixed",...viewBounds}}><ProjectMenu organization={projectOrganization} sort={projectSort} onOrganization={chooseOrganization} onSort={chooseSort} onDismiss={()=>{setProjectMenuOpen(false);viewTrigger.current?.focus();}} preferences={preferences} onPreferences={onPreferences} filter={filter} onFilter={setFilter} onCreate={()=>setCreateSection(v=>!v)}/>{createSection&&<div className="sidebar-menu-extras"><form onSubmit={e=>{e.preventDefault();const name=sectionName.trim();if(name&&!preferences.sidebar_sections.includes(name)){onPreferences({...preferences,sidebar_sections:[...preferences.sidebar_sections,name]});setSectionName("");setProjectMenuOpen(false);}}}><input aria-label="New sidebar section" placeholder="New section…" maxLength={40} value={sectionName} onChange={e=>setSectionName(e.target.value)}/><button disabled={!sectionName.trim()}>Add</button></form></div>}</div>,projectMenuRef.current?.closest(".ade")??document.body)}
         </div>
 
         {!projectsCollapsed && projectOrganization === "project" && <div className="project-groups">
@@ -184,27 +190,28 @@ export function Sidebar({
               </div>}
             </section>;
           })}
-          {grouped.length > 10 && <button className="all-projects-toggle" onClick={() => setShowAllProjects((value) => !value)}>{showAllProjects ? "Show fewer projects" : `Show ${grouped.length - 10} more projects`}</button>}
+          {filteredGroups.length > 10 && <button className="all-projects-toggle" onClick={() => setShowAllProjects((value) => !value)}>{showAllProjects ? "Show fewer projects" : `Show ${filteredGroups.length - 10} more projects`}</button>}
         </div>}
 
         {!projectsCollapsed && projectOrganization === "list" && <div className="project-flat-list project-sessions">
           {visibleFlatItems.map((item) => item.kind==="session"?sessionButton(item.session):<ExternalConversationButton conversation={item.conversation} key={itemKey(item)} busy={resumingConversationId===`${item.conversation.provider}:${item.conversation.id}`} onOpen={onResumeExternal}/>)}
-          {sortedItems.length > 10 && <button className="all-projects-toggle" onClick={() => setShowAllProjects((value) => !value)}>{showAllProjects ? "Show fewer chats" : `Show ${sortedItems.length - 10} more chats`}</button>}
-          {sortedItems.length === 0 && <div className="project-empty">Chats from indexed projects will appear here.</div>}
+          {filteredItems.length > 10 && <button className="all-projects-toggle" onClick={() => setShowAllProjects((value) => !value)}>{showAllProjects ? "Show fewer chats" : `Show ${filteredItems.length - 10} more chats`}</button>}
+          {filteredItems.length === 0 && <div className="project-empty">Chats from indexed projects will appear here.</div>}
         </div>}
 
       </div>
       <div className="sidebar-footer"><div className="profile"><span className="avatar">L</span><span><strong>Local</strong><small className="connection-state">{connected ? "Daemon connected" : "Reconnecting…"}</small></span></div><button className={`icon-button ${page === "settings" ? "active" : ""}`} onClick={() => onPage("settings")} aria-label="Open settings" title="Settings"><Gear /></button></div>
-      {context&&<div className="sidebar-session-menu" role="menu" aria-label="Chat actions"><strong>{context.title}</strong><button role="menuitem" onClick={()=>{onPreferences({...preferences,pinned_sessions:preferences.pinned_sessions.includes(context.id)?preferences.pinned_sessions.filter(x=>x!==context.id):[...preferences.pinned_sessions,context.id]});setContext(null);}}>{preferences.pinned_sessions.includes(context.id)?"Unpin chat":"Pin chat"}</button><label>Section<Select aria-label="Move chat to section" value={preferences.session_sections[context.id]||""} onChange={event=>{onPreferences({...preferences,session_sections:{...preferences.session_sections,[context.id]:event.target.value}});setContext(null);}}><option value="">All projects</option>{preferences.sidebar_sections.map(name=><option key={name}>{name}</option>)}</Select></label><button role="menuitem" onClick={()=>archive(context.id)}>Archive chat</button></div>}
+      {context&&createPortal(<div style={{position:"fixed",left:contextPosition.left,top:contextPosition.top,bottom:"auto"}} className="sidebar-session-menu" onKeyDown={event=>menuKeys(event,()=>setContext(null),()=>contextTrigger.current?.focus())} role="menu" aria-label="Chat actions"><strong>{context.title}</strong><button role="menuitem" onClick={()=>{onPreferences({...preferences,pinned_sessions:preferences.pinned_sessions.includes(context.id)?preferences.pinned_sessions.filter(x=>x!==context.id):[...preferences.pinned_sessions,context.id]});setContext(null);}}>{preferences.pinned_sessions.includes(context.id)?"Unpin chat":"Pin chat"}</button><label>Section<Select aria-label="Move chat to section" value={preferences.session_sections[context.id]||""} onChange={event=>{onPreferences({...preferences,session_sections:{...preferences.session_sections,[context.id]:event.target.value}});setContext(null);}}><option value="">All projects</option>{preferences.sidebar_sections.map(name=><option key={name}>{name}</option>)}</Select></label><button role="menuitem" onClick={()=>archive(context.id)}>Archive chat</button></div>,projectMenuRef.current?.closest(".ade")??document.body)}
     </aside>
   );
 }
 
-function ProjectMenu({organization,sort,onOrganization,onSort,preferences,onPreferences,filter,onFilter,onCreate}:{organization:ProjectOrganization;sort:ProjectSort;onOrganization:(value:ProjectOrganization)=>void;onSort:(value:ProjectSort)=>void;preferences:Preferences;onPreferences:(next:Preferences)=>void;filter:string;onFilter:(value:string)=>void;onCreate:()=>void}) {
+function ProjectMenu({onDismiss,organization,sort,onOrganization,onSort,preferences,onPreferences,filter,onFilter,onCreate}:{onDismiss:()=>void;organization:ProjectOrganization;sort:ProjectSort;onOrganization:(value:ProjectOrganization)=>void;onSort:(value:ProjectSort)=>void;preferences:Preferences;onPreferences:(next:Preferences)=>void;filter:string;onFilter:(value:string)=>void;onCreate:()=>void}) {
  const [show,setShow]=useState(false);const showTrigger=useRef<HTMLButtonElement>(null);
+ useEffect(()=>{if(show)document.querySelector<HTMLElement>(".sidebar-show-menu button")?.focus();},[show]);
  const flags=[['sidebar_show_branch','Branch'],['sidebar_show_pr','Pull request'],['sidebar_show_provider','Provider'],['sidebar_show_project_icon','Project icon'],['sidebar_show_project_label','Project label']] as const;
  const rect=showTrigger.current?.getBoundingClientRect();
- return <div className="project-menu sidebar-view-menu" role="menu" aria-label="Project display settings"><div className="sidebar-menu-row"><span>Organize</span><Select aria-label="Organize sidebar" value={organization} onChange={event=>onOrganization(event.target.value as ProjectOrganization)}><option value="project">By project</option><option value="list">In one list</option></Select></div><div className="sidebar-menu-row"><span>Sort</span><Select aria-label="Sort chats" value={sort} onChange={event=>onSort(event.target.value as ProjectSort)}><option value="updated">Last updated</option><option value="priority">Priority</option><option value="manual">Manual order</option></Select></div><button ref={showTrigger} role="menuitem" aria-haspopup="menu" aria-expanded={show} onClick={()=>setShow(v=>!v)}>Show<CaretDown/></button><button role="menuitemcheckbox" aria-checked={preferences.sidebar_compact} onClick={()=>onPreferences({...preferences,sidebar_compact:!preferences.sidebar_compact})}><span>Compact</span><span className={`sidebar-compact-switch ${preferences.sidebar_compact?"on":""}`}><i/></span></button><button role="menuitem" onClick={onCreate}><Plus/>Create Section</button>{show&&rect&&createPortal(<div className="sidebar-show-menu select-popover" style={{position:"fixed",left:Math.min(rect.right+6,window.innerWidth-222),top:rect.top,width:210}} onPointerDown={event=>event.stopPropagation()} onKeyDown={event=>{if(event.key==="Escape"){event.preventDefault();event.stopPropagation();setShow(false);showTrigger.current?.focus();}}} role="menu" aria-label="Show sidebar details">{flags.map(([key,label])=><button key={key} role="menuitemcheckbox" aria-checked={preferences[key]} onClick={()=>onPreferences({...preferences,[key]:!preferences[key]})}><span>{label}</span>{preferences[key]&&<Check/>}</button>)}<input aria-label="Filter sidebar sessions" placeholder="Filter chats…" value={filter} onChange={event=>onFilter(event.target.value)}/></div>,showTrigger.current?.closest('.ade')??document.body)}</div>;
+ return <div className="project-menu sidebar-view-menu" onKeyDown={event=>menuKeys(event,onDismiss)} role="menu" aria-label="Project display settings"><div className="sidebar-menu-row" onClick={event=>{if(!(event.target as Element).closest(".custom-select"))event.currentTarget.querySelector<HTMLButtonElement>(".custom-select")?.click();}}><span>Organize</span><Select placement="right" aria-label="Organize sidebar" value={organization} onChange={event=>onOrganization(event.target.value as ProjectOrganization)}><option value="project">By project</option><option value="list">None</option></Select></div><div className="sidebar-menu-row" onClick={event=>{if(!(event.target as Element).closest(".custom-select"))event.currentTarget.querySelector<HTMLButtonElement>(".custom-select")?.click();}}><span>Sort</span><Select placement="right" aria-label="Sort chats" value={sort} onChange={event=>onSort(event.target.value as ProjectSort)}><option value="updated">Last updated</option><option value="priority">Priority</option><option value="manual">Manual order</option></Select></div><button ref={showTrigger} role="menuitem" aria-haspopup="menu" aria-expanded={show} onClick={()=>setShow(v=>!v)}>Show<CaretDown/></button><button role="menuitemcheckbox" aria-checked={preferences.sidebar_compact} onClick={()=>onPreferences({...preferences,sidebar_compact:!preferences.sidebar_compact})}><span>Compact</span><span className={`sidebar-compact-switch ${preferences.sidebar_compact?"on":""}`}><i/></span></button><button role="menuitem" onClick={onCreate}><Plus/>Create Section</button>{show&&rect&&createPortal(<div className="sidebar-show-menu select-popover" style={{position:"fixed",left:Math.min(rect.right+6,window.innerWidth-222),top:rect.top,width:210}} onPointerDown={event=>event.stopPropagation()} onKeyDown={event=>{if(event.key==="Escape"){event.preventDefault();event.stopPropagation();setShow(false);showTrigger.current?.focus();}}} role="menu" aria-label="Show sidebar details">{flags.map(([key,label])=><button key={key} role="menuitemcheckbox" aria-checked={preferences[key]} onClick={()=>onPreferences({...preferences,[key]:!preferences[key]})}><span>{label}</span>{preferences[key]&&<Check/>}</button>)}<input aria-label="Filter sidebar sessions" placeholder="Filter chats…" value={filter} onChange={event=>onFilter(event.target.value)}/></div>,showTrigger.current?.closest('.ade')??document.body)}</div>;
 }
 
 function ExternalConversationButton({ conversation, busy, onOpen }: { conversation: ExternalConversation; busy: boolean; onOpen: (conversation: ExternalConversation) => void }) {

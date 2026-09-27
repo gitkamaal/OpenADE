@@ -22,7 +22,7 @@ const executablePath = !process.env.CI && fs.existsSync(pinnedChromium)
 
 export default defineConfig({
   testDir: "e2e",
-  testMatch: ["ade-lifecycle.spec.ts","zeron-flows.spec.ts","engine-flows.spec.ts","performance.spec.ts","capture.spec.ts","parity-controls.spec.ts"],
+  testMatch: ["ade-lifecycle.spec.ts","zeron-flows.spec.ts","engine-flows.spec.ts","performance.spec.ts","capture.spec.ts","parity-controls.spec.ts","appearance-audit.spec.ts"],
   timeout: 60_000,
   expect: { timeout: 15_000 },
   workers: 1,
@@ -30,13 +30,14 @@ export default defineConfig({
   use: {
     baseURL: `http://127.0.0.1:${uiPort}`,
     trace: "retain-on-failure",
+    video: process.env.OPENADE_RECORD_VIDEO?{mode:"on",size:{width:1480,height:920}}:"off",
     permissions:["clipboard-read","clipboard-write"],
   },
   projects: [{
     name: "chromium",
     use: {
       ...devices["Desktop Chrome"],
-      launchOptions: executablePath ? { executablePath } : {},
+      launchOptions: executablePath ? { executablePath,slowMo:process.env.OPENADE_RECORD_VIDEO?120:0 } : process.env.OPENADE_RECORD_VIDEO?{slowMo:120}:{},
     },
   }],
   webServer: [

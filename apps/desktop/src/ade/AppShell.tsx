@@ -1,5 +1,7 @@
 import { Folder, Desktop } from "@phosphor-icons/react";
 import { Select } from "./Select";
+import {accentFor,materialFor,resolveTheme} from "./themes";
+import {ResizeBoundary} from "./ResizeBoundary";
 import {
   Pulse,
   ArrowUp,
@@ -71,6 +73,7 @@ function AppShell() {
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("General");
   const previousPage = useRef<{page:Page;id:string|null}>({page:"home",id:null});
   const editorDirty = useRef(false);
+  const contentFocus=useRef<HTMLElement|null>(null);
   const lastStatuses = useRef<Map<string,string> | null>(null);
   const [preferences, setPreferences] = useState<Preferences>(loadPreferences);
   const [nativeMaterial, setNativeMaterial] = useState("pending");
@@ -86,11 +89,14 @@ function AppShell() {
     mountedRef.current = true;
     const dirty=(event:Event)=>{editorDirty.current=(event as CustomEvent<boolean>).detail;};
     window.addEventListener("openade-editor-dirty",dirty);
+    const focus=(event:FocusEvent)=>{const target=event.target;if(target instanceof HTMLElement&&target.closest(".session-workspace"))contentFocus.current=target;};
+    document.addEventListener("focusin",focus);
     const beforeUnload=(event:BeforeUnloadEvent)=>{if(editorDirty.current){event.preventDefault();event.returnValue="";}};
     window.addEventListener("beforeunload",beforeUnload);
     return () => {
       mountedRef.current = false;
       window.removeEventListener("openade-editor-dirty",dirty);
+      document.removeEventListener("focusin",focus);
       window.removeEventListener("beforeunload",beforeUnload);
       if (focusTimerRef.current !== undefined) window.clearTimeout(focusTimerRef.current);
     };
@@ -149,9 +155,10 @@ function AppShell() {
       setSwitchingSessionId(null);
     }
   };
-  const updatePreferences = (next: Preferences) => {
-    setPreferences(next);
-    savePreferences(next);
+  const updatePreferences = (next: Preferences, persist=true) => {
+    const adjusted={...next,sidebar_open:sidebarOpen};
+    setPreferences(adjusted);
+    if(persist) savePreferences(adjusted);
   };
   useEffect(() => {
     const bridge = window as typeof window & {
@@ -162,8 +169,7 @@ function AppShell() {
     let active = true;
     const apply = () => {
       setSystemLight(media.matches);
-      const light = preferences.color_scheme === "light" || preferences.color_scheme === "system" && media.matches;
-      const material = preferences.glass === "default" ? (light || preferences.dark_theme === "graphite" ? "frosted" : "opaque") : preferences.glass;
+      const material = materialFor(resolveTheme(preferences,media.matches),preferences.glass);
       const setter = bridge.go?.main?.App?.SetAppearance;
       if (setter) void setter(preferences.color_scheme, material).then(status => {if(active) setNativeMaterial(status);}).catch(() => {if(active) setNativeMaterial("unsupported");});
       else setNativeMaterial("browser");
@@ -171,12 +177,13 @@ function AppShell() {
     const cancel = bridge.runtime?.EventsOn?.("appearance:changed", status => {if(active) setNativeMaterial(status);});
     apply(); media.addEventListener("change", apply);
     return () => {active = false; cancel?.(); media.removeEventListener("change", apply);};
-  }, [preferences.color_scheme, preferences.dark_theme, preferences.glass]);
+  }, [preferences.color_scheme, preferences.dark_theme, preferences.light_theme, preferences.glass]);
   const openPage = (next: Page) => {
-    if(editorDirty.current){setError("Save or discard file changes before leaving this session.");return;}
+    if(editorDirty.current&&next!=="settings"){setError("Save or discard file changes before leaving this session.");return;}
     if(next === "settings" && page !== "settings") previousPage.current={page,id:selectedId};
+    if(next==="settings")window.dispatchEvent(new Event("openade-dismiss-menus"));
     setPage(next);
-    setSelectedId(null);
+    if(next!=="settings")setSelectedId(null);
   };
   const openComposer = () => {
     if(editorDirty.current){setError("Save or discard file changes before starting another session.");return;}
@@ -188,21 +195,30 @@ function AppShell() {
       document.querySelector<HTMLTextAreaElement>("[data-main-composer]")?.focus();
     }, 0);
   };
-  const closeSettings = () => { setPage(previousPage.current.page); setSelectedId(previousPage.current.id); };
-  const toggleSidebar = () => { setSidebarOpen(value=>!value); };
-  useEffect(() => { savePreferences({...preferences,sidebar_open:sidebarOpen}); }, [sidebarOpen,preferences]);
+  const closeSettings = () => {
+    setPage(previousPage.current.page);setSelectedId(previousPage.current.id);
+    if(focusTimerRef.current!==undefined)window.clearTimeout(focusTimerRef.current);
+    focusTimerRef.current=window.setTimeout(()=>{focusTimerRef.current=undefined;const target=contentFocus.current; if(target?.isConnected)target.focus();else document.querySelector<HTMLElement>("[data-main-composer]")?.focus();},0);
+  };
+  const toggleSidebar = () => { window.dispatchEvent(new Event("openade-dismiss-menus"));setSidebarOpen(value=>!value); };
+  useEffect(() => {if(preferences.sidebar_open!==sidebarOpen)updatePreferences({...preferences,sidebar_open:sidebarOpen});}, [sidebarOpen]);
   useEffect(() => {
+    const navigationSessions=()=>{
+      const eligible=visibleSessions.filter(session=>!preferences.sidebar_project_filter||session.repo_root===preferences.sidebar_project_filter);
+      const ids=[...document.querySelectorAll<HTMLElement>(".sidebar-chat-row[data-session-id]")].map(row=>row.dataset.sessionId!).filter(id=>eligible.some(session=>session.id===id));
+      return ids.length?ids.map(id=>eligible.find(session=>session.id===id)!):eligible;
+    };
     const onKey = (event:KeyboardEvent) => {
       if(event.defaultPrevented || event.isComposing || event.repeat || (event.target instanceof Element && event.target.closest("[role=dialog]"))) return;
       if(shortcutMatches(event,preferences.shortcuts.sidebar)){event.preventDefault();toggleSidebar();}
       else if(shortcutMatches(event,preferences.shortcuts.settings)){event.preventDefault();page === "settings"?closeSettings():openPage("settings");}
       else if(shortcutMatches(event,preferences.shortcuts.newSession)||(event.metaKey||event.ctrlKey)&&event.key.toLowerCase()==="k"){event.preventDefault();openComposer();}
-      else if(shortcutMatches(event,preferences.shortcuts.model)){event.preventDefault();window.dispatchEvent(new Event("openade-model-picker"));}
+      else if(page!=="settings"&&shortcutMatches(event,preferences.shortcuts.model)){event.preventDefault();window.dispatchEvent(new Event("openade-model-picker"));}
       else if(shortcutMatches(event,preferences.shortcuts.focusComposer)&&!selectedId){event.preventDefault();document.querySelector<HTMLTextAreaElement>("[data-main-composer]")?.focus();}
       else if(shortcutMatches(event,preferences.shortcuts.next)||shortcutMatches(event,preferences.shortcuts.previous)) {
-        event.preventDefault(); const index=visibleSessions.findIndex(s=>s.id===selectedId); const delta=shortcutMatches(event,preferences.shortcuts.previous)?-1:1;
-        const target=visibleSessions[(index+delta+visibleSessions.length)%visibleSessions.length]; if(target)void openSession(target.id);
-      } else if((event.metaKey||event.ctrlKey)&&/^[1-9]$/.test(event.key)){const target=visibleSessions[Number(event.key)-1];if(target){event.preventDefault();void openSession(target.id);}}
+        event.preventDefault();const ordered=navigationSessions(),index=ordered.findIndex(session=>session.id===selectedId),delta=shortcutMatches(event,preferences.shortcuts.previous)?-1:1;
+        const target=ordered[(index+delta+ordered.length)%ordered.length];if(target)void openSession(target.id);
+      } else if((event.metaKey||event.ctrlKey)&&/^[1-9]$/.test(event.key)){const target=navigationSessions()[Number(event.key)-1];if(target){event.preventDefault();void openSession(target.id);}}
     };
     window.addEventListener("keydown",onKey);return ()=>window.removeEventListener("keydown",onKey);
   },[preferences,page,selectedId,sessions,sidebarOpen]);
@@ -243,10 +259,12 @@ function AppShell() {
     }
   };
 
+  const activeTheme=resolveTheme(preferences,systemLight);
+  const activeMaterial=materialFor(activeTheme,preferences.glass);
   return (
-    <div data-connected={connected} data-native-material={nativeMaterial}
-      className={`ade ${themeClass(preferences)} material-${preferences.glass === "liquid" ? "frosted material-liquid" : preferences.glass === "transparent" ? "frosted material-transparent" : preferences.glass} ${preferences.color_scheme === "light" || preferences.color_scheme === "system" && systemLight || preferences.dark_theme === "graphite" ? "default-frosted" : "default-opaque"} ${("go" in window) ? "native-window" : "browser-window"} ${sidebarOpen ? "" : "sidebar-collapsed"}`}
-      style={{"--sidebar-width":`${preferences.sidebar_width}px`,"--conversation-width":`${preferences.conversation_width}px`,"--code-font":`"${preferences.code_font}", monospace`,"--terminal-font":`"${preferences.terminal_font}", monospace`,"--code-size":`${preferences.code_size}px`,"--terminal-size":`${preferences.terminal_size}px`,"--interface-scale":preferences.interface_size/16,...(preferences.accent!=="default"?{"--accent":preferences.accent}:{}),fontFamily:preferences.interface_font==="System UI"?"-apple-system, BlinkMacSystemFont, sans-serif":undefined} as CSSProperties}
+    <div data-theme-id={activeTheme.id} data-theme-appearance={activeTheme.appearance} data-connected={connected} data-native-material={nativeMaterial}
+      className={`ade ${themeClass(preferences,systemLight)} material-${preferences.glass === "liquid" ? "frosted material-liquid" : preferences.glass === "transparent" ? "frosted material-transparent" : preferences.glass} ${activeMaterial === "frosted" ? "default-frosted" : "default-opaque"} ${("go" in window) ? "native-window" : "browser-window"} ${sidebarOpen ? "" : "sidebar-collapsed"}`}
+      style={{"--theme-accent":activeTheme.accent.primary,"--glass-coverage":`${100-preferences.transparency}%`,"--glass-wash":`${(100-preferences.transparency)*.22}%`,"--glass-card":`${(100-preferences.transparency)*.55}%`,"--glass-composer":`${(100-preferences.transparency)*.8}%`,"--sidebar-width":`${preferences.sidebar_width}px`,"--conversation-width":`${preferences.conversation_width}px`,"--code-font":`"${preferences.code_font}", monospace`,"--terminal-font":`"${preferences.terminal_font}", monospace`,"--code-size":`${preferences.code_size}px`,"--terminal-size":`${preferences.terminal_size}px`,"--interface-scale":preferences.interface_size/16,...(preferences.accent!=="default"?{"--accent":accentFor(preferences.accent,activeTheme.appearance)}:{}),fontFamily:preferences.interface_font==="System UI"?"-apple-system, BlinkMacSystemFont, sans-serif":undefined} as CSSProperties}
     >
       {<div className="sidebar-clip" inert={!sidebarOpen}>{page === "settings" ? <SettingsNavigation section={settingsSection} onSection={setSettingsSection} onBack={closeSettings}/> : <Sidebar
         preferences={preferences} onPreferences={next=>{if(editorDirty.current&&selectedId&&next.archived_sessions.includes(selectedId)){setError("Save or discard file changes before archiving.");return;}updatePreferences(next);if(selectedId&&next.archived_sessions.includes(selectedId))setSelectedId(null);}}
@@ -267,15 +285,14 @@ function AppShell() {
         onNewSession={openComposer}
         onToggle={toggleSidebar}
       />}</div>}
-      {sidebarOpen && page !== "settings" && <div className="sidebar-resizer" role="separator" aria-label="Resize sidebar" aria-orientation="vertical" onDoubleClick={()=>updatePreferences({...preferences,sidebar_width:256})} onPointerDown={event=>{event.currentTarget.setPointerCapture(event.pointerId);}} onPointerMove={event=>{if(event.currentTarget.hasPointerCapture(event.pointerId))updatePreferences({...preferences,sidebar_width:Math.min(400,Math.max(224,event.clientX))});}}/>}
+      {sidebarOpen && page !== "settings" && <ResizeBoundary className="sidebar-resizer" label="Resize sidebar" width={preferences.sidebar_width} min={224} max={400} defaultWidth={256} onResize={width=>updatePreferences({...preferences,sidebar_width:width},false)} onCommit={width=>updatePreferences({...preferences,sidebar_width:width})}/> }
 
       <main className="main-shell">
         {!sidebarOpen && <button className="sidebar-toggle icon-button" onClick={() => setSidebarOpen(true)} aria-label="Toggle sidebar"><SidebarSimple size={18} /></button>}
         {!connected && <div className="connection-banner"><SpinnerGap className="spin" /> {error || "Connecting to the local daemon…"}<button onClick={()=>{const bridge=window as typeof window & {go?:{main?:{App?:{Reconnect?:()=>Promise<void>}}}};void (bridge.go?.main?.App?.Reconnect?.()||Promise.resolve()).then(refresh).catch(reason=>setError(String(reason)));}}>Reconnect</button></div>}
         {connected && error && <button className="error-toast" onClick={() => setError(null)}><span>{error}</span><X /></button>}
-        {selected ? (
-          <Suspense fallback={<div className="opening-session" role="status">Opening session…</div>}><SessionWorkspace key={selected.id} session={selected} preferences={preferences} onPreferences={updatePreferences} onArchive={()=>{if(editorDirty.current){setError("Save or discard file changes before archiving.");return;}updatePreferences({...preferences,archived_sessions:[...preferences.archived_sessions,selected.id]});setSelectedId(null);}} onBack={() => {if(editorDirty.current){setError("Save or discard file changes before leaving this session.");return;}setSelectedId(null);}} onRefresh={refresh} /></Suspense>
-        ) : page === "home" ? (
+        {selected&&<div className="retained-workspace" hidden={page==="settings"} inert={page==="settings"}><Suspense fallback={<div className="opening-session" role="status">Opening session…</div>}><SessionWorkspace activeView={page!=="settings"} key={selected.id} session={selected} preferences={preferences} onPreferences={updatePreferences} onArchive={()=>{if(editorDirty.current){setError("Save or discard file changes before archiving.");return;}updatePreferences({...preferences,archived_sessions:[...preferences.archived_sessions,selected.id]});setSelectedId(null);}} onBack={() => {if(editorDirty.current){setError("Save or discard file changes before leaving this session.");return;}setSelectedId(null);}} onRefresh={refresh} /></Suspense></div>}
+        {selected&&page!=="settings" ? null : page === "home" ? (
           <Home sessions={sessions} projects={visibleProjects} meta={meta} preferences={preferences} onCreated={(session) => { void refresh(); openSession(session.id); }} onOpen={openSession} onError={setError} />
         ) : page === "sites" ? (
           <SitesPage />
@@ -286,7 +303,7 @@ function AppShell() {
         ) : page === "review" ? (
           <ReviewPage projects={visibleProjects} sessions={sessions} />
         ) : (
-          <SettingsPage nativeMaterial={nativeMaterial} preferences={preferences} onChange={updatePreferences} section={settingsSection} meta={meta} sessions={sessions} onSetup={session=>{void refresh();setSelectedId(session.id);setPage("sessions");}} onRestore={id=>updatePreferences({...preferences,archived_sessions:preferences.archived_sessions.filter(value=>value!==id)})} />
+          <SettingsPage activeAppearance={activeTheme.appearance} resolvedMaterial={activeMaterial} nativeMaterial={nativeMaterial} preferences={preferences} onChange={updatePreferences} section={settingsSection} meta={meta} sessions={sessions} onSetup={session=>{void refresh();if(editorDirty.current){setError("Save or discard file changes before opening provider setup.");return;}setSelectedId(session.id);setPage("sessions");}} onRestore={id=>updatePreferences({...preferences,archived_sessions:preferences.archived_sessions.filter(value=>value!==id)})} />
         )}
       </main>
     </div>

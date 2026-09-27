@@ -1,3 +1,5 @@
+import {useEffect,useRef} from "react";
+import {markCustomMenu} from "./menuKeys";
 import { Command, Lightning } from "@phosphor-icons/react";
 import { AgentCommand } from "./api";
 
@@ -10,8 +12,9 @@ export function filterAgentCommands(commands: AgentCommand[], input: string): Ag
 }
 
 export function AgentCommandMenu({ commands, input, onSelect }: { commands: AgentCommand[]; input: string; onSelect: (command: AgentCommand) => void }) {
+  const menu=useRef<HTMLDivElement>(null);useEffect(()=>markCustomMenu(menu.current),[]);
   const visible = filterAgentCommands(commands, input);
-  return <div className="agent-command-menu" role="listbox" aria-label="Skills and commands">
+  return <div ref={menu} className="agent-command-menu" role="listbox" aria-label="Skills and commands">
     <header><span>Skills & commands</span><small>{visible.length} available</small></header>
     <div>
       {visible.map((command, index) => <button type="button" role="option" aria-selected={index === 0} key={command.id} onMouseDown={(event) => event.preventDefault()} onClick={() => onSelect(command)}>
