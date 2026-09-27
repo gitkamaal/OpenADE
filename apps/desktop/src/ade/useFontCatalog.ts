@@ -1,0 +1,5 @@
+import {useEffect,useState} from 'react';
+export interface NativeFont {family:string;monospace:boolean}
+const defaults:NativeFont[]=[{family:'Geist',monospace:false},{family:'Geist Mono',monospace:true},{family:'System UI',monospace:false},{family:'Menlo',monospace:true},{family:'Monaco',monospace:true},{family:'Courier New',monospace:true}];
+export function useFontCatalog(){const [fonts,setFonts]=useState(defaults);useEffect(()=>{let stale=false;const native=window as typeof window & {go?:{main?:{App?:{FontCatalog?:()=>Promise<NativeFont[]>}}}};void native.go?.main?.App?.FontCatalog?.().then(catalog=>{if(stale)return;const combined=[...defaults.slice(0,3),...catalog.filter(font=>typeof font.family==='string'&&font.family.length<=200&&!/[\x00-\x1f]/.test(font.family)&&typeof font.monospace==='boolean')];setFonts(combined.filter((font,index)=>combined.findIndex(other=>other.family===font.family)===index));}).catch(()=>{});return()=>{stale=true;};},[]);return fonts;}
+export function fontFamily(value:string,fallback='monospace'){return value==='System UI'?'-apple-system, BlinkMacSystemFont, sans-serif':`${JSON.stringify(value)}, ${fallback}`;}

@@ -600,7 +600,7 @@ select option{background:var(--surface);color:var(--text)}
 .files-panel.with-editor .files-index{flex:0 1 32%;min-height:85px}
 .file-editor{display:flex;flex-direction:column;min-height:0;flex:1;border-top:1px solid var(--line)}
 .file-editor header{min-height:38px;padding:0 7px;display:flex;align-items:center;gap:5px}
-.file-editor header>svg{width:13px;flex:0 0 auto}.file-editor strong{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;font-weight:500}
+.file-editor header>svg{width:13px;flex:0 0 auto}.file-editor>header>strong{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;font-weight:500}
 .file-editor textarea{flex:1;min-height:0;width:100%;background:var(--sidebar);border:0;border-top:1px solid var(--line);border-radius:0;color:var(--text);resize:none;font:var(--code-size)/1.6 'Geist Mono',monospace;padding:10px;tab-size:2}
 .unsaved-prompt{background:var(--surface-2);padding:10px;display:flex;flex-wrap:wrap;gap:5px;font-size:11px}
 .unsaved-prompt span{width:100%}.unsaved-prompt button{border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--text);font-size:11px;padding:5px 7px;cursor:pointer}
@@ -792,14 +792,14 @@ img.provider-claude{filter:brightness(0) saturate(100%) invert(58%) sepia(44%) s
  --shell-fill:var(--sidebar);--sidebar-fill:var(--bg);--panel-fill:var(--bg);--card-fill:var(--surface);--popup-fill:var(--surface);--composer-fill:var(--surface);
 }
 .ade.native-window:is([data-native-material="opaque"],[data-native-material="reduced-transparency"],[data-native-material="increased-contrast"],[data-native-material="unsupported"]) *,.ade.native-window:is([data-native-material="opaque"],[data-native-material="reduced-transparency"],[data-native-material="increased-contrast"],[data-native-material="unsupported"]) *::before{backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
-.ade.native-window[data-native-material="increased-contrast"]{--muted:var(--text);--muted-2:var(--text);--faint:var(--text);--line:var(--text);--line-soft:var(--text)}
+.ade.native-window[data-native-material="increased-contrast"]{--muted:var(--text)!important;--muted-2:var(--text)!important;--faint:var(--text)!important;--line:var(--text)!important;--line-soft:var(--text)!important}
 .ade :is(button,[role="combobox"],input,[tabindex]):focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .ade .cm-focused{outline:2px solid var(--accent);outline-offset:-2px}
 @media(prefers-reduced-transparency:reduce){
  .ade{--shell-fill:var(--sidebar)!important;--sidebar-fill:var(--bg)!important;--panel-fill:var(--bg)!important;--card-fill:var(--surface)!important;--popup-fill:var(--surface)!important;--composer-fill:var(--surface)!important}
  .ade *,.ade *::before,.ade *::after{backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
 }
-@media(prefers-contrast:more){.ade[data-native-material],.ade.native-window[data-native-material]{--muted:var(--text);--muted-2:var(--text);--faint:var(--text);--line:var(--text);--line-soft:var(--text)}}
+@media(prefers-contrast:more){.ade[data-native-material],.ade.native-window[data-native-material]{--muted:var(--text)!important;--muted-2:var(--text)!important;--faint:var(--text)!important;--line:var(--text)!important;--line-soft:var(--text)!important}}
 
 /* The panel itself owns its fill; clipped wrappers must not cover the backdrop. */
 .ade :is(.files-panel-clip,.zeron-diffs){background:transparent}
@@ -918,3 +918,20 @@ img.provider-claude{filter:brightness(0) saturate(100%) invert(58%) sepia(44%) s
 .user-prompt-fold{display:flex;margin:4px auto -6px;padding:2px 12px;border:0;background:transparent;color:var(--muted);cursor:pointer}
 .user-prompt-fold svg{width:14px;height:14px}.user-prompt-fold svg.expanded{transform:rotate(180deg)}
 @media(prefers-reduced-motion:reduce){.composer-morphing{transition:none}}
+
+.ade.fit-code-fences .markdown-code-block{width:fit-content;max-width:100%;min-width:160px}.wrap-diffs .diff-line code,.wrap-diffs .diff-split-line code{white-space:pre-wrap;overflow-wrap:anywhere;min-width:0}.wrap-diffs .diff-lines{overflow-x:hidden}.wrap-diffs .diff-line,.wrap-diffs .diff-split-line{align-items:start}
+
+.wrap-diffs .diff-line{grid-template-columns:32px 32px minmax(0,1fr)}
+
+.ade .syntax-keyword{color:var(--syntax-keyword)}.ade .syntax-string{color:var(--syntax-string)}.ade .syntax-number{color:var(--syntax-number)}.ade .syntax-type{color:var(--syntax-type)}.ade .syntax-variable{color:var(--syntax-variable)}.ade .syntax-property{color:var(--syntax-property)}.ade .syntax-punctuation{color:var(--syntax-punctuation)}.ade .syntax-tag{color:var(--syntax-tag)}.ade .syntax-attribute{color:var(--syntax-attribute)}.ade .syntax-invalid{color:var(--syntax-invalid)}.ade .syntax-comment{color:var(--syntax-comment)}.ade .syntax-function{color:var(--syntax-function)}
+.ade .syntax-comment{font-style:italic}
+
+.zeron-diffs{grid-template-rows:auto 36px minmax(0,1fr)}.zeron-diffs.commit-open{grid-template-rows:auto auto 36px minmax(0,1fr)}.diff-toolbar{min-height:38px;align-items:center}.diff-toolbar>button,.diff-toolbar>input,.diff-toolbar>.custom-select{height:27px}
+
+.sidebar-chat-row>small.session-jump-hint{color:var(--text);font-size:10px;white-space:nowrap;border:1px solid var(--border);border-radius:4px;padding:1px 4px;background:var(--surface-2);}
+
+.sidebar[hidden]{display:none!important;}
+
+.retained-home{display:flex;flex:1;min-width:0;min-height:0;height:100%}
+.retained-home[hidden]{display:none}
+.retained-home>.home-page{width:100%;min-width:0;flex:1}

@@ -57,7 +57,39 @@ func providerModels(agent string) []ModelChoice {
 	if agent != "codex" {
 		return []ModelChoice{}
 	}
-	file, err := os.Open(filepath.Join(providerHome(), ".codex", "models_cache.json"))
+	// A cache is optional. Filesystem privacy prompts or mounted volumes must
+	// not hold metadata loading (and window connection) indefinitely. Bound
+	// outstanding reads as well as caller latency; timed-out I/O cannot be
+	// forcibly cancelled by Go and retains its slot until it finishes.
+	select {
+	case modelCacheReaders <- struct{}{}:
+	default:
+		return []ModelChoice{}
+	}
+	result := make(chan []ModelChoice, 1)
+	go func() {
+		defer func() { <-modelCacheReaders }()
+		result <- readCodexModelCache()
+	}()
+	timer := time.NewTimer(time.Second)
+	defer timer.Stop()
+	select {
+	case models := <-result:
+		return models
+	case <-timer.C:
+		return []ModelChoice{}
+	}
+}
+
+var modelCacheReaders = make(chan struct{}, 2)
+
+func readCodexModelCache() []ModelChoice {
+	path := filepath.Join(providerHome(), ".codex", "models_cache.json")
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() > 2*1024*1024 {
+		return []ModelChoice{}
+	}
+	file, err := os.Open(path)
 	if err != nil {
 		return []ModelChoice{}
 	}

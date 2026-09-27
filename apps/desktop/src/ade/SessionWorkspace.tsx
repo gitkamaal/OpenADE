@@ -1,3 +1,5 @@
+import {WebLinkContext} from "./WebLinkContext";
+import {useAttachments,AttachmentPicker,AttachmentStrip,withAttachments} from "./Attachments";
 import {useComposerLayout} from "./useComposerLayout";
 import {menuKeys} from "./menuKeys";
 import {ResizeBoundary} from "./ResizeBoundary";
@@ -53,12 +55,21 @@ import { ModelPicker } from "./ModelPicker";
 import { MessageQueue } from "./MessageQueue";
 
 const sessionDrafts=new Map<string,string>();
+const pendingSessionSends=new Set<string>();
+const notifyPendingSend=(id:string)=>window.dispatchEvent(new CustomEvent("openade-pending-send",{detail:id}));
+
+export function recoverRejectedDraft(original:string,current:string){
+  if(!current||current===original)return original;
+  if(!original)return current;
+  return `${original}\n\n${current}`;
+}
 
 type WorkTab = "review" | "terminal" | "pull-request" | "ticket" | "browser" | "history" | "editor";
 
 export function SessionWorkspace({ activeView=true, session, preferences, onBack, onRefresh, onPreferences, onArchive }: { activeView?:boolean; session: Session; preferences: Preferences; onPreferences:(next:Preferences,persist?:boolean)=>void; onArchive:()=>void; onBack: () => void; onRefresh: () => Promise<void> }) {
   const tuiMode = session.mode === "tui";
   const defaultTab: WorkTab = session.agent === "shell" || (preferences.session_surface === "terminal" && !tuiMode) ? "terminal" : "review";
+  const [browserLink,setBrowserLink]=useState<{url:string;version:number}>();
   const [tab, setTab] = useState<WorkTab>(defaultTab);
   const [rightOpen, setRightOpen] = useState(!tuiMode&&(session.agent === "shell" || (preferences.session_surface === "terminal" && !tuiMode)));
   const [tabs,setTabs]=useState<WorkTab[]>(session.agent === "shell" ? ["terminal"] : []);
@@ -74,7 +85,11 @@ export function SessionWorkspace({ activeView=true, session, preferences, onBack
   const [ticket, setTicket] = useState<Ticket | null>(null);
   const [panelError, setPanelError] = useState<string | null>(null);
   const [input, setInput] = useState(()=>sessionDrafts.get(session.id)??"");
-  const composerLayout=useComposerLayout(input,preferences.interface_size);
+  useEffect(()=>{const restored=(event:Event)=>{const detail=(event as CustomEvent<{id:string;error:string}>).detail;if(detail.id===session.id){setInput(sessionDrafts.get(session.id)??"");setPanelError(detail.error);}};window.addEventListener("openade-rejected-draft",restored);return()=>window.removeEventListener("openade-rejected-draft",restored);},[session.id]);
+  const attachments=useAttachments(session.id);
+  const submitting=useRef(false);const [sending,setSending]=useState(()=>pendingSessionSends.has(session.id));
+  useEffect(()=>{const changed=(event:Event)=>{if((event as CustomEvent<string>).detail===session.id)setSending(pendingSessionSends.has(session.id));};window.addEventListener("openade-pending-send",changed);return()=>window.removeEventListener("openade-pending-send",changed);},[session.id]);
+  const composerLayout=useComposerLayout(input,preferences.interface_size,attachments.images.length>0,60);
   useEffect(()=>{sessionDrafts.delete(session.id);if(input){sessionDrafts.set(session.id,input);if(sessionDrafts.size>32)sessionDrafts.delete(sessionDrafts.keys().next().value!);}},[session.id,input]);
   useEffect(()=>{if(!activeView){setTabMenu(false);setActionsOpen(false);setCommandOpen(false);}},[activeView]);
   const [editingMessageId,setEditingMessageId]=useState<string|null>(null);
@@ -196,19 +211,31 @@ export function SessionWorkspace({ activeView=true, session, preferences, onBack
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!input.trim() || !canMessage) return;
-    const value = input.trim();
+    if (submitting.current || pendingSessionSends.has(session.id) || (!input.trim()&&!attachments.images.length) || attachments.uploading || !canMessage) return;
+    submitting.current=true;pendingSessionSends.add(session.id);notifyPendingSend(session.id);
+    const originalInput=input;const originalImages=attachments.images;
+    const value = withAttachments(input,originalImages);
     setInput("");
     setPanelError(null);
+    let accepted=false;
     try {
       if(editingMessageId){await updateQueuedMessage(session.id,editingMessageId,value);setEditingMessageId(null);}
       else {const queued = await enqueueMessage(session.id, value);setQueuedMessages((current) => [...current.filter((item) => item.id !== queued.id), queued]);}
+      accepted=true;
+      const submittedIDs=new Set(originalImages.map(image=>image.id));
+      attachments.setImages(current=>current.filter(image=>!submittedIDs.has(image.id)));
       await onRefresh();
       await refreshQueue();
     } catch (reason) {
-      setInput(value);
-      setPanelError(reason instanceof Error ? reason.message : String(reason));
-    }
+      const message=reason instanceof Error ? reason.message : String(reason);
+      if(!accepted){
+        const current=sessionDrafts.get(session.id)??"";
+        const recovered=recoverRejectedDraft(originalInput,current);
+        if(recovered)sessionDrafts.set(session.id,recovered);else sessionDrafts.delete(session.id);
+        const combined=Boolean(originalInput&&current&&current!==originalInput);
+        window.dispatchEvent(new CustomEvent("openade-rejected-draft",{detail:{id:session.id,error:combined?`The submitted message and newer draft were restored, separated by a blank line. ${message}`:message}}));
+      }else if(mountedRef.current)setPanelError(`Message saved. Unable to refresh the conversation: ${message}`);
+    } finally {submitting.current=false;pendingSessionSends.delete(session.id);notifyPendingSend(session.id);}
   };
 
   const steerQueuedMessage = async (id: string) => {
@@ -303,7 +330,7 @@ export function SessionWorkspace({ activeView=true, session, preferences, onBack
   useEffect(()=>{if(!tabMenu&&!actionsOpen)return;const close=(event:PointerEvent)=>{if(!(event.target as Element).closest(".panel-tab-menu,.panel-add,.session-actions,.session-actions-trigger")){setTabMenu(false);setActionsOpen(false);}};document.addEventListener("pointerdown",close);return()=>document.removeEventListener("pointerdown",close);},[tabMenu,actionsOpen]);
   const closeTab=(surface:WorkTab)=>{if(surface==="editor"&&dirtyRef.current){setPanelError("Save or discard changes before closing the editor.");return;}const remaining=tabs.filter(value=>value!==surface);setTabs(remaining);if(tab===surface){if(remaining.length)setTab(remaining[remaining.length-1]);else setRightOpen(false);}};
   return (
-    <div className={`session-workspace ${detailsEditor||tabMenu||actionsOpen?"has-overlay":""} ${rightOpen ? "with-panel" : ""} ${filesOpen?"with-files":""} ${session.agent === "shell" && !tuiMode ? "shell-workspace" : ""}`} style={{"--panel-width":`${preferences.panel_width}px`} as CSSProperties}>
+    <WebLinkContext.Provider value={preferences.open_web_links_in_app?url=>{setBrowserLink(current=>({url,version:(current?.version||0)+1}));setTabs(current=>current.includes("browser")?current:[...current,"browser"]);setTab("browser");setRightOpen(true);}:null}><div className={`session-workspace ${detailsEditor||tabMenu||actionsOpen?"has-overlay":""} ${rightOpen ? "with-panel" : ""} ${filesOpen?"with-files":""} ${session.agent === "shell" && !tuiMode ? "shell-workspace" : ""}`} style={{"--panel-width":`${preferences.panel_width}px`} as CSSProperties}>
       <header className="session-header">
         <button className="icon-button" onClick={onBack} aria-label="Back"><ArrowLeft /></button>
         <span className={`status-dot ${session.status}`} />
@@ -324,12 +351,13 @@ export function SessionWorkspace({ activeView=true, session, preferences, onBack
         {canMessage ? <div className={`session-composer-dock ${queuedMessages.length ? "with-queue" : ""}`}>
           <MessageQueue messages={queuedMessages} sendingId={queuedMessages.find((item) => item.status === "dispatching")?.id ?? null} onSteer={(id) => void steerQueuedMessage(id)} onRemove={(id) => void removeQueuedMessage(id)} onEdit={(id) => void editQueuedMessage(id)} />
 
-          <form ref={composerLayout.form} data-layout={composerLayout.expanded?"expanded":"compact"} className={`session-composer ${composerLayout.expanded?"expanded":"compact"} ${composerLayout.morphing?"composer-morphing":""}`} style={{"--composer-text-height":`${composerLayout.textHeight}px`,"--composer-cluster-width":`${composerLayout.clusterWidth}px`} as CSSProperties} onSubmit={submit}>
+          <form ref={composerLayout.form} data-layout={composerLayout.expanded?"expanded":"compact"} className={`session-composer ${composerLayout.expanded?"expanded":"compact"} ${composerLayout.morphing?"composer-morphing":""}`} style={{"--composer-text-height":`${composerLayout.textHeight}px`,"--composer-cluster-width":`${composerLayout.clusterWidth}px`} as CSSProperties} onSubmit={submit} onPaste={attachments.paste} onDragOver={event=>{if(event.dataTransfer.types.includes("Files"))event.preventDefault();}} onDrop={attachments.drop}>
+          <AttachmentStrip draft={attachments}/>
           {commandOpen && <AgentCommandMenu commands={commands} input={input} onSelect={insertCommand} />}
           <textarea ref={composerLayout.textarea}
             aria-label="Session message"
             value={input}
-            onChange={(event) => { const value = event.target.value; setInput(value); if (/^\s*[/ $]/.test(value)) setCommandOpen(true); }}
+            onChange={(event) => { const value = event.target.value; setInput(value); if(value)sessionDrafts.set(session.id,value);else sessionDrafts.delete(session.id); if (/^\s*[/ $]/.test(value)) setCommandOpen(true); }}
             placeholder={canMessage ? "Do anything…" : "This run does not support follow-up messages"}
             rows={1}
             disabled={!canMessage}
@@ -354,24 +382,24 @@ export function SessionWorkspace({ activeView=true, session, preferences, onBack
             }}
           />
           <div className="composer-footer">
-            <button type="button" className={`command-trigger ${commandOpen ? "active" : ""}`} onClick={() => setCommandOpen((value) => !value)} aria-label="Skills and commands" title="Skills and commands"><Plus /></button>
+            <AttachmentPicker draft={attachments}/>
             <ModelPicker compactLabel serviceTier={session.service_tier} onTierChange={tier=>{void updateModel(session.id,session.model,session.effort,tier).then(onRefresh).catch(reason=>setPanelError(String(reason)));}} provider={session.agent} models={engine.meta?.agents.find(item=>item.id===session.agent)?.models} model={session.model} effort={session.effort} onChange={(model,effort)=>{void updateModel(session.id,model,effort,session.service_tier).then(onRefresh).catch(reason=>setPanelError(String(reason)));}}/>
-            <button type={active&&!input.trim()?"button":"submit"} className="send-button" disabled={busy||!canMessage||(!active&&!input.trim())} aria-label={active&&!input.trim()?"Stop agent":"Send message"} onClick={active&&!input.trim()?()=>{void stopSession(session.id).then(onRefresh).catch(reason=>setPanelError(String(reason)));}:undefined}>{active&&!input.trim()?<span className="composer-stop-glyph" aria-hidden="true"/>:<ArrowUp weight="bold"/>}</button>
+            <button type={active&&!input.trim()&&!attachments.images.length?"button":"submit"} className="send-button" disabled={busy||sending||attachments.uploading||!canMessage||(!active&&!input.trim()&&!attachments.images.length)} aria-label={active&&!input.trim()&&!attachments.images.length?"Stop agent":"Send message"} onClick={active&&!input.trim()&&!attachments.images.length?()=>{void stopSession(session.id).then(onRefresh).catch(reason=>setPanelError(String(reason)));}:undefined}>{active&&!input.trim()&&!attachments.images.length?<span className="composer-stop-glyph" aria-hidden="true"/>:<ArrowUp weight="bold"/>}</button>
           </div>
           </form>
-          <div className="session-context"><span title={session.worktree_path}><Folder/>{session.branch?"Local checkout":"Folder workspace"}</span>{session.branch&&<span title={session.branch}><GitBranch/>{session.branch}</span>}{session.instructions&&<button onClick={()=>{setDetailsEditor("instructions");setDetailsValue(session.instructions);}}>Instructions</button>}<span className="runtime-chip" role="status"><span className={`status-dot ${session.status}`} />{active ? queuedMessages.length ? `${queuedMessages.length} queued · agent working` : `${agentLabel(session.agent)} is attached` : queuedMessages.some((item) => item.status === "dispatching") ? "Sending next message" : resumable ? "Conversation can continue" : `Run ${session.status}`}</span></div>
+          <div className="session-context"><span title={session.worktree_path}><Folder/>{session.branch?"Local checkout":"Folder workspace"}</span>{session.branch&&<span title={session.branch}><GitBranch/>{session.branch}</span>}{session.instructions&&<button onClick={()=>{setDetailsEditor("instructions");setDetailsValue(session.instructions);}}>Instructions</button>}            <button type="button" className={`skills-shortcut ${commandOpen ? "active" : ""}`} onClick={() => setCommandOpen((value) => !value)} aria-label="Skills and commands" title="Skills and commands"><Plus /></button><span className="runtime-chip" role="status"><span className={`status-dot ${session.status}`} />{active ? queuedMessages.length ? `${queuedMessages.length} queued · agent working` : `${agentLabel(session.agent)} is attached` : queuedMessages.some((item) => item.status === "dispatching") ? "Sending next message" : resumable ? "Conversation can continue" : `Run ${session.status}`}</span></div>
         </div> : <div className="session-closed-state"><span className={`status-dot ${session.status}`} />{chatCapable ? `This ${agentLabel(session.agent)} run is ${session.status}` : "Use the Terminal panel to inspect this run"}</div>}</>}
       </section>
       <div className="work-panel-clip" inert={!rightOpen}>
       {panelMounted&&<aside className="work-panel" aria-label={`${workTabLabel(tab)} panel`}>
         <header className="work-panel-header"><div className="panel-tabs" role="tablist" aria-label="Workspace panels">{tabs.map(surface=><div className={surface===tab?"active":""} key={surface}><button role="tab" aria-selected={surface===tab} onClick={()=>setTab(surface)}>{workTabIcon(surface)}{workTabLabel(surface)}</button><button className="panel-tab-close" aria-label={`Close ${workTabLabel(surface)} tab`} onClick={()=>closeTab(surface)}><X/></button></div>)}</div><div className="panel-add-anchor"><button className="icon-button panel-add" aria-label="Add panel" aria-expanded={tabMenu} onClick={()=>setTabMenu(value=>!value)}><Plus/></button>{tabMenu&&<div className="panel-tab-menu" role="menu" onKeyDown={event=>menuKeys(event,()=>setTabMenu(false),()=>document.querySelector<HTMLElement>(".panel-add")?.focus())}>{(["browser","terminal","review","history","pull-request",...(session.ticket_key?["ticket"]:[])] as WorkTab[]).map(surface=><button role="menuitem" key={surface} onClick={()=>{setTabs(current=>current.includes(surface)?current:[...current,surface]);setTab(surface);setRightOpen(true);setTabMenu(false);}}>{workTabIcon(surface)}{workTabLabel(surface)}</button>)}</div>}</div><button className="icon-button" onClick={()=>{setRightOpen(false);requestAnimationFrame(()=>document.querySelector<HTMLElement>("[data-main-composer]")?.focus());}} aria-label="Close right sidebar"><SidebarSimple/></button></header>
-        <div className="panel-body">{panelError&&<div className="inline-error" role="alert"><span>{panelError}</span><button aria-label="Dismiss panel error" onClick={()=>setPanelError(null)}><X/></button></div>}<div className="file-editor-outlet" ref={setEditorTarget} hidden={tab!=="editor"}/>{tabs.length===0?<div className="panel-picker">{(["browser","terminal","review","history","pull-request"] as WorkTab[]).map(surface=><button key={surface} onClick={()=>toggleSurface(surface)}>{workTabIcon(surface)}{workTabLabel(surface)}</button>)}</div>:tab==="editor"?null:tab==="terminal"?<Suspense fallback={<div role="status">Opening terminal…</div>}><TerminalWorkspace session={session} preferences={preferences}/></Suspense>:tab==="review"?<ReviewWorkspace sessionId={session.id} git={Boolean(session.branch)}/>:tab==="history"?<HistoryPanel session={session}/>:tab==="browser"?<BrowserPanel session={session}/>:tab==="ticket"?<TicketPanel ticket={ticket} session={session}/>:<PRPanel session={session} busy={busy} onCreate={createPR} onTicket={()=>setTab("ticket")}/>}</div>
+        <div className="panel-body">{panelError&&<div className="inline-error" role="alert"><span>{panelError}</span><button aria-label="Dismiss panel error" onClick={()=>setPanelError(null)}><X/></button></div>}<div className="file-editor-outlet" ref={setEditorTarget} hidden={tab!=="editor"}/>{tabs.length===0?<div className="panel-picker">{(["browser","terminal","review","history","pull-request"] as WorkTab[]).map(surface=><button key={surface} onClick={()=>toggleSurface(surface)}>{workTabIcon(surface)}{workTabLabel(surface)}</button>)}</div>:tab==="editor"?null:tab==="terminal"?<Suspense fallback={<div role="status">Opening terminal…</div>}><TerminalWorkspace session={session} preferences={preferences}/></Suspense>:tab==="review"?<ReviewWorkspace sessionId={session.id} git={Boolean(session.branch)} preferences={preferences} onPreferences={onPreferences}/>:tab==="history"?<HistoryPanel session={session}/>:tab==="browser"?<BrowserPanel session={session} requestedLink={browserLink}/>:tab==="ticket"?<TicketPanel ticket={ticket} session={session}/>:<PRPanel session={session} busy={busy} onCreate={createPR} onTicket={()=>setTab("ticket")}/>}</div>
       </aside>}
       </div>
       {rightOpen&&!(session.agent==="shell"&&!tuiMode)&&<ResizeBoundary className="panel-resizer" label="Resize right sidebar" width={preferences.panel_width} min={360} max={900} fraction={filesOpen?.45:.55} defaultWidth={520} direction={-1} onResize={width=>onPreferences({...preferences,panel_width:width},false)} onCommit={width=>onPreferences({...preferences,panel_width:width})}/>}
       <div className="files-panel-clip" inert={!filesOpen}>{filesMounted&&<FilesPanel session={session} preferences={preferences} onDirtyChange={onDirtyChange} editorTarget={editorTarget} onOpenEditor={openEditor}/>}</div>
       <aside className="inspector-rail" aria-label="Session tools"><InspectorButton active={rightOpen&&tab==="review"} onClick={()=>toggleSurface("review")} icon={<GitDiff/>} label="Changes"/><InspectorButton active={rightOpen&&tab==="terminal"} onClick={()=>toggleSurface("terminal")} icon={<TerminalWindow/>} label="Terminal"/><InspectorButton active={rightOpen&&tab==="pull-request"} onClick={()=>toggleSurface("pull-request")} icon={<GithubLogo/>} label="PR"/></aside>
-    </div>
+    </div></WebLinkContext.Provider>
   );
 }
 

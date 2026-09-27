@@ -82,8 +82,8 @@ func (m *SessionManager) Create(ctx context.Context, request CreateSessionReques
 	request.Title = strings.TrimSpace(request.Title)
 	request.RepoRoot = strings.TrimSpace(request.RepoRoot)
 	request.Agent = strings.TrimSpace(request.Agent)
-	if request.Title == "" || request.RepoRoot == "" {
-		return Session{}, fmt.Errorf("title and repository are required")
+	if request.Title == "" {
+		return Session{}, fmt.Errorf("title is required")
 	}
 	if request.Agent == "" {
 		request.Agent = "claude"
@@ -97,7 +97,23 @@ func (m *SessionManager) Create(ctx context.Context, request CreateSessionReques
 	if request.BaseBranch == "" {
 		request.BaseBranch = "HEAD"
 	}
-	repo, err := verifyRepository(ctx, request.RepoRoot)
+	id := uuid.NewString()
+	projectless := request.RepoRoot == ""
+	if projectless {
+		request.RepoRoot = filepath.Join(m.dataDir, "workspaces", id)
+		if err := os.MkdirAll(request.RepoRoot, 0700); err != nil {
+			return Session{}, err
+		}
+		request.Checkout = "current"
+	}
+	var repo string
+	var err error
+	if projectless {
+		repo = request.RepoRoot
+		err = fmt.Errorf("projectless workspace")
+	} else {
+		repo, err = verifyRepository(ctx, request.RepoRoot)
+	}
 	gitProject := err == nil
 	if !gitProject {
 		repo, err = filepath.Abs(request.RepoRoot)
@@ -109,7 +125,7 @@ func (m *SessionManager) Create(ctx context.Context, request CreateSessionReques
 			return Session{}, err
 		}
 		info, statErr := os.Stat(repo)
-		if statErr != nil || !info.IsDir() || !plainProjectFolder(repo) {
+		if statErr != nil || !info.IsDir() || (!projectless && !plainProjectFolder(repo)) {
 			return Session{}, fmt.Errorf("choose an existing project folder")
 		}
 		if request.Checkout != "current" {
@@ -118,7 +134,6 @@ func (m *SessionManager) Create(ctx context.Context, request CreateSessionReques
 		request.BaseBranch = ""
 	}
 
-	id := uuid.NewString()
 	branch := makeBranch(request.TicketKey, request.Title, id)
 	repoName := filepath.Base(repo)
 	worktree := filepath.Join(m.dataDir, "worktrees", repoName, id)
@@ -148,6 +163,9 @@ func (m *SessionManager) Create(ctx context.Context, request CreateSessionReques
 		RepoRoot: repo, WorktreePath: worktree, Branch: branch, BaseBranch: request.BaseBranch,
 		TicketKey: strings.ToUpper(strings.TrimSpace(request.TicketKey)), TicketURL: request.TicketURL,
 		Status: "starting", CreatedAt: now, UpdatedAt: now, Model: request.Model, Effort: request.Effort, ServiceTier: request.ServiceTier}
+	if projectless {
+		session.RepoRoot = ""
+	}
 	if err := m.store.CreateSession(session); err != nil {
 		return Session{}, err
 	}
@@ -249,7 +267,10 @@ func (m *SessionManager) launchCommand(session Session, program string, args []s
 	if _, err := m.getLive(session.ID); err == nil {
 		return fmt.Errorf("session is already running")
 	}
-	startTree, _ := snapshotWorkingTree(context.Background(), session.WorktreePath)
+	var startTree string
+	if session.Branch != "" {
+		startTree, _ = snapshotWorkingTree(context.Background(), session.WorktreePath)
+	}
 	turnID, generation, err := m.store.BeginTurn(session.ID, session.Prompt, session.queueMessageID, startTree)
 	if err != nil {
 		return err

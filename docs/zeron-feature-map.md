@@ -8,15 +8,15 @@ Pinned Zeron v0.2.92, `68ef78bb1e6fa0b84feeb68c382230f8c560f96a`. Based on the s
 | Frosted/Liquid/Opaque | Implemented | AppShell/preferences/native_material | Adjustable background washes capped at 90%; legacy Transparent migrates to Frosted per user preference; public NSGlassEffectView on macOS 26; public NSVisualEffectView fallback; no whole-interface opacity. |
 | Accessibility material fallback | Implemented | AppShell/native_material | Reduce Transparency and Increase Contrast resolve solid surfaces. Browser test simulates bridge events; host OS setting unchanged. |
 | Built-in theme library | Implemented | themes/SettingsPage | All 19 source families and 30 resolved variants; independent light/dark selection and System following. |
-| Theme import/remove/reload | Gap | theme_library.rs | Built-in catalog only; no custom theme import UI or watcher. |
+| Theme import/remove/reload | Partial | themes/CustomThemeManager/daemon theme_library | Browser snapshots and native linked VS Code JSON/JSON5/extension families; apply, replace, remove, reload, reveal, editable/snapshot duplication, recovery and unique variant identities. Source native-format preview/variant-selection workflow and automatic source watching remain gaps. |
 | Accent presets | Implemented | themes/SettingsPage | Seven source presets with separate light/dark colors plus theme default. |
-| Interface/code/terminal typography | Partial | SettingsPage/CodeEditor/Terminal | Source defaults and sizes; limited font families instead of installed-font enumeration/Nerd Font qualification. |
+| Interface/code/terminal typography | Partial | SettingsPage/native_preferences/CodeEditor/Terminal | Native installed-font enumeration, measured monospace terminal qualification, searchable choices and source defaults/sizes. Source Nerd Font glyph qualification is not reproduced. |
 | Blank composer artwork/effects | Gap | new_thread_background_* | No background image chooser, crop/fade/effects. |
 | Left/right pane sizing | Implemented | ResizeBoundary | Transparent seams, pointer capture, RAF coalescing, keyboard values, reset, persisted width; limits differ from source. |
 | Sidebar collapse | Implemented | AppShell/Sidebar | Persisted collapse and keyboard toggle; animated width. |
 | Project filter dropdown | Implemented | Sidebar/Select | Custom searchable popup under trigger; All projects, local rows, selection check and New project footer open the local folder palette. |
 | Project clone/create/rename/remove | Partial | ProjectPalette/daemon project_registration | Current source New project is a local device/location/folder picker, not a clone wizard. Add/persist Git and plain folders, canonical Git roots, and real first/resumed non-Git Codex chats work. Native OS folder selection supplies bookmarks; directory access waits are bounded and failed navigation cannot add the previous folder. Source rename/remove menus remain absent; no clone action found in inspected current UI. |
-| Projectless chats | Gap | shell/spaces.rs | Plain-folder workspaces now work; a chat without any folder remains absent. |
+| Projectless chats | Implemented | Home/daemon sessions | Explicit No project creates a private local workspace, keeps an empty project/branch identity, excludes it from the project catalog, and disables Git-only choices without altering saved checkout preferences. |
 | Sidebar Organize/Sort/Show | Partial | Sidebar/Select | Source 300ms diagonal pointer-intent corridor and 44.8px pill switch geometry, By device/By project/None and Created/Last updated; correct side anchoring and persistent choices. Priority/Manual are OpenADE additions; complete source section/context hierarchy still differs. |
 | Sidebar Compact | Implemented | Sidebar/styles | 29px single-line compact rows hide metadata; expanded rows reveal project and branch lines, 45/61px. |
 | Sidebar provider/project/branch/PR details | Partial | Sidebar | Provider, labels, branch and PR display preferences; source project avatar/glyph/status placement differs. |
@@ -26,27 +26,27 @@ Pinned Zeron v0.2.92, `68ef78bb1e6fa0b84feeb68c382230f8c560f96a`. Based on the s
 | Sidebar Show more | Implemented | Sidebar | Expand/reduce project and session lists. |
 | Sidebar session search | Implemented | Sidebar/CommandPalette | Global custom action/history palette searches all local chats independently of sidebar/project filters; keyboard selection, focus return and theme action. |
 | Chat context menu | Partial | Sidebar/SessionWorkspace | Pin/section/archive at pointer; rename/instructions in session header. Source rename/delete/source details hierarchy differs. |
-| Session tabs | Gap | shell/tabs.rs | Workspace panel tabs exist; no source top-level session tabs, middle-click or reorder. |
+
 | New chat and drafts | Implemented | AppShell/SessionWorkspace | New-chat choices persist through Settings; bounded session text draft memory through navigation. |
-| Draft attachment persistence | Gap | attachments.rs | No image/file attachment draft strip, picker/drop/paste upload or lightbox. |
+| Draft attachment persistence | Partial | Attachments/daemon attachments | PNG/JPEG/GIF picker/drop/paste upload, durable staged strip, navigation/restart persistence, synchronous submit guards, lazy authenticated thumbnails and keyboard-focused lightbox. Source WebP/SVG/BMP/TIFF attachments and native structured provider image payloads remain gaps. |
 | Model/provider dropdown | Partial | ModelPicker | Custom searchable menu, provider rail, favorites, keyboard selection, focus return. Source complete provider catalogs/traits/hover behavior differs. |
 | Reasoning and service tier | Implemented | ModelPicker/SessionWorkspace | Advertised Codex model options persist and affect real fixture CLI arguments. |
-| Composer auto-grow/compact flip | Partial | AppShell/SessionWorkspace | Source 49px pill, 200px text capacity, 32px hysteresis, 150ms resize settle, 60–260px thread textarea and 76px new-chat minimum; controls move right/left and metadata sits below. Rich attachments and exact animated morph remain different. |
+| Composer auto-grow/compact flip | Partial | AppShell/SessionWorkspace | Source 49px pill, 200px text capacity, 32px hysteresis, 150ms resize settle, 60–260px thread textarea and 76px new-chat minimum; controls move right/left and metadata sits below. Staged image attachments are implemented; exact animated morph remains different. |
 | Send/new turn/Stop | Implemented | SessionWorkspace/api | Real daemon turn lifecycle; startup failure shown, retry starts fresh identity. |
 | Steering active provider run | Partial | MessageQueue/daemon | Explicit queued next turns; not source persistent app-server/ACP mid-run steering. |
 | Queued messages | Implemented | MessageQueue | Queue session/turn association, edit/remove/send-next and restart persistence. |
 | Question/approval wizard | Gap | composer.rs/harness | No source paged question wizard, number-key responses or durable approval control. |
 | Skills and slash completion | Partial | AgentCommandMenu | Owning-worktree discovery and insertion; no all-harness completion preferences or full source advertised command control. |
-| MCP discovery/settings | Gap | docs/mcp.md | CLI may use configured MCP; no equivalent application MCP registry/settings interface. |
+| Engine-injected MCP and linked tool activities | Partial | harness/engine MCP injection/daemon chat events | Existing provider CLI configuration can supply MCP tools and activity renders locally. Source engine injection, advertised tools and linked-child execution are not bridged. No active source application MCP registry/settings UI was found. |
 | Thread naming/custom naming models | Gap | settings/thread_naming.rs | Explicit titles and rename; no source automatic naming configuration. |
 | Markdown chat/syntax fences | Implemented | MarkdownMessage/ChatTimeline | Native chat client renders markdown, fenced code, activity groups and copy actions. |
 | Transcript stick-to-bottom | Implemented | SessionWorkspace | Release on upward scroll and Jump to latest; own-send following. |
 | Transcript virtualization | Partial | ChatTimeline | Bounded 80 article window; not source variable-height doc projection/minimap algorithm. |
-| Message rail/minimap | Gap | rail.rs | No source prompt minimap/hover preview. |
+| Message rail/minimap | Implemented | MessageRail/ChatTimeline | Source prompt ticks, active reading marker, hover/focus previews, older-turn navigation and responsive hiding. Full variable-height transcript virtualization remains a separate partial area. |
 | Activity folding | Partial | ChatTimeline | Compact/expanded thinking/tool summaries; source per-tool guides and nested subagent detail differ. |
 | Context usage display | Gap | context_usage | No source context capacity/compaction telemetry. |
-| Generated images and attachment lightbox | Gap | image_media/attachments | No structured generated-image ingestion or owner-targeted retry/cache/lightbox. |
-| Chat links to embedded browser | Partial | MarkdownMessage/WorkspacePanels | Browser panel supports URLs; normal markdown links use external browser rather than configurable source routing. |
+| Generated images and attachment lightbox | Partial | Attachments/daemon file_media | Local authenticated image lightbox with owner-scoped retry/blob cache, bounded zoom/pan, fit/actual size, arrows/0/Escape and focus return. Structured generated-image ingestion and the full source format set remain absent. |
+| Chat links to embedded browser | Implemented | MarkdownMessage/WebLinkContext/WorkspacePanels | Plain HTTP(S) chat/Markdown links route to the embedded browser; modifiers open externally. Preference persists and relative Markdown images stay scoped to the owning worktree. |
 | Transcript timestamp/selection/context menus | Partial | MarkdownMessage | Basic copy/text selection; source timestamp transitions and full per-message menus differ. |
 | Side chats/linked child transcripts | Gap | shell/side_chats.rs | No source nested side-chat view. |
 | Inline comments/review annotations | Gap | comments/comment_ui | No source line/comment composer or annotation menu. |
@@ -54,10 +54,10 @@ Pinned Zeron v0.2.92, `68ef78bb1e6fa0b84feeb68c382230f8c560f96a`. Based on the s
 | File editor/tabs/syntax/save | Implemented | WorkspacePanels/CodeEditor | CodeMirror syntax roles, tabs, save/reload, conflict detection, dirty guards, font/wrap. |
 | Settings editor continuity | Implemented | AppShell/SessionWorkspace | Retains dirty document, cursor focus, undo history, draft and panels while Settings is open. |
 | File actions/context menu | Implemented | CodeEditor/clipboard/app.go | Inspected source editor context menu is Cut/Copy/Paste/Select All. Matching custom 170px pointer menu, disabled states, native clipboard, selection, undo and stale-edit guard. Earlier create/rename/delete/reveal claim was not supported by the inspected source UI. |
-| Markdown/image file previews | Gap | files/image_viewer | Text editing available; no source rich markdown/image/zoom/copy image previews. |
+| Markdown/image file previews | Partial | WorkspacePanels/Attachments | Toggle rich Markdown using the current unsaved buffer without losing editor state; authenticated raster preview/lightbox and scoped relative images. Source default Markdown preview, SVG/TIFF and exact renderer behavior remain gaps. No active source Copy image action was found. |
 | Diff scopes/staging | Implemented | ReviewWorkspace/daemon | Working/branch/latest turn/staged scopes, stage/unstage and commit. |
 | Diff folding/split/navigation | Implemented | ReviewWorkspace | File fold/expand, split/unified, filter, previous/next changed file. |
-| Diff syntax/wrap/partial snapshots | Partial | ReviewWorkspace | Theme colors/font and ±gutters; no full source syntax tokenization/wrap preference/partial snapshot UI. |
+| Diff syntax/wrap/partial snapshots | Partial | ReviewWorkspace/SyntaxText/preferences | Persisted split/wrap choices and themed lexical syntax in diffs; Line-based CodeMirror/legacy-mode tokens approximate source Tree-sitter, with plain fallback above 2,000 file lines. Full partial snapshot selection and identical token boundaries remain gaps. |
 | Git history | Partial | WorkspacePanels | Commit search/detail/list; no source optional/resizable/reordered columns, author display or full commit actions. |
 | Browser panel | Implemented | WorkspacePanels/native_browser | Native WKWebView, URL navigation/back/forward/reload, local server discovery; hidden through Settings and restored. |
 | Browser devtools/tabs/downloads | Partial | browser | Simple session preview; source browser controls and multi-tab/tooling not fully mirrored. |
@@ -78,7 +78,7 @@ Pinned Zeron v0.2.92, `68ef78bb1e6fa0b84feeb68c382230f8c560f96a`. Based on the s
 | Desktop notifications/sounds | Partial | AppShell/SettingsPage | Completion/input/error controls and foreground policy; browser permission dependent, no source custom sound library. |
 | Appshots | Out of scope | appshots | Local-only scope (Appshots separately excluded by prior user instruction). No viewer-side screenshot capture shortcut/destination controls. |
 | Keyboard recording/conflicts | Implemented | SettingsPage/preferences | Modifier capture, conflicts, Escape and restore defaults; source bindings not all identical. |
-| Quick session jumps/global actions palette | Partial | AppShell/CommandPalette | Filtered Mod+1–9 and next/previous jumps; global command/history palette, Mod+K, New project Mod+Shift+N. Source held-modifier jump-hint rail remains absent. |
+| Quick session jumps/global actions palette | Implemented | AppShell/CommandPalette/useSessionJumpHints | Visible-row Mod+1–9 and next/previous jumps, configurable bindings and exact-modifier hint chips suppressed under menus/dialogs; global command/history palette and new-project action. OpenADE shortcut defaults differ intentionally where existing commands require it. |
 | Archive/restore | Implemented | Sidebar/SettingsPage | Archive hides without stopping agent/worktree; restore retained session. |
 | Engine reconnect/recovery | Implemented | engine-store/daemon | Authenticated snapshot/sequenced SSE, daemon restart, queued turn/transcript persistence and competing owner rejection. |
 | Engine watchdog/idle/presence | Partial | daemon | Local lifecycle checks; no full source host heartbeat/idle/stall/sync resource system. |
@@ -86,13 +86,15 @@ Pinned Zeron v0.2.92, `68ef78bb1e6fa0b84feeb68c382230f8c560f96a`. Based on the s
 | Durable distributed commands/Loro docs | Intentional | daemon SQLite/activity | Authorized local Go/Wails architecture: SQLite state, sequenced activity and queued-turn recovery. Source Loro/distributed schema is not a required implementation choice; cloud commands remain outside local scope. |
 | Control/Data/Auth RPC equivalents | Intentional | daemon HTTP/WebSocket API | Authenticated local sessions/files/diffs/terminals use the authorized Go engine API. Relay-forwardable source RPC schema is not a requirement for this local-only build. |
 | Cloudflare edge/DOs/WorkOS | Out of scope | apps/edge | Local-only scope (Appshots separately excluded by prior user instruction). No source SessionRoom/DeviceRoom/auth/backup/organization edge backend. |
-| Mobile/web synchronized viewport | Out of scope | apps/ios/landing | Local-only scope (Appshots separately excluded by prior user instruction). This deliverable is desktop macOS arm64; no source mobile remote-control client. |
-| Updater/notarized distribution | Gap | dist/app_menus | Ad-hoc local build; no matching signed/notarized updater/release pipeline. |
+| Mobile/web synchronized viewport | Out of scope | apps/ios/landing | Local-only scope (Appshots separately excluded by prior user instruction). This deliverable builds for desktop macOS arm64 and x86_64; only arm64 runtime is verified; no source mobile remote-control client. |
+| Updater/notarized distribution | Gap | dist/app_menus | Universal arm64/x86_64 build succeeds and local ad-hoc signatures verify. Intel/older-macOS runtime, Developer ID notarization and signed updater pipeline remain unverified/unimplemented. |
 | Reduced motion/focus | Implemented | styles/Select/menuKeys | CSS reduced-motion and visible keyboard focus; custom choices and action menu navigation. |
 | Motion/hover-intent catalog | Partial | styles/Sidebar/Select | Source diagonal-hover intent ported; basic menu/width/fold transitions. Full source resort, minimap and compositor animation geometry differs. |
 | Sites/Workflows/Review rail | Intentional | AppShell/SitesPage | OpenADE additions; Sites actions explicitly disabled when disconnected. Not counted as Zeron matches. |
 
 The current target is **local desktop parity**. Remote/cloud/mobile/account relay and previously excluded Appshots remain mapped for completeness but are outside this target. Loro schema/RPC architecture is not a requirement to replace the authorized Go/Wails engine; local observable capability gaps remain explicit. Local-only does not imply that remaining local features are complete.
+
+The pinned active `shell/tabs.rs` states that the horizontal session strip was removed on 2026-08-10 and `open_tabs` is unread legacy data. It is not a missing active feature.
 
 ## Complete persisted-settings field index
 
@@ -100,7 +102,7 @@ All 66 public fields of current `UiSettings` are enumerated. “No counterpart�
 
 | Zeron field | OpenADE counterpart/disposition |
 |---|---|
-| `window_geometry` | No counterpart; gap |
+| `window_geometry` | Native per-profile AppKit frame persistence and screen clamping |
 | `composer_send_behavior` | send_behavior |
 | `skills_in_slash_menu` | Legacy source compatibility field |
 | `skill_completion_by_harness` | No counterpart; gap |
@@ -117,7 +119,7 @@ All 66 public fields of current `UiSettings` are enumerated. “No counterpart�
 | `sidebar_show_pull_request` | sidebar_show_pr |
 | `last_space_id` | No counterpart; gap |
 | `last_project_action_by_space_id` | No counterpart; gap |
-| `open_tabs` | No counterpart; gap |
+| `open_tabs` | Legacy source compatibility field; active horizontal session tabs were removed upstream |
 | `space_filter` | sidebar_project_filter (local repo path) |
 | `sidebar_sections_by_profile` | sidebar_sections/session_sections (local only) |
 | `sidebar_pinned_session_ids_by_profile` | pinned_sessions (local only) |
@@ -139,27 +141,27 @@ All 66 public fields of current `UiSettings` are enumerated. “No counterpart�
 | `appshot_sound_enabled` | No counterpart; gap |
 | `appshot_destination` | No counterpart; gap |
 | `escape_stops_active_agent` | stop_on_escape |
-| `settings_section` | settingsSection memory (not persisted) |
+| `settings_section` | settings_section persisted; unknown values recover to General |
 | `appearance` | color_scheme |
 | `git_history_columns` | No counterpart; gap |
 | `git_history_column_widths` | No counterpart; gap |
 | `git_history_column_order` | No counterpart; gap |
 | `git_history_author_display` | No counterpart; gap |
-| `ui_font_family` | interface_font (restricted families) |
+| `ui_font_family` | interface_font (native installed-font catalog; Nerd qualification differs) |
 | `ui_font_size` | interface_size |
-| `terminal_font_family` | terminal_font (restricted families) |
+| `terminal_font_family` | terminal_font (native installed-font catalog; Nerd qualification differs) |
 | `terminal_font_size` | terminal_size |
-| `code_font_family` | code_font (restricted families) |
+| `code_font_family` | code_font (native installed-font catalog; Nerd qualification differs) |
 | `code_font_size` | code_size |
 | `theme_selection` | light_theme/dark_theme |
-| `diff_split` | ReviewWorkspace state (not persisted) |
-| `diff_wrap` | No counterpart; gap |
-| `code_fences_fit_content` | No counterpart; gap |
+| `diff_split` | diff_split persisted |
+| `diff_wrap` | diff_wrap persisted |
+| `code_fences_fit_content` | code_fences_fit_content |
 | `transcript_width` | conversation_width |
-| `open_web_links_in_zeron` | No counterpart; gap |
+| `open_web_links_in_zeron` | open_web_links_in_app |
 | `transcript_compact_mode` | activity_detail |
 | `files_autosave_enabled` | autosave |
-| `files_autosave_delay_ms` | fixed 900ms (no control) |
+| `files_autosave_delay_ms` | autosave_delay_ms with custom choice control |
 | `files_word_wrap` | word_wrap |
 | `files_show_all` | show_hidden/show_ignored |
 | `accent` | accent + accentFor |
@@ -200,7 +202,7 @@ All 66 public fields of current `UiSettings` are enumerated. “No counterpart�
 | New project | Custom local device/location/folder palette; native folder chooser fallback | Canonical root registration, non-Git sessions, invalid-path recovery and bounded directory waits |
 | Editor context | Custom 170px pointer menu, clamped to viewport | Cut/Copy/Paste/Select All, native clipboard, selection/undo and stale-document guard |
 | Terminal tabs | Tab actions and direct manipulation | Drag/Alt+arrow reorder, middle-click close, persistence across native relaunch and visible stop errors |
-| Home plus | Inline session-options disclosure | Intentional OpenADE layout difference from source attachments menu |
+| Home plus | Skills/commands plus and adjacent attachment picker | OpenADE retained layout; source attachment menu hierarchy still differs |
 | Skills/commands | Custom completion menu above composer | Owning-worktree discovery and keyboard insertion |
 | Session ellipsis | Custom action menu below titlebar trigger | Rename/instructions/copy/archive; arrow navigation/Escape |
 | Add panel | Custom panel menu under panel plus | Opens corresponding panel and closes; arrow navigation/Escape |

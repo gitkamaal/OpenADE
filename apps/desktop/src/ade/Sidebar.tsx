@@ -1,3 +1,4 @@
+import {useSessionJumpHints} from "./useSessionJumpHints";
 import {markCustomMenu,menuKeys} from "./menuKeys";
 import { createPortal } from "react-dom";
 import { Select } from "./Select";
@@ -67,9 +68,11 @@ export function Sidebar({
   onNewSession: () => void;
   onToggle: () => void;
 }) {
+  const jumpHints=useSessionJumpHints(sessions,preferences);
   const [createSection,setCreateSection]=useState(false);
   const [contextPosition,setContextPosition]=useState({left:12,top:100});
   const [context,setContext]=useState<Session|null>(null);const [sectionName,setSectionName]=useState("");const [filter,setFilter]=useState("");
+  const expandedInitialized=useRef(projects.length>0);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(projects.slice(0, 3)));
   const [showAll, setShowAll] = useState<Set<string>>(new Set());
   const [showAllProjects, setShowAllProjects] = useState(false);
@@ -120,7 +123,7 @@ export function Sidebar({
   const visibleFlatItems = showAllProjects ? filteredItems : filteredItems.slice(0, 10);
 
   useEffect(() => {
-    setExpanded((current) => current.size ? current : new Set(grouped.slice(0, 3).map((group) => group.root)));
+    if(!expandedInitialized.current&&grouped.length){expandedInitialized.current=true;setExpanded(new Set(grouped.slice(0,3).map(group=>group.root)));}
   }, [grouped]);
 
   useEffect(() => {
@@ -156,10 +159,10 @@ export function Sidebar({
   };
 
   const archive=(id:string)=>{onPreferences({...preferences,archived_sessions:[...preferences.archived_sessions,id]});setContext(null);};
-  const sessionButton=(session:Session)=><button data-session-id={session.id} className={`sidebar-chat-row ${selectedId===session.id?"active":""} ${preferences.sidebar_show_provider?"":"hide-provider"}`} key={session.id} onClick={()=>onOpen(session.id)} onContextMenu={event=>{event.preventDefault();contextTrigger.current=event.currentTarget;setContextPosition({left:Math.max(8,Math.min(event.clientX,window.innerWidth-238)),top:Math.max(8,Math.min(event.clientY,window.innerHeight-190))});setContext(session);}} title={session.title}><span className={`status-dot ${session.status}`}/><ProviderIcon provider={session.agent}/><span>{preferences.sidebar_show_project_label&&<em className="project-metadata">{projectName(session.repo_root)} @ Local</em>}{session.title}{preferences.sidebar_show_branch&&<em className="branch-metadata">{session.branch}</em>}{preferences.sidebar_show_pr&&session.pr_url&&<em>Pull request</em>}</span><small>{relativeTime(session.updated_at)}</small></button>;
+  const sessionButton=(session:Session)=><button data-session-id={session.id} className={`sidebar-chat-row ${selectedId===session.id?"active":""} ${preferences.sidebar_show_provider?"":"hide-provider"}`} key={session.id} onClick={()=>onOpen(session.id)} onContextMenu={event=>{event.preventDefault();contextTrigger.current=event.currentTarget;setContextPosition({left:Math.max(8,Math.min(event.clientX,window.innerWidth-238)),top:Math.max(8,Math.min(event.clientY,window.innerHeight-190))});setContext(session);}} title={session.title}><span className={`status-dot ${session.status}`}/><ProviderIcon provider={session.agent}/><span>{preferences.sidebar_show_project_label&&<em className="project-metadata">{projectName(session.repo_root)} @ Local</em>}{session.title}{preferences.sidebar_show_branch&&<em className="branch-metadata">{session.branch}</em>}{preferences.sidebar_show_pr&&session.pr_url&&<em>Pull request</em>}</span><small className={jumpHints[session.id]?"session-jump-hint":""} aria-label={jumpHints[session.id]?`Shortcut ${jumpHints[session.id]}`:undefined}>{jumpHints[session.id]||relativeTime(session.updated_at)}</small></button>;
   const move=(from:string,to:string)=>{const order=[...new Set([...preferences.session_order,...allItems.map(itemKey)])];order.splice(order.indexOf(from),1);order.splice(order.indexOf(to),0,from);onPreferences({...preferences,session_order:order,project_sort:"manual"});};
   return (
-    <aside className={`sidebar ${preferences.sidebar_compact?"compact-sidebar":""} ${preferences.sidebar_show_project_icon?"show-project-icons":""} ${preferences.sidebar_show_project_label?"":"hide-project-labels"}`} >
+    <aside hidden={page==="settings"} className={`sidebar ${preferences.sidebar_compact?"compact-sidebar":""} ${preferences.sidebar_show_project_icon?"show-project-icons":""} ${preferences.sidebar_show_project_label?"":"hide-project-labels"}`} >
       <div className="workspace-switcher"><span>OpenADE</span><button className="icon-button workspace-action" aria-label="Search commands and chats" title="Search commands and chats" onClick={onSearch}><ListMagnifyingGlass/></button><button className="icon-button workspace-action" onClick={onNewSession} aria-label="New session" title="New session"><Plus /></button><button className="icon-button workspace-action" onClick={onToggle} aria-label="Collapse sidebar" title="Collapse sidebar"><SidebarSimple /></button></div>
       <nav className="primary-nav" aria-label="Primary">
         <NavButton icon={<House />} label="Home" active={page === "home"} onClick={() => onPage("home")} />
@@ -174,7 +177,7 @@ export function Sidebar({
         {preferences.sidebar_sections.map(name=><section key={name} className="project-group custom-sidebar-section"><div className="sidebar-section-title">{name}<button aria-label={`Remove ${name} section`} onClick={()=>onPreferences({...preferences,sidebar_sections:preferences.sidebar_sections.filter(x=>x!==name),session_sections:Object.fromEntries(Object.entries(preferences.session_sections).filter(([,value])=>value!==name))})}>×</button></div><div className="project-sessions">{sessions.filter(s=>preferences.session_sections[s.id]===name&&!preferences.pinned_sessions.includes(s.id)).map(sessionButton)}</div></section>)}
 
         <div className="projects-heading" ref={projectMenuRef}>
-          <Select className="projects-toggle" aria-label="Filter projects" icon={<Folder/>} searchable stickyValue="" popupWidth={224} searchPlaceholder="Search projects…" value={preferences.sidebar_project_filter} onChange={event=>{onPreferences({...preferences,sidebar_project_filter:event.target.value});setShowAllProjects(false);setExpanded(new Set(grouped.map(group=>group.root)));}} footer={<button type="button" className="new-project-action" onClick={()=>{window.dispatchEvent(new Event("openade-dismiss-menus"));onNewProject();}}><Plus/>New project…</button>}><option value="">All projects</option>{grouped.map(({root})=><option key={root} value={root}><span className="project-picker-choice"><span>{projectName(root)}</span><small>@ Local</small></span></option>)}</Select>
+          <Select className="projects-toggle" aria-label="Filter projects" icon={<Folder/>} searchable stickyValue="" popupWidth={224} searchPlaceholder="Search projects…" value={preferences.sidebar_project_filter} onChange={event=>{onPreferences({...preferences,sidebar_project_filter:event.target.value});setShowAllProjects(false);setExpanded(new Set(grouped.map(group=>group.root)));}} footer={<button type="button" className="new-project-action" onClick={()=>{window.dispatchEvent(new Event("openade-dismiss-menus"));onNewProject();}}><Plus/>New project…</button>}><option value="">All projects</option>{grouped.filter(group=>Boolean(group.root)).map(({root})=><option key={root} value={root}><span className="project-picker-choice"><span>{projectName(root)}</span><small>@ Local</small></span></option>)}</Select>
           <div className="projects-actions">
             <button ref={viewTrigger} onClick={() => setProjectMenuOpen((value) => !value)} aria-label="Project display settings" aria-haspopup="menu" aria-expanded={projectMenuOpen} title="Organize projects"><DotsThree /></button>
             <button onClick={onNewProject} aria-label="Add project" title="Add a workspace folder"><Plus /></button>

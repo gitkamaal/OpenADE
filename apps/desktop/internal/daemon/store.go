@@ -367,7 +367,7 @@ FROM sessions WHERE id=?`, id)
 }
 
 func (s *Store) ListProjects() ([]string, error) {
-	rows, err := s.db.Query(`SELECT path FROM (SELECT repo_root AS path,updated_at FROM sessions UNION ALL SELECT path,created_at AS updated_at FROM registered_projects) GROUP BY path ORDER BY MAX(updated_at) DESC`)
+	rows, err := s.db.Query(`SELECT path FROM (SELECT repo_root AS path,updated_at FROM sessions UNION ALL SELECT path,created_at AS updated_at FROM registered_projects) WHERE path<>'' GROUP BY path ORDER BY MAX(updated_at) DESC`)
 	if err != nil {
 		return nil, err
 	}

@@ -38,6 +38,7 @@ func main() {
 		Mac:                              &mac.Options{TitleBar: mac.TitleBarHiddenInset(), WebviewIsTransparent: true, WindowIsTranslucent: true},
 		AssetServer:                      &assetserver.Options{Assets: assets},
 		OnStartup:                        app.startup,
+		OnDomReady:                       app.nativeReady,
 		OnShutdown:                       app.shutdown,
 		Bind:                             []interface{}{app},
 	})

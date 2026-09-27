@@ -3,7 +3,7 @@ import type {KeyboardEvent} from "react";
 /** Navigation for custom action menus; nested choices consume their own keys. */
 export function menuKeys(event:KeyboardEvent<HTMLElement>,dismiss:()=>void,restore?:()=>void){
  if(event.key==="Escape"){event.preventDefault();event.stopPropagation();dismiss();restore?.();return;}
- if(event.key==="Tab"){dismiss();return;}
+ if(event.key==="Tab"){if(event.metaKey||event.ctrlKey||event.altKey){event.preventDefault();event.stopPropagation();}else dismiss();return;}
  if(event.target instanceof HTMLInputElement||event.target instanceof HTMLTextAreaElement)return;
  const controls=[...event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')].filter(button=>button.getClientRects().length);
  const index=controls.indexOf(document.activeElement as HTMLButtonElement);

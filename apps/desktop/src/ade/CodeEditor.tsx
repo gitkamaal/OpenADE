@@ -7,13 +7,8 @@ import {useEffect,useRef,useState} from "react";
 import {basicSetup} from "codemirror";
 import {EditorView} from "@codemirror/view";
 import {EditorState,Compartment} from "@codemirror/state";
-import {javascript} from "@codemirror/lang-javascript";
-import {json} from "@codemirror/lang-json";
-import {markdown} from "@codemirror/lang-markdown";
-import {python} from "@codemirror/lang-python";
-import {html} from "@codemirror/lang-html";
-import {css} from "@codemirror/lang-css";
-function language(path:string){const ext=path.split('.').at(-1);if(['js','jsx','ts','tsx'].includes(ext||''))return javascript({typescript:ext==='ts'||ext==='tsx',jsx:ext==='jsx'||ext==='tsx'});if(ext==='json')return json();if(ext==='md')return markdown();if(ext==='py')return python();if(['html','htm'].includes(ext||''))return html();if(ext==='css')return css();return [];}
+import {codeLanguage} from "./codeSyntax";
+function language(path:string){return codeLanguage(path.split(".").at(-1)||"")||[];}
 export default function CodeEditor({path,value,onChange,wrap,disabled}:{path:string;value:string;onChange:(value:string)=>void;wrap:boolean;disabled:boolean}){
  const [context,setContext]=useState<{x:number;y:number;from:number;to:number;document:string;paste:boolean}|null>(null);const [menuError,setMenuError]=useState("");const contextEpoch=useRef(0);const popup=useRef<HTMLDivElement>(null);
  const openContext=(event:MouseEvent,editor:EditorView)=>{event.preventDefault();const range=editor.state.selection.main;const epoch=++contextEpoch.current;setMenuError("");setContext({x:Math.max(8,Math.min(event.clientX,window.innerWidth-178)),y:Math.max(8,Math.min(event.clientY,window.innerHeight-158)),from:range.from,to:range.to,document:editor.state.doc.toString(),paste:false});void readText().then(text=>{if(contextEpoch.current===epoch)setContext(current=>current?{...current,paste:Boolean(text)}:null);}).catch(()=>{});return true;};

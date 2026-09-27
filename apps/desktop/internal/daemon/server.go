@@ -33,6 +33,8 @@ type Daemon struct {
 	releaseProfile  func()
 	authToken       string
 	providerSetupMu sync.Mutex
+	attachmentMu    sync.Mutex
+	themeLibrary    *ThemeLibrary
 	projectReads    chan struct{}
 }
 
@@ -88,8 +90,15 @@ func New(config Config) (*Daemon, error) {
 		listener.Close()
 		return nil, err
 	}
+	themeLibrary, err := NewThemeLibrary(config.DataDir)
+	if err != nil {
+		store.Close()
+		release()
+		listener.Close()
+		return nil, err
+	}
 	d := &Daemon{
-		config: config, store: store, releaseProfile: release, authToken: token, listener: listener,
+		config: config, store: store, themeLibrary: themeLibrary, releaseProfile: release, authToken: token, listener: listener,
 		projectReads: make(chan struct{}, 4),
 		sessions:     NewSessionManager(store, config.DataDir),
 		terminals:    NewTerminalManager(store, config.DataDir),
@@ -137,6 +146,14 @@ func (d *Daemon) routes() http.Handler {
 	mux.HandleFunc("GET /api/state", d.handleSnapshot)
 	mux.HandleFunc("GET /api/diagnostics", d.handleDiagnostics)
 	mux.HandleFunc("GET /api/events", d.handleEvents)
+	mux.HandleFunc("GET /api/themes", d.handleThemeLibrary)
+	mux.HandleFunc("POST /api/themes/link", d.handleLinkThemeSource)
+	mux.HandleFunc("POST /api/themes/{id}/reload", d.handleReloadThemeSource)
+	mux.HandleFunc("POST /api/themes/{id}/unlink", d.handleUnlinkThemeSource)
+	mux.HandleFunc("POST /api/themes/{id}/duplicate", d.handleDuplicateThemeSource)
+	mux.HandleFunc("DELETE /api/themes/{id}", d.handleRemoveThemeSource)
+	mux.HandleFunc("POST /api/attachments", d.handleUploadAttachment)
+	mux.HandleFunc("GET /api/attachments/{id}/media", d.handleAttachmentMedia)
 	mux.HandleFunc("GET /api/sessions", d.handleListSessions)
 	mux.HandleFunc("POST /api/sessions", d.handleCreateSession)
 	mux.HandleFunc("GET /api/projects", d.handleProjects)
@@ -166,6 +183,7 @@ func (d *Daemon) routes() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{id}/stage", d.handleStage)
 	mux.HandleFunc("GET /api/sessions/{id}/diff", d.handleDiff)
 	mux.HandleFunc("GET /api/sessions/{id}/files", d.handleFiles)
+	mux.HandleFunc("GET /api/sessions/{id}/file-media", d.handleFileMedia)
 	mux.HandleFunc("GET /api/sessions/{id}/file", d.handleFile)
 	mux.HandleFunc("PUT /api/sessions/{id}/file", d.handleFile)
 	mux.HandleFunc("GET /api/sessions/{id}/history", d.handleHistory)
@@ -644,7 +662,7 @@ func (d *Daemon) authorize(next http.Handler) http.Handler {
 			return
 		}
 		supplied := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if supplied == "" && (r.URL.Path == "/api/events" || strings.HasSuffix(r.URL.Path, "/stream")) {
+		if supplied == "" && (r.URL.Path == "/api/events" || strings.HasSuffix(r.URL.Path, "/stream") || (strings.HasPrefix(r.URL.Path, "/api/attachments/") && strings.HasSuffix(r.URL.Path, "/media")) || (strings.HasPrefix(r.URL.Path, "/api/sessions/") && strings.HasSuffix(r.URL.Path, "/file-media"))) {
 			supplied = r.URL.Query().Get("token")
 		}
 		if subtle.ConstantTimeCompare([]byte(supplied), []byte(d.authToken)) != 1 {

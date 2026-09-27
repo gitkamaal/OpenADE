@@ -125,7 +125,7 @@ func (s *Store) Snapshot(ctx context.Context) (map[string]any, error) {
 			return nil, scanErr
 		}
 		sessions = append(sessions, session)
-		if !seen[session.RepoRoot] {
+		if session.RepoRoot != "" && !seen[session.RepoRoot] {
 			projects = append(projects, session.RepoRoot)
 			seen[session.RepoRoot] = true
 		}
@@ -145,7 +145,7 @@ func (s *Store) Snapshot(ctx context.Context) (map[string]any, error) {
 			registered.Close()
 			return nil, err
 		}
-		if !seen[path] {
+		if path != "" && !seen[path] {
 			projects = append(projects, path)
 			seen[path] = true
 		}

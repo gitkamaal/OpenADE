@@ -1,7 +1,11 @@
+import {visibleSidebarSessionIds, jumpShortcutMatches, keyboardOverlayOpen} from "./useSessionJumpHints";
+import {fontFamily} from "./useFontCatalog";
+import {useAttachments,AttachmentPicker,AttachmentStrip,withAttachments} from "./Attachments";
 import {useComposerLayout} from "./useComposerLayout";
 import { Folder, Desktop } from "@phosphor-icons/react";
 import { Select } from "./Select";
-import {accentFor,materialFor,resolveTheme} from "./themes";
+import {accentFor,materialFor,resolveTheme,onThemeRegistryChange,themeCssVariables,installThemeLibrary,themeId} from "./themes";
+import {listThemeLibrary} from "./theme-library-api";
 import {ResizeBoundary} from "./ResizeBoundary";
 import {
   Pulse,
@@ -33,7 +37,7 @@ import {
   Session,
   switchSessionSurface,
 } from "./api";
-import { SessionWorkspace } from "./SessionWorkspace";
+import { SessionWorkspace, recoverRejectedDraft } from "./SessionWorkspace";
 import { loadPreferences, Preferences, savePreferences, themeClass, shortcutMatches, shouldSend } from "./preferences";
 import { SettingsNavigation, SettingsPage, SettingsSection } from "./SettingsPage";
 import { Page, Sidebar } from "./Sidebar";
@@ -62,6 +66,8 @@ const templates = [
 ];
 
 function AppShell() {
+  const [themeRegistryVersion,setThemeRegistryVersion]=useState(0);
+  useEffect(()=>onThemeRegistryChange(()=>setThemeRegistryVersion(value=>value+1)),[]);
   const [paletteOpen,setPaletteOpen]=useState(false);const [projectPaletteOpen,setProjectPaletteOpen]=useState(false);
   const [page, setPage] = useState<Page>("home");
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -69,12 +75,13 @@ function AppShell() {
   const [scannedProjects, setScannedProjects] = useState<string[]>([]);
   const [externalConversations, setExternalConversations] = useState<ExternalConversation[]>([]);
   const engine=useEngine();
+  useEffect(()=>{if(!engine.connected)return;let stale=false;void listThemeLibrary().then(entries=>{if(!stale)installThemeLibrary(entries);}).catch(()=>{/* Keep the saved choice and last-good palette until reconnect. */});return()=>{stale=true;};},[engine.connected]);
   const previousEngineError=useRef<string|null>(null);
   const meta=engine.meta;
   const [selectedId, setSelectedId] = useState<string | null>(()=>localStorage.getItem("openade.selected-session"));
   useEffect(()=>{if(selectedId)localStorage.setItem("openade.selected-session",selectedId);else localStorage.removeItem("openade.selected-session");},[selectedId]);
   const [sidebarOpen, setSidebarOpen] = useState(() => loadPreferences().sidebar_open);
-  const [settingsSection, setSettingsSection] = useState<SettingsSection>("General");
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>(()=>loadPreferences().settings_section);
   const previousPage = useRef<{page:Page;id:string|null}>({page:"home",id:null});
   const editorDirty = useRef(false);
   const contentFocus=useRef<HTMLElement|null>(null);
@@ -130,7 +137,7 @@ function AppShell() {
 
   const selected = sessions.find((session) => session.id === selectedId) ?? null;
   const visibleSessions = sessions.filter(item=>!preferences.archived_sessions.includes(item.id));
-  const visibleProjects = [...new Set([...scannedProjects, ...projects])];
+  const visibleProjects = [...new Set([...scannedProjects, ...projects])].filter(Boolean);
   const openSession = async (id: string) => {
     if (switchingSessionId) return;
     if(editorDirty.current&&id!==selectedId){setError("Save or discard file changes before opening another session.");return;}
@@ -164,6 +171,7 @@ function AppShell() {
     setPreferences(adjusted);
     if(persist) savePreferences(adjusted);
   };
+  useEffect(()=>{const dark_theme=themeId(preferences.dark_theme,"dark",true),light_theme=themeId(preferences.light_theme,"light",true);if(dark_theme!==preferences.dark_theme||light_theme!==preferences.light_theme)updatePreferences({...preferences,dark_theme,light_theme});},[themeRegistryVersion,preferences.dark_theme,preferences.light_theme]);
   useEffect(() => {
     const bridge = window as typeof window & {
       go?: {main?: {App?: {SetAppearance?: (scheme:string,material:string)=>Promise<string>}}};
@@ -209,7 +217,7 @@ function AppShell() {
   useEffect(() => {
     const navigationSessions=()=>{
       const eligible=visibleSessions.filter(session=>!preferences.sidebar_project_filter||session.repo_root===preferences.sidebar_project_filter);
-      const ids=[...document.querySelectorAll<HTMLElement>(".sidebar-chat-row[data-session-id]")].map(row=>row.dataset.sessionId!).filter(id=>eligible.some(session=>session.id===id));
+      const ids=visibleSidebarSessionIds(eligible);
       return ids.length?ids.map(id=>eligible.find(session=>session.id===id)!):eligible;
     };
     const onKey = (event:KeyboardEvent) => {
@@ -221,10 +229,10 @@ function AppShell() {
       else if(shortcutMatches(event,preferences.shortcuts.newSession)){event.preventDefault();openComposer();}
       else if(page!=="settings"&&shortcutMatches(event,preferences.shortcuts.model)){event.preventDefault();window.dispatchEvent(new Event("openade-model-picker"));}
       else if(shortcutMatches(event,preferences.shortcuts.focusComposer)&&!selectedId){event.preventDefault();document.querySelector<HTMLTextAreaElement>("[data-main-composer]")?.focus();}
-      else if(shortcutMatches(event,preferences.shortcuts.next)||shortcutMatches(event,preferences.shortcuts.previous)) {
+      else if(!keyboardOverlayOpen()&&(shortcutMatches(event,preferences.shortcuts.next)||shortcutMatches(event,preferences.shortcuts.previous))) {
         event.preventDefault();const ordered=navigationSessions(),index=ordered.findIndex(session=>session.id===selectedId),delta=shortcutMatches(event,preferences.shortcuts.previous)?-1:1;
         const target=ordered[(index+delta+ordered.length)%ordered.length];if(target)void openSession(target.id);
-      } else if((event.metaKey||event.ctrlKey)&&/^[1-9]$/.test(event.key)){const target=navigationSessions()[Number(event.key)-1];if(target){event.preventDefault();void openSession(target.id);}}
+      } else if(page!=="settings"&&!keyboardOverlayOpen()){const slot=Array.from({length:9},(_,i)=>i).find(i=>jumpShortcutMatches(event,preferences.shortcuts[`jump${i+1}`]));if(slot!==undefined){const target=navigationSessions()[slot];if(target){event.preventDefault();void openSession(target.id);}}}
     };
     window.addEventListener("keydown",onKey);return ()=>window.removeEventListener("keydown",onKey);
   },[preferences,page,selectedId,sessions,sidebarOpen]);
@@ -269,10 +277,10 @@ function AppShell() {
   const activeMaterial=materialFor(activeTheme,preferences.glass);
   return (
     <div data-theme-id={activeTheme.id} data-theme-appearance={activeTheme.appearance} data-connected={connected} data-native-material={nativeMaterial}
-      className={`ade ${themeClass(preferences,systemLight)} material-${preferences.glass === "liquid" ? "frosted material-liquid" : preferences.glass} ${activeMaterial === "frosted" ? "default-frosted" : "default-opaque"} ${("go" in window) ? "native-window" : "browser-window"} ${sidebarOpen ? "" : "sidebar-collapsed"}`}
-      style={{"--theme-accent":activeTheme.accent.primary,"--glass-coverage":`${100-preferences.transparency}%`,"--glass-wash":`${(100-preferences.transparency)*.22}%`,"--glass-card":`${(100-preferences.transparency)*.55}%`,"--glass-composer":`${(100-preferences.transparency)*.8}%`,"--sidebar-width":`${preferences.sidebar_width}px`,"--conversation-width":`${preferences.conversation_width}px`,"--code-font":`"${preferences.code_font}", monospace`,"--terminal-font":`"${preferences.terminal_font}", monospace`,"--code-size":`${preferences.code_size}px`,"--terminal-size":`${preferences.terminal_size}px`,"--interface-scale":preferences.interface_size/16,...(preferences.accent!=="default"?{"--accent":accentFor(preferences.accent,activeTheme.appearance)}:{}),fontFamily:preferences.interface_font==="System UI"?"-apple-system, BlinkMacSystemFont, sans-serif":undefined} as CSSProperties}
+      className={`ade ${preferences.code_fences_fit_content?"fit-code-fences":""} ${themeClass(preferences,systemLight)} material-${preferences.glass === "liquid" ? "frosted material-liquid" : preferences.glass} ${activeMaterial === "frosted" ? "default-frosted" : "default-opaque"} ${("go" in window) ? "native-window" : "browser-window"} ${sidebarOpen ? "" : "sidebar-collapsed"}`}
+      style={{...themeCssVariables(activeTheme),"--theme-accent":activeTheme.accent.primary,"--glass-coverage":`${100-preferences.transparency}%`,"--glass-wash":`${(100-preferences.transparency)*.22}%`,"--glass-card":`${(100-preferences.transparency)*.55}%`,"--glass-composer":`${(100-preferences.transparency)*.8}%`,"--sidebar-width":`${preferences.sidebar_width}px`,"--conversation-width":`${preferences.conversation_width}px`,"--code-font":fontFamily(preferences.code_font),"--terminal-font":fontFamily(preferences.terminal_font),"--code-size":`${preferences.code_size}px`,"--terminal-size":`${preferences.terminal_size}px`,"--interface-scale":preferences.interface_size/16,...(preferences.accent!=="default"?{"--accent":accentFor(preferences.accent,activeTheme.appearance)}:{}),fontFamily:fontFamily(preferences.interface_font,"sans-serif")} as CSSProperties}
     >
-      {<div className="sidebar-clip" inert={!sidebarOpen}>{page === "settings" ? <SettingsNavigation section={settingsSection} onSection={setSettingsSection} onBack={closeSettings}/> : <Sidebar
+      {<div className="sidebar-clip" inert={!sidebarOpen}>{page === "settings" && <SettingsNavigation section={settingsSection} onSection={section=>{setSettingsSection(section);updatePreferences({...preferences,settings_section:section});}} onBack={closeSettings}/>}<Sidebar
         preferences={preferences} onPreferences={next=>{if(editorDirty.current&&selectedId&&next.archived_sessions.includes(selectedId)){setError("Save or discard file changes before archiving.");return;}updatePreferences(next);if(selectedId&&next.archived_sessions.includes(selectedId))setSelectedId(null);}}
         page={page}
         sessions={visibleSessions}
@@ -292,7 +300,7 @@ function AppShell() {
         onSearch={()=>{window.dispatchEvent(new Event("openade-dismiss-menus"));setPaletteOpen(true);}}
         onNewSession={openComposer}
         onToggle={toggleSidebar}
-      />}</div>}
+      /></div>}
       {sidebarOpen && page !== "settings" && <ResizeBoundary className="sidebar-resizer" label="Resize sidebar" width={preferences.sidebar_width} min={224} max={400} defaultWidth={256} onResize={width=>updatePreferences({...preferences,sidebar_width:width},false)} onCommit={width=>updatePreferences({...preferences,sidebar_width:width})}/> }
 
       {paletteOpen&&<CommandPalette sessions={sessions} preferences={preferences} isDark={activeTheme.appearance==="dark"} onClose={()=>setPaletteOpen(false)} onOpen={id=>{void openSession(id);}} onAction={action=>{if(action==="new")openComposer();else if(action==="theme")updatePreferences({...preferences,color_scheme:activeTheme.appearance==="dark"?"light":"dark"});else if(action==="project")setProjectPaletteOpen(true);else openPage("settings");}}/>}
@@ -302,9 +310,8 @@ function AppShell() {
         {!connected && <div className="connection-banner"><SpinnerGap className="spin" /> {error || "Connecting to the local daemon…"}<button onClick={()=>{const bridge=window as typeof window & {go?:{main?:{App?:{Reconnect?:()=>Promise<void>}}}};void (bridge.go?.main?.App?.Reconnect?.()||Promise.resolve()).then(refresh).catch(reason=>setError(String(reason)));}}>Reconnect</button></div>}
         {connected && error && <button className="error-toast" onClick={() => setError(null)}><span>{error}</span><X /></button>}
         {selected&&<div className="retained-workspace" hidden={page==="settings"} inert={page==="settings"}><Suspense fallback={<div className="opening-session" role="status">Opening session…</div>}><SessionWorkspace activeView={page!=="settings"} key={selected.id} session={selected} preferences={preferences} onPreferences={updatePreferences} onArchive={()=>{if(editorDirty.current){setError("Save or discard file changes before archiving.");return;}updatePreferences({...preferences,archived_sessions:[...preferences.archived_sessions,selected.id]});setSelectedId(null);}} onBack={() => {if(editorDirty.current){setError("Save or discard file changes before leaving this session.");return;}setSelectedId(null);}} onRefresh={refresh} /></Suspense></div>}
-        {selected&&page!=="settings" ? null : page === "home" ? (
-          <Home sessions={sessions} projects={visibleProjects} meta={meta} preferences={preferences} onCreated={(session) => { void refresh(); openSession(session.id); }} onOpen={openSession} onError={setError} />
-        ) : page === "sites" ? (
+        <div className="retained-home" hidden={Boolean(selected)||page!=="home"} inert={Boolean(selected)||page!=="home"}><Home activeView={!selected&&page==="home"} sessions={sessions} projects={visibleProjects} meta={meta} preferences={preferences} onCreated={(session) => { void refresh(); openSession(session.id); }} onOpen={openSession} onError={setError} /></div>
+        {selected&&page!=="settings" || page === "home" ? null : page === "sites" ? (
           <SitesPage />
         ) : page === "sessions" ? (
           <SessionsPage sessions={visibleSessions} onOpen={openSession} />
@@ -320,46 +327,64 @@ function AppShell() {
   );
 }
 
-function Home({ projects, meta, preferences, onCreated, onError }: { sessions: Session[]; projects: string[]; meta: Meta | null; preferences: Preferences; onCreated: (session: Session) => void; onOpen: (id: string) => void; onError: (error: string | null) => void }) {
+function Home({ activeView, projects, meta, preferences, onCreated, onError }: { activeView:boolean; sessions: Session[]; projects: string[]; meta: Meta | null; preferences: Preferences; onCreated: (session: Session) => void; onOpen: (id: string) => void; onError: (error: string | null) => void }) {
   const draft=useRef<{prompt?:string;repo?:string;agent?:string;model?:string;effort?:string;serviceTier?:string;checkout?:"current"|"worktree";base?:string}>((()=>{try{const value=JSON.parse(sessionStorage.getItem("openade.home-draft")||"{}");return value&&typeof value==="object"?value:{};}catch{return {};}})());
   const [prompt, setPrompt] = useState(() => sessionStorage.getItem("openade-template") ?? draft.current.prompt ?? "");
-  const homeComposer=useComposerLayout(prompt,preferences.interface_size,true);
+  const attachments=useAttachments("home");
+  const homeComposer=useComposerLayout(prompt,preferences.interface_size,true,76,activeView);
   const [repo, setRepo] = useState(draft.current.repo ?? projects[0] ?? "");
+  const [projectless,setProjectless]=useState(draft.current.repo==="");
   const [agent, setAgent] = useState(draft.current.agent ?? preferences.default_agent);
   const [model,setModel]=useState(draft.current.model??"");const [effort,setEffort]=useState(draft.current.effort??"");const [serviceTier,setServiceTier]=useState(draft.current.serviceTier??"");const [checkout,setCheckout]=useState<"worktree"|"current">(draft.current.checkout==="current"?"current":"worktree");const [branches,setBranches]=useState<string[]>([]);const [gitProject,setGitProject]=useState(true);const [currentBranch,setCurrentBranch]=useState("HEAD");
   const [ticket, setTicket] = useState("");
   const [ticketURL, setTicketURL] = useState("");
   const [base, setBase] = useState(draft.current.base??"HEAD");
   const [optionsOpen, setOptionsOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
+  useEffect(()=>{if(!activeView){setOptionsOpen(false);window.dispatchEvent(new Event("openade-dismiss-menus"));return;}const template=sessionStorage.getItem("openade-template");if(template!==null){setPrompt(template);sessionStorage.removeItem("openade-template");}},[activeView]);
+  const [busy, setBusy] = useState(false);const starting=useRef(false);
 
-  const repositoryEdited=useRef(false);
-  const updateRepository=(value:string)=>{repositoryEdited.current=true;setRepo(value);};
+  const repositoryEdited=useRef(draft.current.repo!==undefined);
+  const updateRepository=(value:string)=>{repositoryEdited.current=true;setProjectless(!value);setRepo(value);};
   useEffect(()=>{const select=(event:Event)=>updateRepository((event as CustomEvent<string>).detail);window.addEventListener("openade-select-project",select);return()=>window.removeEventListener("openade-select-project",select);},[]);
   useEffect(() => { if (!repositoryEdited.current && !repo && projects[0]) setRepo(projects[0]); }, [projects, repo]);
   const previousDefault=useRef(preferences.default_agent);
   useEffect(() => { if(previousDefault.current!==preferences.default_agent){setAgent(preferences.default_agent);previousDefault.current=preferences.default_agent;} }, [preferences.default_agent]);
   useEffect(()=>{sessionStorage.setItem("openade.home-draft",JSON.stringify({prompt,repo,agent,model,effort,serviceTier,checkout,base}));},[prompt,repo,agent,model,effort,serviceTier,checkout,base]);
+  const latestDraft=useRef({prompt,repo,agent,model,effort,serviceTier,checkout,base});latestDraft.current={prompt,repo,agent,model,effort,serviceTier,checkout,base};
   useEffect(() => {
     const preferredAvailable = meta?.agents.find((item) => item.id === preferences.default_agent)?.available;
     const installed = meta?.agents.find((item) => item.available)?.id;
     if ((preferredAvailable === false || preferences.disabled_providers.includes(preferences.default_agent)) && installed) setAgent(meta?.agents.find(item=>item.available&&!preferences.disabled_providers.includes(item.id))?.id ?? "shell");
   }, [meta, preferences.default_agent, preferences.disabled_providers]);
 
-  useEffect(()=>{if(!repo.trim()){setBranches([]);return;}let stale=false;const timer=window.setTimeout(()=>void getBranches(repo).then(value=>{if(!stale){setGitProject(true);setBranches(value.branches);setCurrentBranch(value.current||"HEAD");}}).catch(async reason=>{try{const folder=await getProjectDirectories(repo);if(!stale){setBranches([]);setGitProject(folder.git!==false);if(folder.git===false)setCheckout("current");else onError(reason instanceof Error?reason.message:String(reason));}}catch{if(!stale)onError(reason instanceof Error?reason.message:String(reason));}}),250);return()=>{stale=true;clearTimeout(timer);};},[repo]);
+  useEffect(()=>{if(!activeView)return;if(!repo.trim()){setBranches([]);setGitProject(false);return;}let stale=false;const timer=window.setTimeout(()=>void getBranches(repo).then(value=>{if(!stale){setGitProject(true);setBranches(value.branches);setCurrentBranch(value.current||"HEAD");}}).catch(async reason=>{try{const folder=await getProjectDirectories(repo);if(!stale){setBranches([]);setGitProject(folder.git!==false);if(folder.git===false)setCheckout("current");else onError(reason instanceof Error?reason.message:String(reason));}}catch{if(!stale)onError(reason instanceof Error?reason.message:String(reason));}}),250);return()=>{stale=true;clearTimeout(timer);};},[repo,projectless,activeView]);
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!prompt.trim() || !repo.trim()) return;
+    if (!activeView||starting.current||(!prompt.trim()&&!attachments.images.length)||attachments.uploading||(!repo.trim()&&!projectless)) return;
+    starting.current=true;const originalImages=attachments.images;const originalPrompt=prompt;
     setBusy(true);
     onError(null);
     try {
-      const session = await createSession({ title: prompt.trim().split("\n")[0].slice(0, 68), prompt: prompt.trim(), agent,model,effort,service_tier:serviceTier,checkout, mode: preferredSessionMode(preferences, agent), repo_root: repo.trim(), base_branch: base.trim() || "HEAD", ticket_key: ticket.trim(), ticket_url: ticketURL.trim() });
+      const session = await createSession({ title: (prompt.trim()||"Image conversation").split("\n")[0].slice(0, 68), prompt: withAttachments(prompt,attachments.images), agent,model,effort,service_tier:serviceTier,checkout, mode: preferredSessionMode(preferences, agent), repo_root: repo.trim(), base_branch: base.trim() || "HEAD", ticket_key: ticket.trim(), ticket_url: ticketURL.trim() });
+      const submittedIDs=new Set(originalImages.map(image=>image.id));attachments.setImages(current=>current.filter(image=>!submittedIDs.has(image.id)));
       sessionStorage.removeItem("openade-template");
-      sessionStorage.setItem("openade.home-draft",JSON.stringify({prompt:"",repo,agent,model,effort,serviceTier,checkout,base}));
+      const remainingDraft={...latestDraft.current,prompt:latestDraft.current.prompt===originalPrompt?"":latestDraft.current.prompt};
+      latestDraft.current=remainingDraft;
+      setPrompt(remainingDraft.prompt);
+      sessionStorage.setItem("openade.home-draft",JSON.stringify(remainingDraft));
       onCreated(session);
     } catch (reason) {
-      onError(reason instanceof Error ? reason.message : String(reason));
-    } finally { setBusy(false); }
+      const current=latestDraft.current.prompt??"";
+      const recovered=recoverRejectedDraft(originalPrompt,current);
+      const combined=Boolean(originalPrompt&&current&&current!==originalPrompt);
+      const remainingDraft={...latestDraft.current,prompt:recovered};
+      latestDraft.current=remainingDraft;
+      sessionStorage.setItem("openade.home-draft",JSON.stringify(remainingDraft));
+      sessionStorage.removeItem("openade-template");
+      setPrompt(recovered);
+      const message=reason instanceof Error ? reason.message : String(reason);
+      onError(combined?`The submitted prompt and newer draft were restored, separated by a blank line. ${message}`:message);
+    } finally { starting.current=false;setBusy(false); }
   };
 
   const browse = async () => {
@@ -371,15 +396,17 @@ function Home({ projects, meta, preferences, onCreated, onError }: { sessions: S
     }
   };
 
+  if(!activeView)return null;
   return <div className="home-page">
     <section className="home-hero">
-      <div className="home-context"><Select aria-label="Choose device" icon={<Desktop size={14}/>} value="local"><option value="local">Local workspace</option></Select><Select aria-label="Choose project" searchable icon={<Folder size={14}/>} value={repo} placeholder="Choose project" onChange={event=>updateRepository(event.target.value)} footer={<><input aria-label="Repository" placeholder="Or enter a repository path…" value={repo} onChange={event=>updateRepository(event.target.value)}/><button type="button" onClick={()=>void browse()}>Browse folders…</button></>}>{[...new Set([...projects,...(repo?[repo]:[])])].map(project=><option value={project} key={project}>{projectName(project)}</option>)}</Select></div>
-      <form ref={homeComposer.form} className="composer source-new-composer" onSubmit={submit}>
+      <div className="home-context"><Select aria-label="Choose device" icon={<Desktop size={14}/>} value="local"><option value="local">Local workspace</option></Select><Select aria-label="Choose project" searchable icon={<Folder size={14}/>} value={repo} placeholder="Choose project" onChange={event=>updateRepository(event.target.value)} footer={<><input aria-label="Repository" placeholder="Or enter a repository path…" value={repo} onChange={event=>updateRepository(event.target.value)}/><button type="button" onClick={()=>void browse()}>Browse folders…</button></>}><option value="">No project</option>{[...new Set([...projects,...(repo?[repo]:[])])].filter(Boolean).map(project=><option value={project} key={project}>{projectName(project)}</option>)}</Select></div>
+      <form ref={homeComposer.form} className="composer source-new-composer" onSubmit={submit} onPaste={attachments.paste} onDragOver={event=>{if(event.dataTransfer.types.includes("Files"))event.preventDefault();}} onDrop={attachments.drop}>
+        <AttachmentStrip draft={attachments}/>
         <textarea ref={homeComposer.textarea} aria-label="New session prompt" data-main-composer value={prompt} onChange={event=>setPrompt(event.target.value)} placeholder="Do anything…" rows={3} onKeyDown={event=>{if(shouldSend(event,preferences.send_behavior)){event.preventDefault();event.currentTarget.form?.requestSubmit();}}}/>
         {optionsOpen && <div className="composer-options"><label><span>Jira key</span><input value={ticket} onChange={event=>setTicket(event.target.value.toUpperCase())} placeholder="ADE-123"/></label><label><span>Ticket URL</span><input value={ticketURL} onChange={event=>setTicketURL(event.target.value)} placeholder="https://…/browse/ADE-123"/></label><label><span>Base branch</span><input value={base} onChange={event=>setBase(event.target.value)} placeholder="HEAD"/></label></div>}
-        <div className="composer-toolbar"><button aria-label="Session options" aria-expanded={optionsOpen} type="button" className="round-action" onClick={()=>setOptionsOpen(value=>!value)}><Plus size={17}/></button><ModelPicker providers={agents.filter(item=>!preferences.disabled_providers.includes(item.id)).map(item=>({...item,available:item.id==="shell"||meta?.agents.find(candidate=>candidate.id===item.id)?.available!==false}))} onProviderChange={value=>{setAgent(value);setModel("");setEffort("");setServiceTier("");}} serviceTier={serviceTier} onTierChange={setServiceTier} provider={agent} models={meta?.agents.find(item=>item.id===agent)?.models} model={model} effort={effort} onChange={(model,effort)=>{setModel(model);setEffort(effort);}}/><button className="send-button" type="submit" aria-label="Start session" disabled={busy||!prompt.trim()||!repo.trim()}>{busy?<SpinnerGap className="spin"/>:<ArrowUp weight="bold"/>}</button></div>
+        <div className="composer-toolbar"><AttachmentPicker draft={attachments}/><ModelPicker disabled={!activeView} providers={agents.filter(item=>!preferences.disabled_providers.includes(item.id)).map(item=>({...item,available:item.id==="shell"||meta?.agents.find(candidate=>candidate.id===item.id)?.available!==false}))} onProviderChange={value=>{setAgent(value);setModel("");setEffort("");setServiceTier("");}} serviceTier={serviceTier} onTierChange={setServiceTier} provider={agent} models={meta?.agents.find(item=>item.id===agent)?.models} model={model} effort={effort} onChange={(model,effort)=>{setModel(model);setEffort(effort);}}/><button className="send-button" type="submit" aria-label="Start session" disabled={busy||attachments.uploading||(!prompt.trim()&&!attachments.images.length)||(!repo.trim()&&!projectless)}>{busy?<SpinnerGap className="spin"/>:<ArrowUp weight="bold"/>}</button></div>
       </form>
-      <div className="home-status"><Select icon={<Folder size={13}/>} aria-label="Checkout mode" disabled={!gitProject} value={checkout} onChange={e=>setCheckout(e.target.value as "current"|"worktree")}><option value="worktree">Isolated worktree</option><option value="current">{gitProject?"Current checkout":"Folder workspace"}</option></Select><Select searchable icon={<GitBranch size={13}/>} aria-label="Starting branch" value={checkout==="current"?currentBranch:base} disabled={!gitProject||checkout==="current"} onChange={e=>setBase(e.target.value)}><option value="HEAD">HEAD</option>{[...new Set([...branches,...(currentBranch!=="HEAD"?[currentBranch]:[]),...(base!=="HEAD"?[base]:[])])].map(branch=><option key={branch}>{branch}</option>)}</Select></div>
+      <div className="home-status"><Select icon={<Folder size={13}/>} aria-label="Checkout mode" disabled={!gitProject} value={gitProject?checkout:"current"} onChange={e=>setCheckout(e.target.value as "current"|"worktree")}><option value="worktree">Isolated worktree</option><option value="current">{gitProject?"Current checkout":projectless?"No project":"Folder workspace"}</option></Select><Select searchable icon={<GitBranch size={13}/>} aria-label="Starting branch" value={checkout==="current"?currentBranch:base} disabled={!gitProject||checkout==="current"} onChange={e=>setBase(e.target.value)}><option value="HEAD">HEAD</option>{[...new Set([...branches,...(currentBranch!=="HEAD"?[currentBranch]:[]),...(base!=="HEAD"?[base]:[])])].map(branch=><option key={branch}>{branch}</option>)}</Select><button aria-label="Session options" aria-expanded={optionsOpen} type="button" className="session-options-action" onClick={()=>setOptionsOpen(value=>!value)}><Plus size={17}/></button></div>
     </section>
   </div>;
 }

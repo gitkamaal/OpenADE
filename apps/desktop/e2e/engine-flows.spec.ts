@@ -86,3 +86,11 @@ test('registered projects survive an engine restart, normalize Git subfolders, a
  fs.symlinkSync(path.join(repo,'README.md'),path.join(folder,'outside-link'));const files=await(await send('/api/sessions/'+session.id+'/files')).json();expect(files.files).toContain('README.md');expect(files.files).not.toContain('outside-link');expect((await send('/api/sessions/'+session.id+'/file?path=outside-link')).status).toBeGreaterThanOrEqual(400);
  }finally{await stopped(child);fs.rmSync(folder,{recursive:true,force:true});}
 });
+
+
+test('optional model cache cannot stall metadata and recovers after invalid or nonregular files',async({request})=>{
+ const cache=path.join(tmp,'provider-home/.codex/models_cache.json');const original=fs.readFileSync(cache);
+ try{fs.unlinkSync(cache);expect(spawnSync('mkfifo',[cache]).status).toBe(0);const started=Date.now();const response=await request.get(`${daemon}/api/meta`,{timeout:2500});expect(response.status()).toBe(200);expect(Date.now()-started).toBeLessThan(2000);const meta=await response.json();expect(meta.agents.find((agent:{id:string})=>agent.id==='codex').models).toEqual([]);expect((await request.get(`${daemon}/api/health`)).status()).toBe(200);
+ fs.unlinkSync(cache);fs.writeFileSync(cache,'x'.repeat(2*1024*1024+1));const oversized=await(await request.get(`${daemon}/api/meta`)).json();expect(oversized.agents.find((agent:{id:string})=>agent.id==='codex').models).toEqual([]);fs.writeFileSync(cache,original);await expect.poll(async()=>{const restored=await(await request.get(`${daemon}/api/meta`)).json();return restored.agents.find((agent:{id:string})=>agent.id==='codex').models.map((model:{id:string})=>model.id);}).toContain('fixture-sol');
+ }finally{fs.rmSync(cache,{force:true});fs.writeFileSync(cache,original);}
+});

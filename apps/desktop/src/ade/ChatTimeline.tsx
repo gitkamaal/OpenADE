@@ -1,3 +1,5 @@
+import {MessageRail} from "./MessageRail";
+import {parseAttachments,AttachmentImage} from "./Attachments";
 import { ProviderIcon } from "./ProviderIcon";
 import { copyText } from "./clipboard";
 import {
@@ -20,17 +22,20 @@ export function ChatTimeline({ session, output, activityExpanded = false }: { se
   if(prompt.current!==session.prompt||!output.startsWith(previous.current)){parser.current=createTranscriptParser(session.prompt);previous.current="";prompt.current=session.prompt;}
   parser.current.append(output.slice(previous.current.length));previous.current=output;
   const turns=parser.current.snapshot(running);
-  const [visibleCount,setVisibleCount]=useState(80);
+  const [visibleCount,setVisibleCount]=useState(80);const timeline=useRef<HTMLDivElement>(null);const jump=useRef<string|null>(null);
+  useLayoutEffect(()=>{if(!jump.current)return;const target=timeline.current?.querySelector<HTMLElement>(`[data-message-id="${jump.current}"]`),scroll=timeline.current?.closest<HTMLElement>(".messages");if(target&&scroll){scroll.scrollTo({top:scroll.scrollTop+target.getBoundingClientRect().top-scroll.getBoundingClientRect().top-24,behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth"});jump.current=null;}},[visibleCount]);
 
   return (
-    <div className="chat-timeline" aria-live="polite">
+    <div ref={timeline} className="chat-timeline" aria-live="polite">
+      <MessageRail turns={turns} timeline={timeline} onJump={index=>{const target=turns[index];const row=timeline.current?.querySelector<HTMLElement>(`[data-message-id="${target.id}"]`),scroll=timeline.current?.closest<HTMLElement>(".messages");if(row&&scroll)scroll.scrollTo({top:scroll.scrollTop+row.getBoundingClientRect().top-scroll.getBoundingClientRect().top-24,behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth"});else{jump.current=target.id;setVisibleCount(current=>Math.max(current,turns.length-index));}}}/>
       {turns.length>visibleCount&&<button className="load-earlier" onClick={()=>setVisibleCount(count=>count+80)}>Show earlier messages</button>}
       {turns.slice(-visibleCount).map((turn) =>
         turn.role === "user" ? (
-          <UserTurn key={turn.id} text={turn.markdown} />
+          <UserTurn key={turn.id} id={turn.id} text={turn.markdown} />
         ) : (
           <AssistantTurn
             key={turn.id}
+            session={session}
             markdown={turn.markdown}
             activities={turn.activities}
             streaming={Boolean(turn.streaming)}
@@ -43,7 +48,8 @@ export function ChatTimeline({ session, output, activityExpanded = false }: { se
   );
 }
 
-const UserTurn=memo(function UserTurn({text}:{text:string}){
+const UserTurn=memo(function UserTurn({text,id}:{text:string;id:string}){
+ const parsed=parseAttachments(text);
  const ref=useRef<HTMLDivElement>(null);
  const [long,setLong]=useState(false),[expanded,setExpanded]=useState(false);
  useLayoutEffect(()=>{
@@ -52,16 +58,18 @@ const UserTurn=memo(function UserTurn({text}:{text:string}){
   const observer=new ResizeObserver(measure);observer.observe(node);measure();
   return()=>observer.disconnect();
  },[text]);
- return <article className="chat-user-turn"><div><div ref={ref} className={`user-prompt-text ${!expanded?"folded":""}`}>{text}</div>{long&&<button className="user-prompt-fold" aria-label={expanded?"Collapse message":"Expand message"} aria-expanded={expanded} onClick={()=>setExpanded(value=>!value)}><CaretDown className={expanded?"expanded":""}/></button>}</div></article>;
+ return <article className="chat-user-turn" data-message-id={id}>{parsed.images.length>0&&<section className="user-attachments" aria-label="Message attachments">{parsed.images.map(image=><AttachmentImage key={image.id} image={image}/>)}</section>}{parsed.text&&<div><div ref={ref} className={`user-prompt-text ${!expanded?"folded":""}`}>{parsed.text}</div>{long&&<button className="user-prompt-fold" aria-label={expanded?"Collapse message":"Expand message"} aria-expanded={expanded} onClick={()=>setExpanded(value=>!value)}><CaretDown className={expanded?"expanded":""}/></button>}</div>}</article>;
 });
 
 const AssistantTurn=memo(function AssistantTurn({
+  session,
   markdown,
   activities,
   streaming,
   agent,
   activityExpanded,
 }: {
+  session: Session;
   markdown: string;
   activities: ChatActivity[];
   streaming: boolean;
@@ -95,7 +103,7 @@ const AssistantTurn=memo(function AssistantTurn({
     <article className="chat-assistant-turn">
       <header><span className="agent-avatar"><ProviderIcon provider={agent}/></span><strong>{agentLabel(agent)}</strong></header>
       {activities.length > 0 && <ActivityGroup activities={activities} streaming={streaming} expanded={activityExpanded} />}
-      {visibleMarkdown ? <MarkdownMessage>{visibleMarkdown}</MarkdownMessage> : streaming ? (
+      {visibleMarkdown ? <MarkdownMessage session={session}>{visibleMarkdown}</MarkdownMessage> : streaming ? (
         <div className="native-thinking"><SpinnerGap className="spin" /> Working through the task…</div>
       ) : null}
       {streaming && visibleMarkdown && <span className="streaming-cursor" aria-label="Streaming" />}

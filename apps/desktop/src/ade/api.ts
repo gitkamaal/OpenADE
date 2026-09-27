@@ -10,10 +10,11 @@ function bounded<T>(promise:Promise<T>, milliseconds:number, message:string):Pro
  return new Promise((resolve,reject)=>{const timer=window.setTimeout(()=>reject(new Error(message)),milliseconds);promise.then(value=>{clearTimeout(timer);resolve(value);},error=>{clearTimeout(timer);reject(error);});});
 }
 export async function engineConnection(){
- if(authToken)return;
+ const bridge=window as typeof window & {go?:{main?:{App?:{EngineConnection?:()=>Promise<{url:string;token:string}>}}}};
+ const connect=bridge.go?.main?.App?.EngineConnection;
+ // The native profile connection is authoritative over development defaults.
+ if(authToken&&!connect)return;
  if(!connectionPromise)connectionPromise=(async()=>{
-  const bridge=window as typeof window & {go?:{main?:{App?:{EngineConnection?:()=>Promise<{url:string;token:string}>}}}};
-  const connect=bridge.go?.main?.App?.EngineConnection;
   if(!connect)throw new Error("The desktop bridge is unavailable. Restart OpenADE, or configure a development engine.");
   const connection=await bounded(connect(),12000,"The desktop bridge did not respond. Restart OpenADE to reconnect.");
   if(!connection.url||!connection.token)throw new Error("The desktop engine connection is incomplete.");
@@ -153,7 +154,7 @@ export interface CreateSessionInput {
   ticket_url?: string;
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+export async function request<T>(path: string, init?: RequestInit): Promise<T> {
  await engineConnection();
   const response = await fetch(`${DAEMON_URL}${path}`, {
     ...init,
@@ -341,6 +342,7 @@ export function terminalStreamURL(id: string,after=0): string {
 }
 
 export function projectName(path: string): string {
+ if(!path)return "No project";
   return path.split("/").filter(Boolean).at(-1) ?? path;
 }
 
@@ -378,3 +380,13 @@ export const updateSessionDetails=(id:string,details:{title?:string;instructions
 export interface ProjectDirectoryListing{path:string;parent:string;entries:{name:string;path:string}[];git?:boolean;limited?:boolean}
 export const getProjectDirectories=(path="")=>request<ProjectDirectoryListing>(`/api/projects/directories?path=${encodeURIComponent(path)}`);
 export const registerProject=(path:string)=>request<{path:string}>("/api/projects",{method:"POST",body:JSON.stringify({path})});
+
+export interface Attachment {id:string;name:string;path:string;mime:string;size:number}
+export const uploadAttachment=(file:File)=>request<Attachment>(`/api/attachments?name=${encodeURIComponent(file.name)}`,{method:"POST",headers:{"Content-Type":file.type||"application/octet-stream"},body:file});
+export const attachmentMediaURL=(id:string)=>`/api/attachments/${encodeURIComponent(id)}/media`;
+
+export const fileMediaURL=(sessionId:string,path:string)=>`/api/sessions/${encodeURIComponent(sessionId)}/file-media?path=${encodeURIComponent(path)}`;
+
+// Media bytes use the same private header as JSON requests. Bearer tokens must
+// not appear in image URLs, accessibility trees, captures or the browser cache.
+export async function fetchMedia(source:string,signal:AbortSignal){await engineConnection();const path=new URL(source,DAEMON_URL);if(!/^\/api\/(?:attachments\/[^/]+\/media|sessions\/[^/]+\/file-media)$/.test(path.pathname))throw Error("Unsupported image source.");path.searchParams.delete("token");const response=await fetch(DAEMON_URL+path.pathname+path.search,{signal,headers:{Authorization:`Bearer ${authToken}`}});if(!response.ok)throw Error("Image unavailable.");return response.blob();}
