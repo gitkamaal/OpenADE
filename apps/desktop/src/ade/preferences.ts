@@ -7,7 +7,7 @@ export const defaultShortcuts: Record<string,string> = { sidebar:"Mod+B", panel:
 export interface Preferences {
  theme: ThemePreference; color_scheme: "system" | "light" | "dark"; dark_theme: "graphite" | "dusk"; default_agent: string; session_surface: SessionSurface; activity_detail: ActivityDetail;
  project_root: string; project_organization: ProjectOrganization; project_sort: ProjectSort;
- send_behavior: "enter" | "mod-enter"; stop_on_escape: boolean; accent: string; glass: "default" | "opaque" | "frosted";
+ send_behavior: "enter" | "mod-enter"; stop_on_escape: boolean; accent: string; glass: "default" | "opaque" | "frosted" | "liquid";
  interface_font: "Geist" | "System UI"; interface_size: number; terminal_font:string; code_font:string; terminal_size: number; code_size: number; conversation_width:number;
  sidebar_width:number; panel_width:number; sidebar_open:boolean; sidebar_compact:boolean; sidebar_show_branch:boolean; sidebar_show_pr:boolean; sidebar_show_provider:boolean; sidebar_show_project_icon:boolean; sidebar_show_project_label:boolean;
  notifications:boolean; background_only:boolean; sounds:boolean; sound_completed:boolean; sound_input:boolean; sound_errors:boolean;
@@ -39,7 +39,7 @@ export function loadPreferences(): Preferences {
   if (!("dark_theme" in raw)) result.dark_theme = result.theme === "dusk" ? "dusk" : "graphite";
   if (!["system","light","dark"].includes(result.color_scheme)) result.color_scheme="dark";
   if (!["graphite","dusk"].includes(result.dark_theme)) result.dark_theme="graphite";
-  if (!["default","opaque","frosted"].includes(result.glass)) result.glass="default";
+  if (!["default","opaque","frosted","liquid"].includes(result.glass)) result.glass="default";
   if (!["chat","terminal"].includes(result.session_surface)) result.session_surface="chat";
   if (!["project","list"].includes(result.project_organization)) result.project_organization="project";
   if (!["priority","updated","manual"].includes(result.project_sort)) result.project_sort="updated";

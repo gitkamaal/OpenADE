@@ -770,3 +770,43 @@ img.provider-claude{filter:brightness(0) saturate(100%) invert(58%) sepia(44%) s
 .ade:is(.material-frosted,.material-default.default-frosted) :is(.composer,.session-composer)::before{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;border-radius:inherit;background:var(--composer-fill);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px)}
 /* The composer already supplies its focus surface; do not box its textarea. */
 .ade :is(.composer,.session-composer) textarea:focus-visible{outline:none;box-shadow:none}
+
+/* One native backdrop, light palette washes above it. Foregrounds stay opaque. */
+.ade.native-window[data-native-material]:where(.material-frosted,.material-default.default-frosted){
+ --shell-fill:color-mix(in srgb,var(--sidebar) 55%,transparent);
+ --sidebar-fill:color-mix(in srgb,var(--bg) 12%,transparent);
+ --panel-fill:color-mix(in srgb,var(--bg) 12%,transparent);
+ --card-fill:color-mix(in srgb,var(--surface) 14%,transparent);
+ --composer-fill:color-mix(in srgb,var(--bg) 24%,transparent);
+ --popup-fill:color-mix(in srgb,var(--surface) 68%,transparent);
+ --muted:var(--text);
+ --muted-2:var(--text);
+ --faint:var(--muted-2);
+ --line:color-mix(in srgb,var(--text) 16%,transparent);
+ --line-soft:color-mix(in srgb,var(--text) 8%,transparent);
+}
+.ade.native-window:is(.material-frosted,.material-default.default-frosted) :is(.composer,.session-composer){border-color:var(--line);box-shadow:inset 0 1px 0 color-mix(in srgb,var(--text) 7%,transparent),0 5px 18px #00000012}
+/* All solid fallbacks share the selected palette, including xterm. */
+.ade.native-window:is([data-native-material="opaque"],[data-native-material="reduced-transparency"],[data-native-material="increased-contrast"],[data-native-material="unsupported"]){
+ --shell-fill:var(--sidebar);--sidebar-fill:var(--bg);--panel-fill:var(--bg);--card-fill:var(--surface);--popup-fill:var(--surface);--composer-fill:var(--surface);
+}
+.ade.native-window:is([data-native-material="opaque"],[data-native-material="reduced-transparency"],[data-native-material="increased-contrast"],[data-native-material="unsupported"]) *,.ade.native-window:is([data-native-material="opaque"],[data-native-material="reduced-transparency"],[data-native-material="increased-contrast"],[data-native-material="unsupported"]) *::before{backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
+.ade.native-window[data-native-material="increased-contrast"]{--muted:var(--text);--muted-2:var(--text);--faint:var(--text);--line:var(--text);--line-soft:var(--text)}
+.ade :is(button,[role="combobox"],input,[tabindex]):focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.ade .cm-focused{outline:2px solid var(--accent);outline-offset:-2px}
+@media(prefers-reduced-transparency:reduce){
+ .ade{--shell-fill:var(--sidebar)!important;--sidebar-fill:var(--bg)!important;--panel-fill:var(--bg)!important;--card-fill:var(--surface)!important;--popup-fill:var(--surface)!important;--composer-fill:var(--surface)!important}
+ .ade *,.ade *::before,.ade *::after{backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
+}
+@media(prefers-contrast:more){.ade[data-native-material],.ade.native-window[data-native-material]{--muted:var(--text);--muted-2:var(--text);--faint:var(--text);--line:var(--text);--line-soft:var(--text)}}
+
+/* The panel itself owns its fill; clipped wrappers must not cover the backdrop. */
+.ade :is(.files-panel-clip,.zeron-diffs){background:transparent}
+.ade.native-window:where(.material-frosted,.material-default.default-frosted) .chat-user-turn>div{background:var(--card-fill);border:1px solid var(--line)}
+
+.ade.native-window:where(.material-frosted,.material-default.default-frosted):where(.theme-dark){--text:#f5f5f7}
+.ade.native-window:where(.material-frosted,.material-default.default-frosted):where(.theme-dusk){--text:#fff5d6}
+.ade.native-window:where(.material-frosted,.material-default.default-frosted):where(.theme-light){--text:#202024}
+@media(prefers-color-scheme:light){.ade.native-window:where(.material-frosted,.material-default.default-frosted):where(.theme-system){--text:#202024}}
+
+.ade :is(.composer,.session-composer):focus-within{outline:2px solid var(--accent);outline-offset:2px}

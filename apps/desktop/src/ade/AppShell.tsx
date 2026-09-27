@@ -73,6 +73,8 @@ function AppShell() {
   const editorDirty = useRef(false);
   const lastStatuses = useRef<Map<string,string> | null>(null);
   const [preferences, setPreferences] = useState<Preferences>(loadPreferences);
+  const [nativeMaterial, setNativeMaterial] = useState("pending");
+  const [systemLight, setSystemLight] = useState(() => matchMedia("(prefers-color-scheme: light)").matches);
   const [error, setError] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
   const [resumingConversationId, setResumingConversationId] = useState<string | null>(null);
@@ -151,7 +153,25 @@ function AppShell() {
     setPreferences(next);
     savePreferences(next);
   };
-  useEffect(()=>{const native=window as typeof window & {go?:{main?:{App?:{SetAppearance?:(scheme:string,material:string)=>Promise<void>}}}};const media=matchMedia("(prefers-color-scheme: light)");const apply=()=>{const light=preferences.color_scheme==="light"||preferences.color_scheme==="system"&&media.matches;const material=preferences.glass==="default"?(light||preferences.dark_theme==="graphite"?"frosted":"opaque"):preferences.glass;void native.go?.main?.App?.SetAppearance?.(preferences.color_scheme,material);};apply();media.addEventListener("change",apply);return()=>media.removeEventListener("change",apply);},[preferences.color_scheme,preferences.dark_theme,preferences.glass]);
+  useEffect(() => {
+    const bridge = window as typeof window & {
+      go?: {main?: {App?: {SetAppearance?: (scheme:string,material:string)=>Promise<string>}}};
+      runtime?: {EventsOn?: (name:string,callback:(status:string)=>void)=>()=>void};
+    };
+    const media = matchMedia("(prefers-color-scheme: light)");
+    let active = true;
+    const apply = () => {
+      setSystemLight(media.matches);
+      const light = preferences.color_scheme === "light" || preferences.color_scheme === "system" && media.matches;
+      const material = preferences.glass === "default" ? (light || preferences.dark_theme === "graphite" ? "frosted" : "opaque") : preferences.glass;
+      const setter = bridge.go?.main?.App?.SetAppearance;
+      if (setter) void setter(preferences.color_scheme, material).then(status => {if(active) setNativeMaterial(status);}).catch(() => {if(active) setNativeMaterial("unsupported");});
+      else setNativeMaterial("browser");
+    };
+    const cancel = bridge.runtime?.EventsOn?.("appearance:changed", status => {if(active) setNativeMaterial(status);});
+    apply(); media.addEventListener("change", apply);
+    return () => {active = false; cancel?.(); media.removeEventListener("change", apply);};
+  }, [preferences.color_scheme, preferences.dark_theme, preferences.glass]);
   const openPage = (next: Page) => {
     if(editorDirty.current){setError("Save or discard file changes before leaving this session.");return;}
     if(next === "settings" && page !== "settings") previousPage.current={page,id:selectedId};
@@ -224,8 +244,8 @@ function AppShell() {
   };
 
   return (
-    <div data-connected={connected}
-      className={`ade ${themeClass(preferences)} material-${preferences.glass} ${preferences.dark_theme === "dusk" && preferences.color_scheme!=="light" ? "default-opaque" : "default-frosted"} ${("go" in window) ? "native-window" : "browser-window"} ${sidebarOpen ? "" : "sidebar-collapsed"}`}
+    <div data-connected={connected} data-native-material={nativeMaterial}
+      className={`ade ${themeClass(preferences)} material-${preferences.glass === "liquid" ? "frosted material-liquid" : preferences.glass} ${preferences.color_scheme === "light" || preferences.color_scheme === "system" && systemLight || preferences.dark_theme === "graphite" ? "default-frosted" : "default-opaque"} ${("go" in window) ? "native-window" : "browser-window"} ${sidebarOpen ? "" : "sidebar-collapsed"}`}
       style={{"--sidebar-width":`${preferences.sidebar_width}px`,"--conversation-width":`${preferences.conversation_width}px`,"--code-font":`"${preferences.code_font}", monospace`,"--terminal-font":`"${preferences.terminal_font}", monospace`,"--code-size":`${preferences.code_size}px`,"--terminal-size":`${preferences.terminal_size}px`,"--interface-scale":preferences.interface_size/16,...(preferences.accent!=="default"?{"--accent":preferences.accent}:{}),fontFamily:preferences.interface_font==="System UI"?"-apple-system, BlinkMacSystemFont, sans-serif":undefined} as CSSProperties}
     >
       {<div className="sidebar-clip" inert={!sidebarOpen}>{page === "settings" ? <SettingsNavigation section={settingsSection} onSection={setSettingsSection} onBack={closeSettings}/> : <Sidebar
@@ -266,7 +286,7 @@ function AppShell() {
         ) : page === "review" ? (
           <ReviewPage projects={visibleProjects} sessions={sessions} />
         ) : (
-          <SettingsPage preferences={preferences} onChange={updatePreferences} section={settingsSection} meta={meta} sessions={sessions} onSetup={session=>{void refresh();setSelectedId(session.id);setPage("sessions");}} onRestore={id=>updatePreferences({...preferences,archived_sessions:preferences.archived_sessions.filter(value=>value!==id)})} />
+          <SettingsPage nativeMaterial={nativeMaterial} preferences={preferences} onChange={updatePreferences} section={settingsSection} meta={meta} sessions={sessions} onSetup={session=>{void refresh();setSelectedId(session.id);setPage("sessions");}} onRestore={id=>updatePreferences({...preferences,archived_sessions:preferences.archived_sessions.filter(value=>value!==id)})} />
         )}
       </main>
     </div>

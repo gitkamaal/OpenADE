@@ -6,7 +6,7 @@ The local Go/Wails/React client follows Zeron’s composer/chat/panel/settings l
 
 - Bounded native startup/reconnect and profile/protocol ownership checks; selected-folder access survives restart, including linked worktree metadata.
 - Custom searchable, keyboard-accessible choices throughout the active desktop UI; no native select/datalist controls.
-- Whole-window Frosted/Opaque roles across canvas, sidebar, chat, settings, editor, terminal and menus. macOS backdrop tint/saturation and blur follow GPUI’s material recipe; menus use a shared 16 px blur. Apache/MIT/font notices are retained.
+- Whole-window Frosted/Opaque roles across canvas, sidebar, chat, settings, editor, terminal and menus. macOS now uses public AppKit material APIs; menus use a shared 16 px CSS blur. Apache/MIT/font notices are retained.
 - Sidebar sections/pinning/detail controls/grouped drag order/archive; current/isolated checkout with real branches.
 - Model favorites, reasoning and service tier; chat rename/instructions/context, durable queue, bounded streaming/replay and safe provider retry.
 - Hierarchical files and a main-panel CodeMirror editor with tabs, syntax colors/fonts, autosave/conflict and filesystem guards.
@@ -42,6 +42,62 @@ Heap/DOM are lower; engine RSS is higher. Timing results are mixed and small-sam
 
 ## Source Zeron comparison and limits
 
-[Zeron v0.2.92 source](https://github.com/zeronsh/zeron/tree/68ef78bb1e6fa0b84feeb68c382230f8c560f96a) compiled locally. Matched sanitized engine replay used identical 51,769 assistant bytes/853 reasoning bytes/40 ms deltas. Zeron/OpenADE streaming CPU was 1.31%/0.62%, peak physical footprint 24.86/9.41 MiB. One run only, excluding providers/renderers; setup timings differ and are not comparable. Computer Use rejects the separate source-build native app despite confirmed Any App/Full access settings; installed Zeron 0.2.90 supplies native visual references. This is a tool/settings mismatch, not missing user authorization.
+[Zeron v0.2.92 source](https://github.com/zeronsh/zeron/tree/68ef78bb1e6fa0b84feeb68c382230f8c560f96a) compiled locally. Matched sanitized engine replay used identical 51,769 assistant bytes/853 reasoning bytes/40 ms deltas. Zeron/OpenADE streaming CPU was 1.31%/0.62%, peak physical footprint 24.86/9.41 MiB. One run only, excluding providers/renderers; setup timings differ and are not comparable. Earlier Computer Use sessions rejected the separate source-build native app. This checkpoint accepted its launch, then a later capture timed out; a complete new source-GUI comparison remains unverified. Installed Zeron 0.2.90 supplies the previous native visual references.
 
 Remaining: remote sync/device management, account switching/usage/provider settings sync, additional structured adapters (including Grok), persistent upstream execution and interactive permission bridging, theme imports/background images, full Git graph/ref details and hunk staging/syntax-aligned diffs. Exact pixel equivalence across operating systems/backdrops is not established. Browser builds use a sandboxed iframe; native macOS uses an isolated WebKit child. Complete native notification, every shortcut/account/browser state, Windows/Linux and whole-process-family performance remain unverified. Public PRs must not include private reference screenshots or transcripts.
+
+
+## September 26 — thinner materials and native Liquid Glass
+
+The native background now uses a supported behind-window `NSVisualEffectView`,
+with 40% opacity applied only to that background view. Window/content opacity stays
+at one. Removed the private layer/filter edits and reduced the native shell tint
+from 80% to 55%, with 12% sidebar/panel washes. Files-panel clipping, diff layout
+and user-message fills no longer cover the backdrop with solid colors.
+
+Liquid Glass explicitly selects `NSGlassEffectView` Clear style on macOS 26+,
+over a public behind-window material. WebKit remains in a stable foreground host
+when changing treatment; reparenting it into/out of glass caused a native blank
+view and was removed. Composer, dropdown and in-app card effects are CSS frost
+approximations, rather than native Liquid Glass controls. Opaque is preserved.
+Older systems/build SDKs fall back to Frosted; non-macOS native clients fall back
+to solid. Reduce Transparency and Increase Contrast select solid materials and
+notify the client immediately, including mounted xterm themes. Full-strength
+foreground colors and visible focus outlines preserve label/editor clarity.
+
+Validation at this checkpoint: all 35 existing production-client E2Es passed.
+The new native-bridge accessibility flow passed after fixes, including persistent
+Liquid Glass selection, theme-default translucency, focus retention and live
+terminal background changes. The two affected material flows passed after the
+last panel-wrapper change. The native bridge fixture controls status callbacks;
+it does not emulate AppKit or change OS accessibility settings. Frontend
+TypeScript/production build, Go vet, macOS arm64 packaging and signature checks
+passed. Native app inspection exercised keyboard menus/focus return, file-editor
+paging, fresh shell input/close, native window zoom/restore, settings and material
+switching. Native diff inspection covered the empty working-tree surface; real
+patch staging/split flows are covered by the engine E2Es.
+
+Current capture limitation: Computer Use's window snapshots show a flat material
+instead of the desktop behind the window. Full-display color transmission and a
+continuous full-desktop recording are still unverified; an alternative macOS
+`screencapture` request is pending. Existing saved captures verify native layout,
+crisp foregrounds and treatment switching, rather than desktop-color fidelity.
+An optional native contrasting-backdrop fixture is in `apps/desktop/e2e/native`;
+it is excluded from the delivered app. CUA also returned ScreenCaptureKit error
+-3812 (invalid parameter), transformed Stage Manager thumbnails, and
+`windowNotFoundAtPosition` during background-window setup. No denial was bypassed
+and no setting was assumed to be at fault. Wallpaper remained unchanged.
+
+The separate source-built Zeron was accepted by Computer Use this time and
+initially showed its setup screen; a later capture timed out (`timeoutReached`).
+A new complete source-GUI comparison therefore remains unavailable.
+
+Updated production Chromium measurements versus the last delivered rebuild:
+input p95 16.8 → 16.4 ms, session switching 40.7 → 32.3 ms, warm ready 28.4 →
+34.7 ms, first visible streaming response 478.8 → 485.2 ms. Renderer JS heap
+8.7 → 7.7 MiB; engine RSS 29.6 → 41.9 MiB. Timings are mixed and engine memory
+was higher; this does not establish regression-free whole-app performance.
+Native app-only startup/idle samples were approximately 116 MiB before and 114 MiB
+after. Following the native flows the app was 139.6 MiB with sampled CPU 0.0%;
+no matched warm native baseline was captured. WebKit, WindowServer, GPU and
+providers are excluded.

@@ -38,7 +38,7 @@ test('custom choices support search, keyboard selection, focus return and unclip
  await page.getByLabel('Open settings').click();await page.getByRole('tab',{name:'Appearance',exact:true}).click();const glass=page.getByRole('combobox',{name:'Glass',exact:true});await glass.click();const rect=await page.locator('.select-popover').boundingBox();expect(rect).not.toBeNull();expect(rect!.y).toBeGreaterThanOrEqual(8);expect(rect!.y+rect!.height).toBeLessThanOrEqual(page.viewportSize()!.height-7);await page.keyboard.press('Escape');await expect(glass).toBeFocused();await expect(page.locator('.select-popover')).toHaveCount(0);
 });
 test('Frosted applies through the canvas, chat, editor, terminal and popup surfaces',async({page,request})=>{
- const session=await create(request,'Material throughout workspace');await ready(page);await page.getByLabel('Open settings').click();await page.getByRole('tab',{name:'Appearance',exact:true}).click();await choose(page,'Glass','frosted');await expect(page.locator('.main-shell')).toHaveCSS('background-color','rgba(0, 0, 0, 0)');await page.getByRole('button',{name:'Back',exact:true}).click();await open(page,'Material throughout workspace');await expect(page.locator('.conversation')).toHaveCSS('background-color','rgba(0, 0, 0, 0)');await expect(page.locator('.session-composer')).toHaveCSS('backdrop-filter','none');expect(await page.locator('.session-composer').evaluate(el=>getComputedStyle(el,'::before').backdropFilter)).toBe('blur(16px)');await page.getByLabel('Toggle files panel').click();await page.getByRole('treeitem',{name:'README.md',exact:true}).click();await expect(page.locator('.cm-editor')).toHaveCSS('background-color','rgba(0, 0, 0, 0)');await panel(page,'Terminal');await page.getByLabel('New terminal',{exact:true}).click();await expect(page.locator('.terminal-workspace')).toHaveCSS('background-color','rgba(0, 0, 0, 0)');await expect(page.locator('.terminal-host').first()).toHaveCSS('background-color','rgba(0, 0, 0, 0)');await page.locator('.terminal-workspace').getByRole('button',{name:/^Close Terminal/}).click();
+ const session=await create(request,'Material throughout workspace');await ready(page);await page.getByLabel('Open settings').click();await page.getByRole('tab',{name:'Appearance',exact:true}).click();await choose(page,'Glass','frosted');await expect(page.locator('.main-shell')).toHaveCSS('background-color','rgba(0, 0, 0, 0)');await page.getByRole('button',{name:'Back',exact:true}).click();await open(page,'Material throughout workspace');await expect(page.locator('.conversation')).toHaveCSS('background-color','rgba(0, 0, 0, 0)');await expect(page.locator('.session-composer')).toHaveCSS('backdrop-filter','none');expect(await page.locator('.session-composer').evaluate(el=>getComputedStyle(el,'::before').backdropFilter)).toBe('blur(16px)');await page.getByLabel('Toggle files panel').click();await expect(page.locator('.files-panel-clip')).toHaveCSS('background-color','rgba(0, 0, 0, 0)');await page.getByRole('treeitem',{name:'README.md',exact:true}).click();await expect(page.locator('.cm-editor')).toHaveCSS('background-color','rgba(0, 0, 0, 0)');await panel(page,'Diffs');await expect(page.locator('.zeron-diffs')).toHaveCSS('background-color','rgba(0, 0, 0, 0)');await panel(page,'Terminal');await page.getByLabel('New terminal',{exact:true}).click();await expect(page.locator('.terminal-workspace')).toHaveCSS('background-color','rgba(0, 0, 0, 0)');await expect(page.locator('.terminal-host').first()).toHaveCSS('background-color','rgba(0, 0, 0, 0)');await page.locator('.terminal-workspace').getByRole('button',{name:/^Close Terminal/}).click();
 });
 
 test('skills and slash commands are discovered from the owning worktree',async({page,request})=>{
@@ -51,4 +51,45 @@ test('a new-chat draft and its project/provider/checkout choices survive visitin
 
 test('custom font-size choices apply to the code editor and survive reload',async({page,request})=>{
  const session=await create(request,'Font appearance flow');await ready(page);await page.getByLabel('Open settings').click();await page.getByRole('tab',{name:'Appearance',exact:true}).click();await choose(page,'Code and diff font size','14.5');await choose(page,'Code and diff font','Menlo');await choose(page,'Terminal font size','15');await page.getByRole('button',{name:'Back',exact:true}).click();await open(page,'Font appearance flow');await page.getByLabel('Toggle files panel').click();await page.getByRole('treeitem',{name:'README.md',exact:true}).click();await expect(page.locator('.cm-editor')).toHaveCSS('font-size','14.5px');await expect(page.locator('.cm-scroller')).toHaveCSS('font-family',/Menlo/);await page.reload();await page.getByLabel('Open settings').click();await page.getByRole('tab',{name:'Appearance',exact:true}).click();await expect(page.getByLabel('Code and diff font size')).toHaveAttribute('data-value','14.5');await expect(page.getByLabel('Terminal font size')).toHaveAttribute('data-value','15');
+});
+
+test('Liquid Glass persists and native accessibility changes restore solid surfaces without losing keyboard focus',async({page,request})=>{
+ // This bridge fixture verifies client reaction; actual AppKit is checked in the native app.
+ await page.addInitScript(()=>{
+  Object.assign(window,{go:{main:{App:{SetAppearance:async(_scheme:string,material:string)=>material}}},runtime:{EventsOn:(_name:string,callback:(status:string)=>void)=>{Object.assign(window,{appearanceChanged:callback});return()=>{};}}});
+ });
+ await create(request,'Accessible glass workspace');await ready(page);
+ await page.getByLabel('Open settings').click();await page.getByRole('tab',{name:'Appearance',exact:true}).click();
+ await choose(page,'Dark theme','dusk');await choose(page,'Glass','default');await page.getByRole('button',{name:'System',exact:true}).click();
+ await page.emulateMedia({colorScheme:'light'});await expect(page.locator('.ade')).toHaveClass(/default-frosted/);await expect(page.locator('.ade')).toHaveAttribute('data-native-material','frosted');
+ await page.emulateMedia({colorScheme:'dark'});await expect(page.locator('.ade')).toHaveClass(/default-opaque/);await expect(page.locator('.ade')).toHaveAttribute('data-native-material','opaque');
+ await choose(page,'Dark theme','graphite');await page.getByRole('button',{name:'Dark',exact:true}).click();
+ await choose(page,'Glass','liquid');await expect(page.locator('.ade')).toHaveAttribute('data-native-material','liquid');
+ await expect(page.getByText('Native macOS Liquid Glass',{exact:true})).toBeVisible();
+ await expect(page.locator('.ade')).toHaveCSS('opacity','1');
+ await choose(page,'Glass','default');expect(await page.locator('.ade').evaluate(el=>getComputedStyle(el).getPropertyValue('--shell-fill'))).toContain('55%');await choose(page,'Glass','liquid');
+ const fill=await page.locator('.ade').evaluate(el=>getComputedStyle(el).getPropertyValue('--shell-fill'));
+ expect(fill).toContain('55%');
+ await page.reload();await page.getByLabel('Open settings').click();await page.getByRole('tab',{name:'Appearance',exact:true}).click();
+ await expect(page.getByLabel('Glass',{exact:true})).toHaveAttribute('data-value','liquid');
+ await page.getByLabel('Glass',{exact:true}).focus();
+ await page.evaluate(()=>(window as typeof window & {appearanceChanged:(status:string)=>void}).appearanceChanged('reduced-transparency'));
+ await expect(page.locator('.ade')).toHaveAttribute('data-native-material','reduced-transparency');
+ await expect(page.getByText('Solid surfaces — macOS Reduce Transparency is on',{exact:true})).toBeVisible();
+ await expect(page.getByLabel('Glass',{exact:true})).toBeFocused();
+ expect(await page.locator('.ade').evaluate(el=>getComputedStyle(el).backgroundColor)).toBe(await page.locator('.ade').evaluate(el=>{const probe=document.createElement('span');probe.style.color='var(--sidebar)';el.append(probe);const color=getComputedStyle(probe).color;probe.remove();return color;}));
+ await page.evaluate(()=>(window as typeof window & {appearanceChanged:(status:string)=>void}).appearanceChanged('increased-contrast'));
+ await expect(page.getByText('Solid surfaces — macOS Increase Contrast is on',{exact:true})).toBeVisible();
+ expect(await page.locator('.ade').evaluate(el=>getComputedStyle(el).getPropertyValue('--line').trim())).toBe(await page.locator('.ade').evaluate(el=>getComputedStyle(el).getPropertyValue('--text').trim()));
+ await page.evaluate(()=>(window as typeof window & {appearanceChanged:(status:string)=>void}).appearanceChanged('liquid-fallback'));
+ await expect(page.getByText('Frosted fallback — native Liquid Glass unavailable',{exact:true})).toBeVisible();
+ await choose(page,'Glass','opaque');await expect(page.locator('.ade')).toHaveAttribute('data-native-material','opaque');
+ await expect(page.locator('select,datalist')).toHaveCount(0);
+ await choose(page,'Glass','liquid');await page.getByRole('button',{name:'Back',exact:true}).click();await open(page,'Accessible glass workspace');await page.getByLabel('Session message').focus();await expect(page.locator('.session-composer')).toHaveCSS('outline-width','2px');await panel(page,'Terminal');await page.getByLabel('New terminal',{exact:true}).click();
+ const viewport=page.locator('.xterm-viewport').first();await expect(viewport).toHaveCSS('background-color','rgba(0, 0, 0, 0)');
+ await page.locator('.xterm-helper-textarea').first().focus();
+ await page.evaluate(()=>(window as typeof window & {appearanceChanged:(status:string)=>void}).appearanceChanged('reduced-transparency'));
+ await expect(viewport).toHaveCSS('background-color','rgb(6, 6, 6)');await expect(page.locator('.xterm-helper-textarea').first()).toBeFocused();
+ await page.evaluate(()=>(window as typeof window & {appearanceChanged:(status:string)=>void}).appearanceChanged('liquid'));
+ await expect(viewport).toHaveCSS('background-color','rgba(0, 0, 0, 0)');await page.locator('.terminal-workspace').getByRole('button',{name:/^Close Terminal/}).click();
 });

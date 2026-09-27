@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "vite --configLoader native",
     "build": "tsc --noEmit && vite build --configLoader native",
-    "preview": "vite preview",
+    "preview": "vite preview --configLoader native",
     "test": "playwright test",
     "e2e": "playwright test"
   },

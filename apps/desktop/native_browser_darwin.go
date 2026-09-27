@@ -8,7 +8,7 @@ package main
 #include <stdlib.h>
 void openadeBrowserShow(const char *url,double x,double y,double width,double height);
 void openadeBrowserAction(int action);
-void openadeAppearance(int appearance,int frosted);
+int openadeAppearance(int appearance,int material);
 */
 import "C"
 import (
@@ -56,11 +56,27 @@ func openadeBrowserNavigated(value *C.char, back, forward C.int) {
 	}
 }
 
-func (a *App) SetAppearance(scheme, material string) {
+var appearanceApp *App
+var appearanceMu sync.RWMutex
+
+func appearanceStatus(status int) string {
+	return map[int]string{0: "opaque", 1: "frosted", 2: "liquid", 3: "reduced-transparency", 4: "increased-contrast", 5: "liquid-fallback"}[status]
+}
+func (a *App) SetAppearance(scheme, material string) string {
+	appearanceMu.Lock()
+	appearanceApp = a
+	appearanceMu.Unlock()
 	appearance := map[string]int{"system": 0, "light": 1, "dark": 2}[scheme]
-	frost := 0
-	if material == "frosted" {
-		frost = 1
+	treatment := map[string]int{"opaque": 0, "frosted": 1, "liquid": 2}[material]
+	return appearanceStatus(int(C.openadeAppearance(C.int(appearance), C.int(treatment))))
+}
+
+//export openadeAppearanceChanged
+func openadeAppearanceChanged(status C.int) {
+	appearanceMu.RLock()
+	app := appearanceApp
+	appearanceMu.RUnlock()
+	if app != nil && app.ctx != nil {
+		go runtime.EventsEmit(app.ctx, "appearance:changed", appearanceStatus(int(status)))
 	}
-	C.openadeAppearance(C.int(appearance), C.int(frost))
 }

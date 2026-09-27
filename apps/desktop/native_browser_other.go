@@ -10,4 +10,4 @@ func (a *App) BrowserNavigate(address string, x, y, width, height float64) error
 func (a *App) BrowserBounds(x, y, width, height float64) {}
 func (a *App) BrowserAction(action string)               {}
 
-func (a *App) SetAppearance(scheme, material string) {}
+func (a *App) SetAppearance(scheme, material string) string { return "unsupported" }
