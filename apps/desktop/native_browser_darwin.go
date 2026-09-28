@@ -55,6 +55,7 @@ func (a *App) BrowserOpenTab(tab, address string, x, y, width, height float64) e
 	if err != nil {
 		return err
 	}
+	browserIconInvalidate(tab, normalized)
 	browserAppMu.Lock()
 	browserApp = a
 	browserAppMu.Unlock()
@@ -73,6 +74,7 @@ func (a *App) BrowserNavigateTab(tab, address string) error {
 	if err != nil {
 		return err
 	}
+	browserIconInvalidate(tab, normalized)
 	id, value := C.CString(tab), C.CString(normalized)
 	defer C.free(unsafe.Pointer(id))
 	defer C.free(unsafe.Pointer(value))
@@ -95,6 +97,11 @@ func (a *App) BrowserActionTab(tab, action string) {
 	}
 	value := map[string]int{"close": 0, "back": 1, "forward": 2, "reload": 3, "hide": 4, "show": 5}
 	if code, ok := value[action]; ok {
+		if action == "close" {
+			browserIconClose(tab)
+		} else if action == "back" || action == "forward" || action == "reload" {
+			browserIconInvalidate(tab, "")
+		}
 		id := C.CString(tab)
 		defer C.free(unsafe.Pointer(id))
 		C.openadeBrowserAction(id, C.int(code))
@@ -106,6 +113,7 @@ func openadeBrowserChanged(tab, value, title *C.char, back, forward C.int) {
 	id := C.GoString(tab)
 	address := C.GoString(value)
 	label := C.GoString(title)
+	browserIconObserve(id, address)
 	browserAppMu.RLock()
 	app := browserApp
 	browserAppMu.RUnlock()

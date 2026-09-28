@@ -532,6 +532,7 @@ select option{background:var(--surface);color:var(--text)}
 .panel-tabs>div.active{background:var(--surface-2)}
 .panel-tabs button{height:26px;display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);background:transparent;border:0;border-radius:5px;cursor:pointer;white-space:nowrap;padding:0 6px}
 .panel-tabs svg{width:12px;height:12px}
+.panel-tab-favicon{display:block;flex:none;width:12px;height:12px;object-fit:contain}
 .panel-tabs .panel-tab-close{width:20px;padding:2px;opacity:0}
 .panel-tabs>div:hover .panel-tab-close,.panel-tab-close:focus-visible{opacity:1}
 .panel-picker{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:20px}

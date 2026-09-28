@@ -1,9 +1,73 @@
 #import <Cocoa/Cocoa.h>
 #import <WebKit/WebKit.h>
+#import <ImageIO/ImageIO.h>
+#include <stdlib.h>
+#include <string.h>
 
 extern void openadeBrowserChanged(char *tab,char *url,char *title,int back,int forward);
 extern void openadeBrowserNewTab(char *tab,char *url);
+extern void openadeBrowserFavicon(char *tab,char *page,char *url);
 extern NSView *openadeContentHost(NSWindow *window);
+
+// Image I/O validates and downsizes a fetched raster favicon before its PNG
+// bytes cross into the Wails renderer. The caller frees *output on success.
+int openadeBrowserIconPNG(const void *input,size_t length,void **output,size_t *outputLength) {
+ *output=NULL;*outputLength=0;
+ if(!input||length==0||length>1024*1024)return 1;
+ int result=1;
+ CFDataRef bytes=CFDataCreate(kCFAllocatorDefault,input,(CFIndex)length);
+ CGImageSourceRef source=bytes?CGImageSourceCreateWithData(bytes,NULL):NULL;
+ CFDictionaryRef properties=NULL,options=NULL;
+ CGImageRef image=NULL;
+ CFMutableDataRef png=NULL;
+ CGImageDestinationRef destination=NULL;
+ if(!source||CGImageSourceGetCount(source)==0)goto cleanup;
+ CFStringRef kind=CGImageSourceGetType(source);
+ if(!kind||!(CFEqual(kind,CFSTR("public.png"))||CFEqual(kind,CFSTR("public.jpeg"))||
+             CFEqual(kind,CFSTR("com.compuserve.gif"))||CFEqual(kind,CFSTR("com.microsoft.ico"))||
+             CFEqual(kind,CFSTR("org.webmproject.webp"))))goto cleanup;
+ properties=CGImageSourceCopyPropertiesAtIndex(source,0,NULL);
+ if(!properties)goto cleanup;
+ CFNumberRef widthValue=CFDictionaryGetValue(properties,kCGImagePropertyPixelWidth);
+ CFNumberRef heightValue=CFDictionaryGetValue(properties,kCGImagePropertyPixelHeight);
+ double width=0,height=0;
+ if(!widthValue||!heightValue||CFGetTypeID(widthValue)!=CFNumberGetTypeID()||
+    CFGetTypeID(heightValue)!=CFNumberGetTypeID()||
+    !CFNumberGetValue(widthValue,kCFNumberDoubleType,&width)||
+    !CFNumberGetValue(heightValue,kCFNumberDoubleType,&height)||
+    width<=0||height<=0||width>1024||height>1024||width*height*4>8*1024*1024)goto cleanup;
+ int side=32;
+ CFNumberRef maxSide=CFNumberCreate(kCFAllocatorDefault,kCFNumberIntType,&side);
+ if(!maxSide)goto cleanup;
+ const void *keys[]={kCGImageSourceCreateThumbnailFromImageAlways,kCGImageSourceThumbnailMaxPixelSize,kCGImageSourceShouldCacheImmediately};
+ const void *values[]={kCFBooleanTrue,maxSide,kCFBooleanFalse};
+ options=CFDictionaryCreate(kCFAllocatorDefault,keys,values,3,&kCFTypeDictionaryKeyCallBacks,&kCFTypeDictionaryValueCallBacks);
+ CFRelease(maxSide);
+ if(!options)goto cleanup;
+ image=CGImageSourceCreateThumbnailAtIndex(source,0,options);
+ if(!image||CGImageGetWidth(image)==0||CGImageGetHeight(image)==0||
+    CGImageGetWidth(image)>32||CGImageGetHeight(image)>32)goto cleanup;
+ png=CFDataCreateMutable(kCFAllocatorDefault,0);
+ if(!png)goto cleanup;
+ destination=CGImageDestinationCreateWithData(png,CFSTR("public.png"),1,NULL);
+ if(!destination)goto cleanup;
+ CGImageDestinationAddImage(destination,image,NULL);
+ if(!CGImageDestinationFinalize(destination)||CFDataGetLength(png)<=0||CFDataGetLength(png)>1024*1024)goto cleanup;
+ *outputLength=(size_t)CFDataGetLength(png);
+ *output=malloc(*outputLength);
+ if(!*output){*outputLength=0;goto cleanup;}
+ memcpy(*output,CFDataGetBytePtr(png),*outputLength);
+ result=0;
+cleanup:
+ if(destination)CFRelease(destination);
+ if(png)CFRelease(png);
+ if(image)CGImageRelease(image);
+ if(options)CFRelease(options);
+ if(properties)CFRelease(properties);
+ if(source)CFRelease(source);
+ if(bytes)CFRelease(bytes);
+ return result;
+}
 
 static NSMutableDictionary<NSString *, WKWebView *> *browserViews;
 static NSMutableDictionary<NSString *, id> *browserDelegates;
@@ -64,7 +128,18 @@ static void browserState(NSString *tab, WKWebView *view) {
  handler(response.canShowMIMEType?WKNavigationResponsePolicyAllow:WKNavigationResponsePolicyCancel);
 }
 - (void)webView:(WKWebView *)view didCommitNavigation:(WKNavigation *)navigation {browserState(_tab,view);}
-- (void)webView:(WKWebView *)view didFinishNavigation:(WKNavigation *)navigation {browserState(_tab,view);}
+- (void)webView:(WKWebView *)view didFinishNavigation:(WKNavigation *)navigation {
+ browserState(_tab,view);
+ NSString *page=[view.URL.absoluteString copy];
+ NSString *tab=[_tab copy];
+ if(page.length>0&&browserAllowed(view.URL)) {
+  [view evaluateJavaScript:@"(() => { const link = document.querySelector('link[rel~=icon]'); return link ? link.href : new URL('/favicon.ico', location.href).href; })()" completionHandler:^(id value,NSError *error){
+   if(!error&&[value isKindOfClass:[NSString class]])
+    openadeBrowserFavicon((char *)tab.UTF8String,(char *)page.UTF8String,(char *)[(NSString *)value UTF8String]);
+  }];
+ }
+ [page release];[tab release];
+}
 - (WKWebView *)webView:(WKWebView *)view createWebViewWithConfiguration:(WKWebViewConfiguration *)configuration forNavigationAction:(WKNavigationAction *)action windowFeatures:(WKWindowFeatures *)features {
  NSURL *url=action.request.URL;
  if(browserAllowed(url))openadeBrowserNewTab((char *)_tab.UTF8String,(char *)url.absoluteString.UTF8String);
