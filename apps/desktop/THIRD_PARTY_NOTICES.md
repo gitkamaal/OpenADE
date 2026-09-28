@@ -14,7 +14,7 @@ License 1.1. The full notice is retained in `licenses/Geist-OFL.txt`.
 
 Icons use the existing Phosphor React package and its MIT license.
 
-The Claude, OpenAI, and Grok provider marks are adapted from Zeron’s MIT-licensed UI assets; the marks identify their respective providers. Gruvbox palette values follow Zeron’s bundled Gruvbox theme mapping.
+The Claude, OpenAI, Grok, Devin, Hermes, Pi, and Antigravity provider marks are adapted from Zeron’s MIT-licensed UI assets; the marks identify their respective providers. Gruvbox palette values follow Zeron’s bundled Gruvbox theme mapping.
 
 The macOS Frosted window material adapts GPUI's Apache-2.0 macOS rendering
 recipe (Zed Industries, Inc., 2022-2025; zeronsh/zui revision

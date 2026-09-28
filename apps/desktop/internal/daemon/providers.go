@@ -27,6 +27,9 @@ type ProviderCapabilities struct {
 }
 
 func providerCapabilities(agent string) ProviderCapabilities {
+	if isACPAgent(agent) {
+		return ProviderCapabilities{NativeChat: true, Resume: true, PersistentTurns: true, Interrupt: true, Permissions: true, Usage: true, Transport: "acp-stdio"}
+	}
 	switch agent {
 	case "claude", "claude-code", "codex", "codex-cli":
 		return ProviderCapabilities{NativeChat: true, DirectTUI: true, Resume: true, Interrupt: true, Transport: "structured-pipe"}
@@ -193,6 +196,10 @@ func (d *Daemon) handleModel(w http.ResponseWriter, r *http.Request) {
 	}
 	if err = validateServiceTier(session.Agent, input.ServiceTier); err != nil {
 		writeError(w, 400, err)
+		return
+	}
+	if isACPAgent(session.Agent) && (input.Model != "" || input.Effort != "" || input.ServiceTier != "") {
+		writeError(w, 409, fmt.Errorf("this ACP adapter does not expose model or effort selection yet"))
 		return
 	}
 	if isClaudeAgent(session.Agent) && input.Effort == "ultra" {

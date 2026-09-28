@@ -111,12 +111,14 @@ function ActivityGroup({ activities, streaming, expanded }: { activities: ChatAc
   const [open, setOpen] = useState(expanded && !streaming);
   useEffect(() => setOpen(streaming ? false : expanded), [expanded, streaming]);
   const toolCount = activities.filter(activity => activity.kind === "command" || activity.kind === "tool").length;
+  const thought = activities.some(activity => activity.kind === "thinking");
+  const summary = toolCount ? `${toolCount} tool${toolCount===1?"":"s"}${thought?" · Thought":""}` : thought ? "Thought" : "Activity";
   const notice = activities.filter(activity => activity.kind === "notice").at(-1);
   return (
     <details className="activity-group" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
       <summary>
         {streaming ? <SpinnerGap className="spin" /> : <Check />}
-        <span>{streaming ? activities.at(-1)?.title ?? "Working" : notice?.title ?? `${toolCount} tool${toolCount===1?"":"s"}${activities.some(a=>a.kind==="thinking")?" · Thought":""}`}</span>
+        <span>{streaming ? activities.at(-1)?.title ?? "Working" : notice?.title ?? summary}</span>
         <CaretDown className="activity-caret" />
       </summary>
       <div className="activity-list">

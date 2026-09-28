@@ -304,8 +304,11 @@ func cors(next http.Handler) http.Handler {
 
 func (d *Daemon) handleMeta(w http.ResponseWriter, r *http.Request) {
 	agents := []map[string]any{}
-	for _, name := range []string{"claude", "codex", "grok", "copilot", "opencode", "shell"} {
+	for _, name := range []string{"claude", "codex", "grok", "devin", "hermes", "pi", "antigravity", "copilot", "opencode", "shell"} {
 		path, err := resolveProgram(name)
+		if isACPAgent(name) {
+			path, _, err = resolveACPProgram(name)
+		}
 		capabilities := providerCapabilities(name)
 		if name == "codex" && err == nil && supportsCodexServer(path) {
 			capabilities.PersistentTurns = true

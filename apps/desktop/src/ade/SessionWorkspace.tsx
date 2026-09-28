@@ -75,7 +75,7 @@ type WorkTab = "review" | "terminal" | "pull-request" | "ticket" | "browser" | "
 
 export function SessionWorkspace({ activeView=true, session, projectLabel, preferences, onBack, onRefresh, onPreferences, onArchive }: { activeView?:boolean; session: Session; projectLabel?:string; preferences: Preferences; onPreferences:(next:Preferences,persist?:boolean)=>void; onArchive:()=>void; onBack: () => void; onRefresh: () => Promise<void> }) {
   const tuiMode = session.mode === "tui";
- const provider=useProviderState(session.id,["starting","running","waiting"].includes(session.status),activeView&&!tuiMode&&(session.agent==="codex"||session.agent==="codex-cli"));const providerRequest=provider.state.requests[0];
+ const provider=useProviderState(session.id,["starting","running","waiting"].includes(session.status),activeView&&!tuiMode&&["codex","codex-cli","grok","devin","hermes","pi","antigravity"].includes(session.agent));const providerRequest=provider.state.requests[0];
   const defaultTab: WorkTab = session.agent === "shell" || (preferences.session_surface === "terminal" && !tuiMode) ? "terminal" : "review";
   const [browserLink,setBrowserLink]=useState<{url:string;version:number}>();
   const [tab, setTab] = useState<WorkTab>(defaultTab);
@@ -126,7 +126,7 @@ export function SessionWorkspace({ activeView=true, session, projectLabel, prefe
   const mountedRef = useRef(false);
   const focusTimerRef = useRef<number | undefined>(undefined);
   const active = ["running", "starting", "waiting"].includes(session.status);
-  const resumable = ["claude", "claude-code", "codex", "codex-cli"].includes(session.agent) && !active;
+  const resumable = ["claude", "claude-code", "codex", "codex-cli", "grok", "devin", "hermes", "pi", "antigravity"].includes(session.agent) && !active;
   const chatCapable = session.agent !== "shell" && !tuiMode;
   const canMessage = chatCapable && (active || resumable);
 
@@ -430,7 +430,7 @@ export function SessionWorkspace({ activeView=true, session, projectLabel, prefe
             <button type={active&&!input.trim()&&!attachments.images.length&&!comments.length?"button":"submit"} className="send-button" disabled={busy||sending||attachments.uploading||!canMessage||(!active&&!input.trim()&&!attachments.images.length&&!comments.length)} aria-label={active&&!input.trim()&&!attachments.images.length&&!comments.length?"Stop agent":"Send message"} onClick={active&&!input.trim()&&!attachments.images.length&&!comments.length?()=>{void stopSession(session.id).then(onRefresh).catch(reason=>setPanelError(String(reason)));}:undefined}>{active&&!input.trim()&&!attachments.images.length&&!comments.length?<span className="composer-stop-glyph" aria-hidden="true"/>:<ArrowUp weight="bold"/>}</button>
           </div>
           </form></div>
-          <div className="session-context"><span title={session.worktree_path}><Folder/>{session.branch?"Local checkout":"Folder workspace"}</span>{session.branch&&<span title={session.branch}><GitBranch/>{session.branch}</span>}{session.instructions&&<button onClick={()=>{setDetailsEditor("instructions");setDetailsValue(session.instructions);}}>Instructions</button>}            <button type="button" className={`skills-shortcut ${commandOpen ? "active" : ""}`} onClick={() => setCommandOpen((value) => !value)} aria-label="Skills and commands" title="Skills and commands"><Plus /></button>{(session.agent==="codex"||session.agent==="codex-cli")&&<ContextUsage visible={activeView} context={provider.state.context}/>}<span className="runtime-chip" role="status"><span className={`status-dot ${session.status}`} />{active ? queuedMessages.length ? `${queuedMessages.length} queued · agent working` : `${agentLabel(session.agent)} is attached` : queuedMessages.some((item) => item.status === "dispatching") ? "Sending next message" : resumable ? "Conversation can continue" : `Run ${session.status}`}</span></div>
+          <div className="session-context"><span title={session.worktree_path}><Folder/>{!session.repo_root?"No project":session.branch?"Local checkout":"Folder workspace"}</span>{session.branch&&<span title={session.branch}><GitBranch/>{session.branch}</span>}{session.instructions&&<button onClick={()=>{setDetailsEditor("instructions");setDetailsValue(session.instructions);}}>Instructions</button>}            <button type="button" className={`skills-shortcut ${commandOpen ? "active" : ""}`} onClick={() => setCommandOpen((value) => !value)} aria-label="Skills and commands" title="Skills and commands"><Plus /></button>{["codex","codex-cli","grok","devin","hermes","pi","antigravity"].includes(session.agent)&&<ContextUsage visible={activeView} context={provider.state.context}/>}<span className="runtime-chip" role="status"><span className={`status-dot ${session.status}`} />{active ? queuedMessages.length ? `${queuedMessages.length} queued · agent working` : `${agentLabel(session.agent)} is attached` : queuedMessages.some((item) => item.status === "dispatching") ? "Sending next message" : resumable ? "Conversation can continue" : `Run ${session.status}`}</span></div>
         </div> : <div className="session-closed-state"><span className={`status-dot ${session.status}`} />{chatCapable ? `This ${agentLabel(session.agent)} run is ${session.status}` : "Use the Terminal panel to inspect this run"}</div>}</>}
       </section>
       <div className="work-panel-clip" inert={!rightOpen}>
@@ -476,5 +476,5 @@ function TicketPanel({ ticket, session }: { ticket: Ticket | null; session: Sess
 }
 
 function agentLabel(agent: string): string {
-  return ({ claude: "Claude Code", codex: "Codex CLI", copilot: "Copilot", opencode: "OpenCode" } as Record<string, string>)[agent] ?? agent;
+  return ({ claude: "Claude Code", codex: "Codex CLI", grok: "Grok", devin: "Devin", hermes: "Hermes", pi: "Pi", antigravity: "Antigravity", copilot: "Copilot", opencode: "OpenCode" } as Record<string, string>)[agent] ?? agent;
 }

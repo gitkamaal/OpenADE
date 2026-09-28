@@ -83,7 +83,15 @@ export function createTranscriptParser(initialPrompt:string,initialCreatedAt?:st
       const message = String(error.message ?? event.message ?? "Provider failed to complete this turn").slice(0, 2000);
       addActivity(assistant, "notice", noticeTitle(message), message);
     }
-    if(type==="openade.tool")addActivity(assistant,"tool",String(event.title??"Used a tool"),String(event.detail??""));
+    if(type==="openade.tool"){
+      const title=String(event.title??"Used a tool"),detail=String(event.detail??""),wireID=String(event.id??"");
+      if(wireID){
+        const id=`${assistant.id}-tool-${wireID}`;
+        const existing=assistant.activities.find(activity=>activity.id===id);
+        if(existing){existing.title=title;existing.detail=detail;}
+        else assistant.activities.push({id,kind:"tool",title,detail});
+      }else addActivity(assistant,"tool",title,detail);
+    }
     if (type === "thread.started" || type === "turn.started") {
       addActivity(assistant, "thinking", "Thinking");
     }

@@ -171,6 +171,17 @@ func (m *SessionManager) providerState(id string) ProviderState {
 			state.Requests = append(state.Requests, *q)
 		}
 	}
+	if c := m.acpClient(id); c != nil {
+		c.mu.Lock()
+		state.Connected = !c.closed
+		if c.context.Tokens != nil || c.context.Window != nil {
+			state.Context = c.context
+		}
+		for _, q := range c.requests {
+			state.Requests = append(state.Requests, *q)
+		}
+		c.mu.Unlock()
+	}
 	sort.Slice(state.Requests, func(i, j int) bool { return state.Requests[i].order < state.Requests[j].order })
 	return state
 }

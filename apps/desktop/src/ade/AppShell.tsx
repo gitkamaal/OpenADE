@@ -54,6 +54,10 @@ const agents = [
   { id: "claude", label: "Claude Code" },
   { id: "codex", label: "Codex" },
   { id: "grok", label: "Grok" },
+  { id: "devin", label: "Devin" },
+  { id: "hermes", label: "Hermes" },
+  { id: "pi", label: "Pi" },
+  { id: "antigravity", label: "Antigravity" },
   { id: "copilot", label: "Copilot CLI" },
   { id: "opencode", label: "OpenCode" },
   { id: "shell", label: "Local shell" },
@@ -404,7 +408,7 @@ function Home({ activeView, projects, projectNames, removedProjects, meta, prefe
   const attachments=useAttachments("home");
   const homeComposer=useComposerLayout(prompt,preferences.interface_size,true,76,activeView);
   const [repo, setRepo] = useState(draft.current.repo ?? projects[0] ?? "");
-  const [projectless,setProjectless]=useState(draft.current.repo==="");
+  const [projectless,setProjectless]=useState((draft.current.repo ?? projects[0] ?? "")==="");
   const [agent, setAgent] = useState(draft.current.agent ?? preferences.default_agent);
   const [model,setModel]=useState(draft.current.model??"");const [effort,setEffort]=useState(draft.current.effort??"");const [serviceTier,setServiceTier]=useState(draft.current.serviceTier??"");const [checkout,setCheckout]=useState<"worktree"|"current">(draft.current.checkout==="current"?"current":"worktree");const [branches,setBranches]=useState<string[]>([]);const [gitProject,setGitProject]=useState(true);const [currentBranch,setCurrentBranch]=useState("HEAD");
   const [ticket, setTicket] = useState("");
@@ -418,7 +422,7 @@ function Home({ activeView, projects, projectNames, removedProjects, meta, prefe
   const updateRepository=(value:string)=>{repositoryEdited.current=true;setProjectless(!value);setRepo(value);};
   useEffect(()=>{if(repo&&removedProjects.includes(repo)){repositoryEdited.current=true;setProjectless(true);setRepo("");}},[repo,removedProjects]);
   useEffect(()=>{const select=(event:Event)=>updateRepository((event as CustomEvent<string>).detail);window.addEventListener("openade-select-project",select);return()=>window.removeEventListener("openade-select-project",select);},[]);
-  useEffect(() => { if (!repositoryEdited.current && !repo && projects[0]) setRepo(projects[0]); }, [projects, repo]);
+  useEffect(() => { if (!repositoryEdited.current && !repo && projects[0]) { setRepo(projects[0]); setProjectless(false); } }, [projects, repo]);
   const previousDefault=useRef(preferences.default_agent);
   useEffect(() => { if(previousDefault.current!==preferences.default_agent){setAgent(preferences.default_agent);previousDefault.current=preferences.default_agent;} }, [preferences.default_agent]);
   useEffect(()=>{sessionStorage.setItem("openade.home-draft",JSON.stringify({prompt,repo,agent,model,effort,serviceTier,checkout,base}));},[prompt,repo,agent,model,effort,serviceTier,checkout,base]);
@@ -485,7 +489,7 @@ function Home({ activeView, projects, projectNames, removedProjects, meta, prefe
 }
 
 function preferredSessionMode(preferences: Preferences, agent: string): "chat" | "tui" {
- if(!["claude","claude-code","codex","codex-cli","shell"].includes(agent))return "tui";
+ if(!["claude","claude-code","codex","codex-cli","grok","devin","hermes","pi","antigravity","shell"].includes(agent))return "tui";
   return preferences.session_surface === "terminal" && ["codex", "codex-cli", "claude", "claude-code"].includes(agent)
     ? "tui"
     : "chat";
@@ -510,7 +514,7 @@ function AgentsPage({ onUse }: { onUse: (prompt: string) => void }) {
 }
 
 function agentLabel(agent: string): string {
-  return ({ claude: "Claude Code", codex: "Codex CLI", copilot: "Copilot", opencode: "OpenCode", shell: "Local shell" } as Record<string, string>)[agent] ?? agent;
+  return ({ claude: "Claude Code", codex: "Codex CLI", grok: "Grok", devin: "Devin", hermes: "Hermes", pi: "Pi", antigravity: "Antigravity", copilot: "Copilot", opencode: "OpenCode", shell: "Local shell" } as Record<string, string>)[agent] ?? agent;
 }
 
 function ReviewPage({ projects, projectNames, sessions }: { projects: string[]; projectNames:Record<string,string>; sessions: Session[] }) {

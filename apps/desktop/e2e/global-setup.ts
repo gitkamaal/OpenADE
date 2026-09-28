@@ -62,6 +62,7 @@ for line in sys.stdin:
  if line=='exit':break
 `;
  for(const name of ["codex","claude","copilot","opencode"]){fs.writeFileSync(path.join(bin,name),protocol,{mode:0o755});}
+ for(const name of ["grok","devin","hermes","pi-acp","agy_acp_server"]){const executable=path.join(bin,name);fs.writeFileSync(executable,"#!/usr/bin/env python3\n"+fs.readFileSync(path.join(root,"acp-fixture.py"),"utf8"),{mode:0o755});}
  fs.writeFileSync(path.join(bin,"gh"),`#!/bin/sh\ncase "$1 $2" in\n 'auth status') exit 0;;\n 'repo view') printf 'acme/fixture';;\n 'pr list') printf '[{"number":7,"title":"Add retries","url":"https://github.com/acme/fixture/pull/7","headRefName":"retries","isDraft":true}]';;\n 'pr create') printf 'https://github.com/acme/fixture/pull/8';;\n *) exit 1;;\nesac\n`,{mode:0o755});
  const providerHome=path.join(tmp,"provider-home");fs.mkdirSync(path.join(providerHome,".codex/sessions"),{recursive:true});fs.mkdirSync(path.join(providerHome,".claude/projects"),{recursive:true});
  fs.writeFileSync(path.join(providerHome,".codex/models_cache.json"),JSON.stringify({models:[{slug:"fixture-sol",display_name:"Fixture Sol",description:"Synthetic model for end-to-end coverage",service_tiers:[{id:"priority",name:"Fast",description:"Synthetic tier"}],supported_reasoning_levels:[{effort:"low"},{effort:"high"}]},{slug:"fixture-luna",display_name:"Fixture Luna",description:"Small synthetic naming model"},{slug:"codex-auto-review",display_name:"Codex Auto Review",description:"Review-only synthetic model"}]}));

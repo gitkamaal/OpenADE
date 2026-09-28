@@ -15,7 +15,7 @@ const drafts=new Map<string,string>();
 export function SideChatPane({session,sourceTitle,preferences,onRefresh,onForkSibling,onNewSibling}:{session:Session;sourceTitle:string;preferences:Preferences;onRefresh:()=>Promise<void>;onForkSibling:()=>void;onNewSibling:()=>void}){
   const engine=useEngine();
   const active=["starting","running","waiting"].includes(session.status);
-  const provider=useProviderState(session.id,active,session.agent==="codex"||session.agent==="codex-cli");
+  const provider=useProviderState(session.id,active,["codex","codex-cli","grok","devin","hermes","pi","antigravity"].includes(session.agent));
   const [output,setOutput]=useState("");
   const cursor=useRef(0);
   const [streamVersion,setStreamVersion]=useState(0);

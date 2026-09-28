@@ -53,6 +53,7 @@ type liveSession struct {
 	turnID            string
 	rawPTY            bool
 	codex             *codexConversation
+	acp               *acpConversation
 }
 
 type SessionManager struct {
@@ -71,15 +72,19 @@ type SessionManager struct {
 	live          map[string]*liveSession
 	providerMu    sync.Mutex
 	codex         map[string]*codexConversation
+	acp           map[string]*acpConversation
 	deletions     *deletionFence
 }
 
 func NewSessionManager(store *Store, dataDir string, deletions *deletionFence) *SessionManager {
 	titleCtx, titleCancel := context.WithCancel(context.Background())
-	return &SessionManager{store: store, dataDir: dataDir, titleCtx: titleCtx, titleCancel: titleCancel, titling: make(map[string]struct{}), live: make(map[string]*liveSession), codex: make(map[string]*codexConversation), deletions: deletions}
+	return &SessionManager{store: store, dataDir: dataDir, titleCtx: titleCtx, titleCancel: titleCancel, titling: make(map[string]struct{}), live: make(map[string]*liveSession), codex: make(map[string]*codexConversation), acp: make(map[string]*acpConversation), deletions: deletions}
 }
 
 func (m *SessionManager) Create(ctx context.Context, request CreateSessionRequest) (Session, error) {
+	if isACPAgent(request.Agent) && (request.Model != "" || request.Effort != "" || request.ServiceTier != "") {
+		return Session{}, fmt.Errorf("this ACP adapter does not expose model or effort selection yet")
+	}
 	if isClaudeAgent(request.Agent) && request.Effort == "ultra" {
 		return Session{}, fmt.Errorf("unsupported Claude reasoning effort")
 	}
@@ -267,6 +272,9 @@ func tuiProviderCommand(session Session, providerID string) (string, []string, e
 }
 
 func (m *SessionManager) launch(session Session) error {
+	if session.Mode == "chat" && isACPAgent(session.Agent) {
+		return m.startACPTurn(session)
+	}
 	if session.Mode == "tui" && isClaudeAgent(session.Agent) {
 		// Claude's interactive output does not expose its provider session ID.
 		// Give every new direct TUI a stable ID up front so chat/TUI switches can
@@ -393,6 +401,10 @@ func (m *SessionManager) Resume(session Session, prompt string) error {
 		return err
 	}
 	_ = file.Close()
+	if session.Mode == "chat" && isACPAgent(session.Agent) {
+		session.Prompt = providerPrompt
+		return m.startACPTurn(session)
+	}
 
 	var program string
 	var args []string
@@ -924,14 +936,20 @@ func (m *SessionManager) StopAndRelease(id string, timeout time.Duration) error 
 	deadline := time.Now().Add(timeout)
 	live, err := m.getLive(id)
 	if err != nil {
-		return m.closeCodexAndWait(id, deadline)
+		if err = m.closeCodexAndWait(id, deadline); err != nil {
+			return err
+		}
+		return m.closeACPAndWait(id, deadline)
 	}
 	if err := m.interrupt(live, "removed"); err != nil {
 		return err
 	}
 	select {
 	case <-live.done:
-		return m.closeCodexAndWait(id, deadline)
+		if err = m.closeCodexAndWait(id, deadline); err != nil {
+			return err
+		}
+		return m.closeACPAndWait(id, deadline)
 	case <-time.After(time.Until(deadline)):
 		return fmt.Errorf("provider did not stop in time")
 	}
@@ -960,6 +978,9 @@ func (m *SessionManager) interrupt(live *liveSession, reason string) error {
 	live.mu.Unlock()
 	if live.codex != nil {
 		return live.codex.interrupt(reason)
+	}
+	if live.acp != nil {
+		return live.acp.interrupt(reason)
 	}
 	return stopProcessGroup(live)
 }
@@ -1009,8 +1030,15 @@ func (m *SessionManager) Shutdown(ctx context.Context) {
 	for _, c := range m.codex {
 		clients = append(clients, c)
 	}
+	acpClients := make([]*acpConversation, 0, len(m.acp))
+	for _, c := range m.acp {
+		acpClients = append(acpClients, c)
+	}
 	m.providerMu.Unlock()
 	for _, c := range clients {
+		c.close()
+	}
+	for _, c := range acpClients {
 		c.close()
 	}
 	shutdownLiveProcesses(ctx, lives)

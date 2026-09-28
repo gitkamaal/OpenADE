@@ -188,6 +188,38 @@ func (r *providerRPC) request(ctx context.Context, method string, params any) (j
 	return value, err
 }
 
+// beginRequest confirms that the entire frame reached the private pipe before
+// returning. ACP prompts finish only when their eventual response arrives, so
+// callers must not block the HTTP create/send request on that response.
+func (r *providerRPC) beginRequest(ctx context.Context, method string, params any) (<-chan providerRPCResult, func(), error) {
+	id := r.nextID.Add(1)
+	idBytes, _ := json.Marshal(id)
+	paramsBytes, err := json.Marshal(params)
+	if err != nil {
+		return nil, nil, err
+	}
+	ch := make(chan providerRPCResult, 1)
+	key := string(idBytes)
+	r.mu.Lock()
+	if r.closed {
+		err = r.closeErr
+		r.mu.Unlock()
+		return nil, nil, err
+	}
+	if len(r.pending) >= 32 {
+		r.mu.Unlock()
+		return nil, nil, errors.New("too many pending provider requests")
+	}
+	r.pending[key] = ch
+	r.mu.Unlock()
+	cancel := func() { r.mu.Lock(); delete(r.pending, key); r.mu.Unlock() }
+	if err = r.write(ctx, providerRPCFrame{JSONRPC: "2.0", ID: idBytes, Method: method, Params: paramsBytes}); err != nil {
+		cancel()
+		return nil, nil, err
+	}
+	return ch, cancel, nil
+}
+
 func (r *providerRPC) requestWithSequence(ctx context.Context, method string, params any) (json.RawMessage, uint64, error) {
 	id := r.nextID.Add(1)
 	idBytes, _ := json.Marshal(id)
