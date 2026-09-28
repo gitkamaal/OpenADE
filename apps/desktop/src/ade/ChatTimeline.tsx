@@ -4,6 +4,7 @@ import { ProviderIcon } from "./ProviderIcon";
 import { copyText } from "./clipboard";
 import {
   CaretDown,
+  ChatCircleDots,
   Check,
   Copy,
   Lightning,
@@ -96,10 +97,13 @@ const AssistantTurn=memo(function AssistantTurn({
   timestamp?:number;
 }) {
   const visibleMarkdown = useProgressiveMarkdown(markdown, streaming);
+  const questions=activities.filter(activity=>activity.kind==="question");
+  const grouped=activities.filter(activity=>activity.kind!=="question");
   return (
     <article className="chat-assistant-turn">
       <header><span className="agent-avatar"><ProviderIcon provider={agent}/></span><strong>{agentLabel(agent)}</strong></header>
-      {activities.length > 0 && <ActivityGroup activities={activities} streaming={streaming} expanded={activityExpanded} />}
+      {questions.map(question=><div className="transcript-question" role="note" aria-label={`Question: ${question.title}`} key={question.id}><span className="transcript-question-icon"><ChatCircleDots/></span><strong>Question</strong><span>{question.status==="pending"?"Awaiting your answer…":question.title}</span></div>)}
+      {grouped.length > 0 && <ActivityGroup activities={grouped} streaming={streaming} expanded={activityExpanded} />}
       {visibleMarkdown ? <MarkdownMessage session={session}>{visibleMarkdown}</MarkdownMessage> : streaming ? (
         <div className="native-thinking"><SpinnerGap className="spin" /> Working through the task…</div>
       ) : null}

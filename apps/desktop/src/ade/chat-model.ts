@@ -1,10 +1,11 @@
-export type ChatActivityKind = "thinking" | "command" | "tool" | "notice";
+export type ChatActivityKind = "thinking" | "command" | "tool" | "notice" | "question";
 
 export interface ChatActivity {
   id: string;
   kind: ChatActivityKind;
   title: string;
   detail?: string;
+  status?: "pending" | "answered" | "dismissed";
 }
 
 export interface GeneratedImage {id:string;name:string;mime:"image/png";size:number}
@@ -95,6 +96,15 @@ export function createTranscriptParser(initialPrompt:string,initialCreatedAt?:st
         if(existing){existing.title=title;existing.detail=detail;}
         else assistant.activities.push({id,kind:"tool",title,detail});
       }else addActivity(assistant,"tool",title,detail);
+    }
+    if(type==="openade.question"){
+      const wireID=String(event.id??""),header=String(event.header??"Question").trim().slice(0,256),status=String(event.status??"");
+      if(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(wireID)&&(status==="pending"||status==="answered"||status==="dismissed")){
+        const id=`${assistant.id}-question-${wireID}`;
+        const existing=assistant.activities.find(activity=>activity.id===id);
+        if(existing){existing.status=status;}
+        else assistant.activities.push({id,kind:"question",title:header||"Question",status});
+      }
     }
     if(type==="openade.generated_image"){
       const id=String(event.id??""),name=String(event.name??"Generated image"),mime=String(event.mime??""),size=Number(event.size??0);

@@ -277,6 +277,11 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .chat-assistant-turn > header strong { color:var(--text); font-weight:600; }
 .agent-avatar { width:23px; height:23px; border-radius:7px; display:grid; place-items:center; background:var(--surface-3); color:#8fc3e3; }.agent-avatar svg { width:13px; }
 .native-thinking { display:flex; align-items:center; gap:7px; padding:7px 0; color:var(--muted); font-size:11px; }
+.transcript-question { min-height:34px; width:max-content; max-width:100%; display:flex; align-items:center; gap:7px; margin:0 0 12px; padding:3px 9px 3px 4px; border:1px solid var(--line-soft); border-radius:8px; background:color-mix(in srgb,var(--surface-2) 68%,transparent); color:var(--muted); font-size:11px; }
+.transcript-question-icon { width:25px; height:25px; display:grid; place-items:center; flex:none; border-radius:6px; background:var(--surface-3); color:var(--text); }
+.transcript-question-icon svg { width:13px; height:13px; }
+.transcript-question strong { color:var(--text); font-weight:600; }
+.transcript-question > span:last-child { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .streaming-cursor { display:inline-block; width:7px; height:15px; margin-left:2px; vertical-align:-2px; background:var(--text); border-radius:1px; animation:cursor-blink .8s steps(1) infinite; }
 @keyframes cursor-blink { 50% { opacity:.18; } }
 .activity-group { margin:0 0 13px; color:var(--muted); }

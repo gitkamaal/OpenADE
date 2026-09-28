@@ -470,6 +470,20 @@ func (c *codexConversation) emit(event any) error {
 	}
 	return nil
 }
+
+// A question's transcript marker is presentation-only. The prompt and answers
+// can contain secrets, so retain only the validated short header and state.
+func (c *codexConversation) emitQuestionMarker(q *ProviderRequest, status string) {
+	if q.Kind != "question" || len(q.Questions) == 0 {
+		return
+	}
+	header := strings.TrimSpace(q.Questions[0].Header)
+	if header == "" {
+		header = "Question"
+	}
+	_ = c.emit(map[string]any{"type": "openade.question", "id": q.ID, "header": header, "status": status})
+}
+
 func (c *codexConversation) finish(status string) {
 	live := c.live
 	if live == nil {
@@ -493,6 +507,9 @@ func (c *codexConversation) finish(status string) {
 		delete(c.manager.live, c.sessionID)
 	}
 	c.manager.mu.Unlock()
+	for _, q := range c.requests {
+		c.emitQuestionMarker(q, "dismissed")
+	}
 	if c.transcript != nil {
 		c.transcript.Close()
 		c.transcript = nil
@@ -620,6 +637,7 @@ func (c *codexConversation) handle(frame providerRPCFrame) {
 	if frame.Method == "serverRequest/resolved" {
 		for key, q := range c.requests {
 			if string(q.wireID) == string(p.RequestID) {
+				c.emitQuestionMarker(q, "dismissed")
 				delete(c.requests, key)
 			}
 		}
@@ -730,6 +748,7 @@ func (c *codexConversation) handle(frame providerRPCFrame) {
 			return
 		}
 		c.requests[q.ID] = q
+		c.emitQuestionMarker(q, "pending")
 		c.waitingState()
 		return
 	}
@@ -932,6 +951,7 @@ func (c *codexConversation) reply(id string, body providerReply) error {
 		return fmt.Errorf("provider disconnected before receiving the reply")
 	}
 	delete(c.requests, id)
+	c.emitQuestionMarker(q, "answered")
 	c.waitingState()
 	return nil
 }
@@ -947,6 +967,9 @@ func (c *codexConversation) interrupt(reason string) error {
 	live.terminationReason = reason
 	live.mu.Unlock()
 	turn := c.providerTurn
+	for _, q := range c.requests {
+		c.emitQuestionMarker(q, "dismissed")
+	}
 	c.requests = map[string]*ProviderRequest{}
 	c.mu.Unlock()
 	if turn == "" {
