@@ -1,6 +1,6 @@
 import {expect} from "@playwright/test";
 import {test,daemon,ready,tmp,token} from "./helpers";
-import {spawn} from "node:child_process";
+import {execFileSync,spawn} from "node:child_process";
 import {createServer} from "node:net";
 import fs from "node:fs";
 import path from "node:path";
@@ -62,5 +62,10 @@ test("saved Codex accounts switch and forget through the real daemon with custom
   await expect(accounts).toContainText("No Codex account is connected.");
   expect(fs.existsSync(auth)).toBe(false);
   expect(fs.readdirSync(path.join(data,"agent-accounts","codex")).filter(name=>name.endsWith(".json"))).toHaveLength(0);
+  execFileSync("mkfifo",[auth]);
+  const blockedAuth=await request.get(base+"/api/agent-accounts?refresh=1",{timeout:5000});
+  expect(blockedAuth.status()).toBe(200);
+  expect((await blockedAuth.json()).warnings).toEqual(expect.arrayContaining([expect.objectContaining({provider:"codex",message:expect.stringContaining("could not be read")})]));
+  fs.unlinkSync(auth);
  }finally{if(child.exitCode===null){const ended=new Promise<void>(resolve=>child.once("exit",()=>resolve()));child.kill("SIGTERM");await ended;}}
 });

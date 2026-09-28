@@ -66,7 +66,11 @@ func (d *Daemon) handleAgentAccounts(w http.ResponseWriter, r *http.Request) {
 		// A manual refresh must still notice an external CLI sign-in immediately.
 		// Re-snapshot its live credentials, but avoid another quota network probe
 		// when the account identities are unchanged.
-		rows, activeID, warnings := d.codexSlotRows()
+		rows, activeID, warnings, unreadable := d.codexSlotRows()
+		if unreadable {
+			writeJSON(w, http.StatusOK, &AgentAccountsSnapshot{Accounts: rows, Warnings: warnings})
+			return
+		}
 		cachedActive, cachedSaved := "", 0
 		for _, account := range cached.Accounts {
 			if account.Active {
@@ -93,7 +97,11 @@ func (d *Daemon) handleAgentAccounts(w http.ResponseWriter, r *http.Request) {
 
 func (d *Daemon) probeCodexAccounts(ctx context.Context) AgentAccountsSnapshot {
 	snapshot := AgentAccountsSnapshot{Accounts: []AgentAccount{}, Warnings: []AgentAccountWarning{}}
-	snapshot.Accounts, _, snapshot.Warnings = d.codexSlotRows()
+	var unreadable bool
+	snapshot.Accounts, _, snapshot.Warnings, unreadable = d.codexSlotRows()
+	if unreadable {
+		return snapshot
+	}
 	program, err := resolveProgram("codex")
 	if err != nil {
 		return snapshot

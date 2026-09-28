@@ -244,7 +244,7 @@ func saveCodexSlot(dataDir string, slot codexAccountSlot) error {
 	return writePrivateAtomic(filepath.Join(dir, slot.ID+".json"), data)
 }
 
-func (d *Daemon) codexSlotRows() ([]AgentAccount, string, []AgentAccountWarning) {
+func (d *Daemon) codexSlotRows() ([]AgentAccount, string, []AgentAccountWarning, bool) {
 	warnings := []AgentAccountWarning{}
 	live, exists, err := readLiveCodexSlot()
 	if err != nil {
@@ -265,7 +265,7 @@ func (d *Daemon) codexSlotRows() ([]AgentAccount, string, []AgentAccountWarning)
 	if err == nil && exists {
 		activeID = live.ID
 	}
-	return rows, activeID, warnings
+	return rows, activeID, warnings, err != nil
 }
 
 func codexMutationTarget(dataDir, id string) (codexAccountSlot, error) {
