@@ -437,7 +437,7 @@ function Home({ activeView, projects, projectNames, removedProjects, meta, prefe
     setBusy(true);
     onError(null);
     try {
-      const session = await createSession({ title: (prompt.trim()||"Image conversation").split("\n")[0].slice(0, 68), prompt: withAttachments(prompt,attachments.images), agent,model,effort,service_tier:serviceTier,checkout, mode: preferredSessionMode(preferences, agent), repo_root: repo.trim(), base_branch: base.trim() || "HEAD", ticket_key: ticket.trim(), ticket_url: ticketURL.trim() });
+      const session = await createSession({ auto_title:true,title: (prompt.trim()||"Image conversation").split("\n")[0].slice(0, 68), prompt: withAttachments(prompt,attachments.images), agent,model,effort,service_tier:serviceTier,checkout, mode: preferredSessionMode(preferences, agent), repo_root: repo.trim(), base_branch: base.trim() || "HEAD", ticket_key: ticket.trim(), ticket_url: ticketURL.trim() });
       const submittedIDs=new Set(originalImages.map(image=>image.id));attachments.setImages(current=>current.filter(image=>!submittedIDs.has(image.id)));
       sessionStorage.removeItem("openade-template");
       const remainingDraft={...latestDraft.current,prompt:latestDraft.current.prompt===originalPrompt?"":latestDraft.current.prompt};

@@ -142,6 +142,7 @@ export interface WorkspaceScan {
 }
 
 export interface CreateSessionInput {
+ auto_title?:boolean;
  model?:string;effort?:string;service_tier?:string;checkout?:"current"|"worktree";
   title: string;
   prompt: string;
@@ -185,6 +186,9 @@ export async function health(): Promise<boolean> {
 }
 
 export const getMeta = () => request<Meta>("/api/meta");
+export interface TitleSettings { harness: string; model: string }
+export const getTitleSettings = () => request<TitleSettings>("/api/title-settings");
+export const setTitleSettings = (settings: TitleSettings) => request<TitleSettings>("/api/title-settings", { method: "PATCH", body: JSON.stringify(settings) });
 
 export async function listSessions(): Promise<Session[]> {
   const payload = await request<{ sessions: Session[] }>("/api/sessions");

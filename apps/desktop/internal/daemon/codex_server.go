@@ -487,6 +487,7 @@ func (c *codexConversation) finish(status string) {
 		c.idle = time.AfterFunc(codexIdleTimeout, c.close)
 	}
 	if status == "completed" {
+		c.manager.maybeGenerateTitle(c.sessionID, live.generation)
 		go func() { _ = c.manager.DrainQueue(c.sessionID) }()
 	}
 }

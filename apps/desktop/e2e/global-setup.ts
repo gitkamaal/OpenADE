@@ -14,6 +14,19 @@ name=os.path.basename(sys.argv[0]);args=sys.argv[1:];sid=os.environ.get('OPENADE
 structured='--json' in args or '--output-format' in args
 signal.signal(signal.SIGTERM,lambda *_:sys.exit(0))
 def emit(value): print(json.dumps(value),flush=True)
+if os.environ.get('OPENADE_TITLE_ONLY')=='1':
+ request=json.loads(prompt.split('Session request (JSON string):\\n')[-1]) if name=='codex' else prompt
+ if name=='claude':request=json.loads(request.split('Session request (JSON string):\\n')[-1]) if 'Session request (JSON string):\\n' in request else request
+ with open(os.path.join(os.environ['OPENADE_PROVIDER_HOME'],'title-args.json'),'w') as title_args:json.dump({'name':name,'args':args,'cwd':os.getcwd()},title_args)
+ if 'wait-title' in request:
+  open(os.path.join(os.environ['OPENADE_PROVIDER_HOME'],'.e2e-title-started'),'w').close()
+  while not os.path.exists(os.path.join(os.environ['OPENADE_PROVIDER_HOME'],'.e2e-release-title')):time.sleep(.02)
+ if 'fail-title' in request:sys.exit(7)
+ title='Bespoke Fixture Name' if 'bespoke naming' in request else request
+ if name=='claude':emit({'result':title,'is_error':False})
+ else:
+  emit({'type':'item.completed','item':{'type':'agent_message','text':title}});emit({'type':'turn.completed'})
+ sys.exit(0)
 if structured:
  args_dir=os.path.join(os.environ['OPENADE_PROVIDER_HOME'],'args');os.makedirs(args_dir,exist_ok=True)
  with open(os.path.join(args_dir,sid+'.json'),'w') as args_file:json.dump(args,args_file)
@@ -51,7 +64,7 @@ for line in sys.stdin:
  for(const name of ["codex","claude","copilot","opencode"]){fs.writeFileSync(path.join(bin,name),protocol,{mode:0o755});}
  fs.writeFileSync(path.join(bin,"gh"),`#!/bin/sh\ncase "$1 $2" in\n 'auth status') exit 0;;\n 'repo view') printf 'acme/fixture';;\n 'pr list') printf '[{"number":7,"title":"Add retries","url":"https://github.com/acme/fixture/pull/7","headRefName":"retries","isDraft":true}]';;\n 'pr create') printf 'https://github.com/acme/fixture/pull/8';;\n *) exit 1;;\nesac\n`,{mode:0o755});
  const providerHome=path.join(tmp,"provider-home");fs.mkdirSync(path.join(providerHome,".codex/sessions"),{recursive:true});fs.mkdirSync(path.join(providerHome,".claude/projects"),{recursive:true});
- fs.writeFileSync(path.join(providerHome,".codex/models_cache.json"),JSON.stringify({models:[{slug:"fixture-sol",display_name:"Fixture Sol",description:"Synthetic model for end-to-end coverage",service_tiers:[{id:"priority",name:"Fast",description:"Synthetic tier"}],supported_reasoning_levels:[{effort:"low"},{effort:"high"}]}]}));
+ fs.writeFileSync(path.join(providerHome,".codex/models_cache.json"),JSON.stringify({models:[{slug:"fixture-sol",display_name:"Fixture Sol",description:"Synthetic model for end-to-end coverage",service_tiers:[{id:"priority",name:"Fast",description:"Synthetic tier"}],supported_reasoning_levels:[{effort:"low"},{effort:"high"}]},{slug:"fixture-luna",display_name:"Fixture Luna",description:"Small synthetic naming model"},{slug:"codex-auto-review",display_name:"Codex Auto Review",description:"Review-only synthetic model"}]}));
  fs.writeFileSync(path.join(providerHome,".codex/sessions/import.jsonl"),[JSON.stringify({type:"session_meta",payload:{id:"import-codex",cwd:path.join(tmp,"fixture-repo")}}),JSON.stringify({type:"event_msg",payload:{type:"user_message",message:"Imported Codex conversation"}})].join("\n"));
  fs.writeFileSync(path.join(providerHome,".claude/projects/import.jsonl"),JSON.stringify({type:"user",sessionId:"import-claude",cwd:path.join(tmp,"other/fixture-repo"),message:{content:"Imported Claude conversation"}}));
 }

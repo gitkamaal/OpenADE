@@ -22,6 +22,7 @@ import (
 const maxScrollback = 2 * 1024 * 1024
 
 type CreateSessionRequest struct {
+	AutoTitle   bool   `json:"auto_title"`
 	Model       string `json:"model"`
 	Effort      string `json:"effort"`
 	ServiceTier string `json:"service_tier"`
@@ -54,20 +55,27 @@ type liveSession struct {
 }
 
 type SessionManager struct {
-	store      *Store
-	dataDir    string
-	mu         sync.RWMutex
-	queueMu    sync.Mutex
-	surfaceMu  sync.Mutex
-	launchMu   sync.Mutex
-	live       map[string]*liveSession
-	providerMu sync.Mutex
-	codex      map[string]*codexConversation
-	deletions  *deletionFence
+	store         *Store
+	dataDir       string
+	titleCtx      context.Context
+	titleCancel   context.CancelFunc
+	titleMu       sync.Mutex
+	titleWG       sync.WaitGroup
+	titling       map[string]struct{}
+	titleStopping bool
+	mu            sync.RWMutex
+	queueMu       sync.Mutex
+	surfaceMu     sync.Mutex
+	launchMu      sync.Mutex
+	live          map[string]*liveSession
+	providerMu    sync.Mutex
+	codex         map[string]*codexConversation
+	deletions     *deletionFence
 }
 
 func NewSessionManager(store *Store, dataDir string, deletions *deletionFence) *SessionManager {
-	return &SessionManager{store: store, dataDir: dataDir, live: make(map[string]*liveSession), codex: make(map[string]*codexConversation), deletions: deletions}
+	titleCtx, titleCancel := context.WithCancel(context.Background())
+	return &SessionManager{store: store, dataDir: dataDir, titleCtx: titleCtx, titleCancel: titleCancel, titling: make(map[string]struct{}), live: make(map[string]*liveSession), codex: make(map[string]*codexConversation), deletions: deletions}
 }
 
 func (m *SessionManager) Create(ctx context.Context, request CreateSessionRequest) (Session, error) {
@@ -175,7 +183,7 @@ func (m *SessionManager) Create(ctx context.Context, request CreateSessionReques
 	session := Session{ID: id, Title: request.Title, Prompt: request.Prompt, Agent: request.Agent, Mode: request.Mode,
 		RepoRoot: repo, WorktreePath: worktree, Branch: branch, BaseBranch: request.BaseBranch,
 		TicketKey: strings.ToUpper(strings.TrimSpace(request.TicketKey)), TicketURL: request.TicketURL,
-		Status: "starting", CreatedAt: now, UpdatedAt: now, Model: request.Model, Effort: request.Effort, ServiceTier: request.ServiceTier}
+		Status: "starting", CreatedAt: now, UpdatedAt: now, Model: request.Model, Effort: request.Effort, ServiceTier: request.ServiceTier, autoTitle: request.AutoTitle}
 	if projectless {
 		session.RepoRoot = ""
 	}
@@ -805,6 +813,9 @@ func (m *SessionManager) wait(id string, live *liveSession, transcript *os.File)
 	if session, err := m.store.GetSession(id); err == nil {
 		_ = m.providerID(session)
 	}
+	if status == "completed" {
+		m.maybeGenerateTitle(id, live.generation)
+	}
 	live.mu.Lock()
 	for subscriber := range live.subscribers {
 		close(subscriber)
@@ -963,6 +974,16 @@ func stopProcessGroup(live *liveSession) error {
 }
 
 func (m *SessionManager) Shutdown(ctx context.Context) {
+	m.titleMu.Lock()
+	m.titleStopping = true
+	m.titleCancel()
+	m.titleMu.Unlock()
+	titlesDone := make(chan struct{})
+	go func() { m.titleWG.Wait(); close(titlesDone) }()
+	select {
+	case <-titlesDone:
+	case <-ctx.Done():
+	}
 	m.mu.RLock()
 	lives := make([]*liveSession, 0, len(m.live))
 	for _, live := range m.live {

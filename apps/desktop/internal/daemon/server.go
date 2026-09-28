@@ -126,6 +126,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	errCh := make(chan error, 1)
 	go func() { errCh <- d.server.Serve(listener) }()
 	go d.sessions.DrainAllQueues()
+	go d.sessions.recoverPendingTitles()
 	select {
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -154,6 +155,8 @@ func (d *Daemon) routes() http.Handler {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "pid": os.Getpid(), "version": "0.4.0-go", "engine_protocol": EngineProtocol, "profile": ProfileID(d.config.DataDir)})
 	})
 	mux.HandleFunc("GET /api/meta", d.handleMeta)
+	mux.HandleFunc("GET /api/title-settings", d.handleTitleSettings)
+	mux.HandleFunc("PATCH /api/title-settings", d.handleTitleSettings)
 	mux.HandleFunc("GET /api/state", d.handleSnapshot)
 	mux.HandleFunc("GET /api/diagnostics", d.handleDiagnostics)
 	mux.HandleFunc("GET /api/events", d.handleEvents)

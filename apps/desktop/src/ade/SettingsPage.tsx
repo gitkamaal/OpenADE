@@ -6,8 +6,8 @@ import { ArtworkPreview } from "./NewThreadArtwork";
 import { ArrowLeft, Bell, Check, Desktop, Folder, Gear, Keyboard, SlidersHorizontal, SquaresFour, Archive, Sun, Moon } from "@phosphor-icons/react";
 import { ProviderIcon } from "./ProviderIcon";
 import { copyText } from "./clipboard";
-import { ReactNode, useRef, useState } from "react";
-import { Meta, NewThreadArtworkState, Session, removeNewThreadArtwork, setNewThreadArtworkEffect, signInProvider, uploadNewThreadArtwork } from "./api";
+import { ReactNode, useEffect, useRef, useState } from "react";
+import { getTitleSettings, Meta, NewThreadArtworkState, Session, removeNewThreadArtwork, setNewThreadArtworkEffect, setTitleSettings, signInProvider, TitleSettings, uploadNewThreadArtwork } from "./api";
 import { defaultShortcuts, displayShortcut, shortcutLabels, MAX_BACKGROUND_TRANSPARENCY, Preferences, settingsSections, SettingsSection } from "./preferences";
 export {settingsSections};
 export type {SettingsSection};
@@ -22,6 +22,11 @@ function Toggle({label,checked,onChange}:{label:string;checked:boolean;onChange:
 const providerLabels:Record<string,string>={claude:"Claude Code",codex:"Codex",copilot:"Copilot CLI",opencode:"OpenCode",grok:"Grok",shell:"Local shell"};
 export function SettingsPage({activeAppearance="dark",resolvedMaterial,nativeMaterial="browser",preferences,artwork,onArtworkChanged,onChange,section="General",meta,sessions=[],onRestore,onSetup}:{activeAppearance?:string;resolvedMaterial?:string;nativeMaterial?:string;preferences:Preferences;artwork:NewThreadArtworkState;onArtworkChanged:(artwork:NewThreadArtworkState)=>void;onChange:(next:Preferences)=>void;section?:SettingsSection;meta?:Meta|null;sessions?:Session[];onRestore?:(id:string)=>void;onSetup?:(session:Session)=>void}) {
  const fonts=useFontCatalog();
+ const [titleSettings,setTitleSettingsState]=useState<TitleSettings>({harness:"",model:""});
+ const [titleSettingsBusy,setTitleSettingsBusy]=useState(false);
+ const [titleSettingsError,setTitleSettingsError]=useState("");
+ useEffect(()=>{let current=true;void getTitleSettings().then(settings=>{if(current)setTitleSettingsState(settings);}).catch(error=>{if(current)setTitleSettingsError(String(error));});return()=>{current=false;};},[]);
+ const saveTitleSettings=(settings:TitleSettings)=>{setTitleSettingsBusy(true);setTitleSettingsError("");void setTitleSettings(settings).then(setTitleSettingsState).catch(error=>setTitleSettingsError(error instanceof Error?error.message:String(error))).finally(()=>setTitleSettingsBusy(false));};
  const [capturing,setCapturing]=useState<string|null>(null); const [notice,setNotice]=useState(""); const [artworkError,setArtworkError]=useState(""); const [artworkBusy,setArtworkBusy]=useState(false); const artworkInput=useRef<HTMLInputElement>(null);
  const update=<K extends keyof Preferences>(key:K,value:Preferences[K])=>onChange({...preferences,[key]:value});
  const boolRow=(label:string,key:keyof Preferences,description?:string)=><Row label={label} description={description}><Toggle label={label} checked={Boolean(preferences[key])} onChange={value=>onChange({...preferences,[key]:value})}/></Row>;
@@ -31,6 +36,7 @@ export function SettingsPage({activeAppearance="dark",resolvedMaterial,nativeMat
  {section==="General"&&<>
  <Group><Row label="Send messages with"><Select aria-label="Send messages with" value={preferences.send_behavior} onChange={e=>update("send_behavior",e.target.value as Preferences["send_behavior"])}><option value="enter">Enter</option><option value="mod-enter">⌘ / Ctrl + Enter</option></Select></Row><Row label="Compact mode" description="Collapse thinking and tools."><Toggle label="Compact mode" checked={preferences.activity_detail==="compact"} onChange={v=>update("activity_detail",v?"compact":"expanded")}/></Row>{boolRow("Open web links in OpenADE","open_web_links_in_app","Open chat and Markdown links in the workspace browser.")}{boolRow("Fit code blocks to content","code_fences_fit_content")}{boolRow("Stop agent with Escape","stop_on_escape","When no dialog or menu is open.")}</Group>
  <Group><Row label="Session experience" description="Open sessions in your preferred surface."><Select aria-label="Open sessions in" value={preferences.session_surface} onChange={e=>update("session_surface",e.target.value as Preferences["session_surface"])}><option value="chat">Native chat</option><option value="terminal">Direct TUI</option></Select></Row></Group>
+ <Group title="Thread naming"><Row label="Naming provider" description="Generate a short title after the first completed response."><Select aria-label="Naming provider" value={titleSettings.harness} disabled={titleSettingsBusy} onChange={e=>saveTitleSettings({harness:e.target.value,model:""})}><option value="">Follow session provider</option>{meta?.agents.filter(agent=>(agent.id==="codex"||agent.id==="claude")&&agent.available).map(agent=><option key={agent.id} value={agent.id}>{providerLabels[agent.id]}</option>)}</Select></Row><Row label="Naming model" description="Automatic uses a small available model; manual chat rename always wins."><Select aria-label="Naming model" value={titleSettings.model} disabled={!titleSettings.harness||titleSettingsBusy} onChange={e=>saveTitleSettings({...titleSettings,model:e.target.value})}><option value="">Automatic</option>{meta?.agents.find(agent=>agent.id===titleSettings.harness)?.models?.map(model=><option key={model.id} value={model.id}>{model.label}</option>)}</Select></Row>{titleSettingsError&&<p className="artwork-effect-note" role="alert">{titleSettingsError}</p>}</Group>
  <Group title="Projects"><Row label="Workspace folder" description="Index local repositories and provider conversations."><button onClick={()=>void chooseProjectRoot()}>Choose folder</button></Row><Row label="Folder path"><input aria-label="Workspace folder path" placeholder="/path/to/workspace" value={preferences.project_root} onChange={e=>update("project_root",e.target.value)}/></Row></Group>
  </>}
  {section==="Appearance"&&<>

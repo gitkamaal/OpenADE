@@ -1,5 +1,9 @@
 # OpenADE local appearance and interaction audit
 
+## September 27 thread naming checkpoint
+
+The current local map has **39 implemented, 34 partial and five gap** areas among 78 (71.8/100 weighted capability index, not visual fidelity). Thread naming moved from Gap to Partial: new Home chats get a generated title after the first completed turn, with anchored custom provider/model settings. The isolated title-only CLI run is bounded and read-only; manual rename wins, pending completed titles recover after restart, and an untouched generated worktree branch follows the title. The production-client suite passed **125/125** against the real Go daemon and synthetic providers; after adding the restart-recovery case and refining automatic model selection to exclude review-only entries, the affected naming flows passed **3/3**. Go vet, frontend build, universal Wails build, ad-hoc signature and ZIP CRC passed. The final signed app launched in an isolated profile; its General card was inspected in the actual native window. Exact title prose, Intel/older-macOS runtime, native GPU/frame performance and notarized distribution remain unverified. The PR stays draft and unmerged.
+
 ## September 27 pointer-focus and model-menu polish
 
 The supplied native screenshot exposed an accent outline around the compact chat composer after a pointer click. Zeron's composer keeps a stable, subtle surface border. OpenADE now tracks pointer versus keyboard navigation: pointer-activated composers, buttons and auto-focused custom menu searches avoid accent focus rings, while Tab navigation retains a neutral composer outline and normal visible keyboard focus. Increase Contrast retains a visible text-colored indicator. The final native app was inspected on both New Thread and established chat; pointer clicks no longer add the ring, and keyboard navigation still reveals the focus cue.

@@ -189,6 +189,8 @@ func (d *Daemon) handleSessionDetails(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer release()
+	d.sessions.surfaceMu.Lock()
+	defer d.sessions.surfaceMu.Unlock()
 	session, err := d.store.GetSession(id)
 	if err != nil {
 		writeStoreError(w, err)
@@ -209,7 +211,7 @@ func (d *Daemon) handleSessionDetails(w http.ResponseWriter, r *http.Request) {
 		}
 		session.Instructions = *input.Instructions
 	}
-	result, err := d.store.db.Exec(`UPDATE sessions SET title=?,instructions=?,updated_at=? WHERE id=?`, session.Title, session.Instructions, encodeTime(time.Now().UTC()), session.ID)
+	result, err := d.store.db.Exec(`UPDATE sessions SET title=?,instructions=?,title_source=CASE WHEN ? THEN 'manual' ELSE title_source END,updated_at=? WHERE id=?`, session.Title, session.Instructions, input.Title != nil, encodeTime(time.Now().UTC()), session.ID)
 	if err != nil {
 		writeError(w, 500, err)
 		return

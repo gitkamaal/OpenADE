@@ -14,6 +14,7 @@ import (
 
 type Session struct {
 	queueMessageID    string
+	autoTitle         bool
 	Model             string     `json:"model"`
 	Instructions      string     `json:"instructions"`
 	ProviderSessionID string     `json:"provider_session_id"`
@@ -96,6 +97,7 @@ func (s *Store) migrate() error {
 CREATE TABLE IF NOT EXISTS registered_projects (path TEXT PRIMARY KEY,display_name TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')));
 CREATE TABLE IF NOT EXISTS removed_projects (path TEXT PRIMARY KEY,removed_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')));
 CREATE TABLE IF NOT EXISTS project_catalog (path TEXT PRIMARY KEY,seen_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')));
+CREATE TABLE IF NOT EXISTS title_settings (id INTEGER PRIMARY KEY CHECK(id=1),harness TEXT NOT NULL DEFAULT '',model TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
@@ -155,6 +157,11 @@ CREATE INDEX IF NOT EXISTS message_queue_session_idx ON message_queue(session_id
 	}
 	if _, alterErr := s.db.Exec(`ALTER TABLE sessions ADD COLUMN archived INTEGER NOT NULL DEFAULT 0`); alterErr != nil && !strings.Contains(alterErr.Error(), "duplicate column") {
 		return fmt.Errorf("add session archived state: %w", alterErr)
+	}
+	// Existing chats were deliberately named under the old behavior. Only new
+	// Home chats marked pending may be replaced by automatic naming.
+	if _, alterErr := s.db.Exec(`ALTER TABLE sessions ADD COLUMN title_source TEXT NOT NULL DEFAULT 'manual'`); alterErr != nil && !strings.Contains(alterErr.Error(), "duplicate column") {
+		return fmt.Errorf("add session title source: %w", alterErr)
 	}
 	if _, err := s.db.Exec(`UPDATE message_queue SET status='uncertain' WHERE status IN ('steering','provider-starting')`); err != nil {
 		return err
@@ -325,11 +332,15 @@ func (s *Store) CompleteQueuedMessage(messageID string) error {
 }
 
 func (s *Store) CreateSession(session Session) error {
+	titleSource := "manual"
+	if session.autoTitle {
+		titleSource = "pending"
+	}
 	_, err := s.db.Exec(`INSERT INTO sessions
-(id,title,prompt,agent,mode,repo_root,worktree_path,branch,base_branch,ticket_key,ticket_url,status,pid,created_at,updated_at,model,effort,service_tier,instructions)
-VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, session.ID, session.Title, session.Prompt, session.Agent, session.Mode,
+(id,title,prompt,agent,mode,repo_root,worktree_path,branch,base_branch,ticket_key,ticket_url,status,pid,created_at,updated_at,model,effort,service_tier,instructions,title_source)
+VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, session.ID, session.Title, session.Prompt, session.Agent, session.Mode,
 		session.RepoRoot, session.WorktreePath, session.Branch, session.BaseBranch, session.TicketKey,
-		session.TicketURL, session.Status, session.PID, encodeTime(session.CreatedAt), encodeTime(session.UpdatedAt), session.Model, session.Effort, session.ServiceTier, session.Instructions)
+		session.TicketURL, session.Status, session.PID, encodeTime(session.CreatedAt), encodeTime(session.UpdatedAt), session.Model, session.Effort, session.ServiceTier, session.Instructions, titleSource)
 	return err
 }
 
