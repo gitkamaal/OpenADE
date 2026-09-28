@@ -1,18 +1,13 @@
 import { ArrowClockwise, ArrowSquareOut, ChatCircleDots, FileCode, Folder, CaretRight, CaretDown, X, ArrowLeft, ArrowRight, GitBranch, Globe, FloppyDisk, Plus } from "@phosphor-icons/react";
 import { createPortal } from "react-dom";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { fileMediaURL, getFile, getFiles, getHistory, getPreviewServers, GitCommit, saveFile, Session } from "./api";
+import { fileMediaURL, getFile, getFiles, getPreviewServers, saveFile, Session } from "./api";
 import {WorkspaceImage} from "./Attachments";
 import {MarkdownMessage} from "./MarkdownMessage";
 import { Preferences } from "./preferences";
 import { ReviewComment } from "./ReviewComments";
 import { Dispatch, SetStateAction } from "react";
 const CodeEditor=lazy(()=>import("./CodeEditor"));
-export function HistoryPanel({session}:{session:Session}) {
- const [commits,setCommits]=useState<GitCommit[]>([]);const [error,setError]=useState("");const [query,setQuery]=useState("");const [version,setVersion]=useState(0);
- useEffect(()=>{let stale=false;void (session.branch?getHistory(session.id):Promise.resolve({commits:[]})).then(result=>{if(!stale){setCommits(result.commits);setError("");}}).catch(reason=>{if(!stale)setError(String(reason));});return()=>{stale=true;};},[session.id,version]);
- return <section className="history-panel"><header><GitBranch/><span>{session.branch}</span><small>{commits.length} commits</small><button className="icon-button" aria-label="Refresh history" onClick={()=>setVersion(v=>v+1)}><ArrowClockwise/></button></header><input aria-label="Search history" placeholder="Search commits" value={query} onChange={e=>setQuery(e.target.value)}/>{error&&<p role="alert">{error}</p>}<div className="history-table"><div className="history-heading"><span>Commit</span><span>Author</span><span>Date</span><span>SHA</span></div>{commits.filter(commit=>`${commit.subject} ${commit.author} ${commit.sha}`.toLowerCase().includes(query.toLowerCase())).map(commit=><div className="history-row" key={commit.sha}><span><i className={commit.parents.split(" ").length>1?"merge":""}/><strong title={commit.subject}>{commit.subject}</strong></span><span title={commit.author}>{commit.author}</span><time>{new Date(commit.date).toLocaleDateString(undefined,{month:"short",day:"numeric"})}</time><code title={commit.sha}>{commit.sha.slice(0,7)}</code></div>)}</div></section>;
-}
 type NativeBrowserBridge={BrowserOpenTab?:(id:string,url:string,x:number,y:number,width:number,height:number)=>Promise<void>;BrowserNavigateTab?:(id:string,url:string)=>Promise<void>;BrowserBoundsTab?:(id:string,x:number,y:number,width:number,height:number)=>Promise<void>;BrowserActionTab?:(id:string,action:string)=>Promise<void>};
 export function BrowserPanel({session,tabId,initialUrl,active,onTitle,onNewTab}:{session:Session;tabId:string;initialUrl?:string;active:boolean;onTitle:(label:string)=>void;onNewTab:(url?:string)=>void}){
  const native=window as typeof window & {go?:{main?:{App?:NativeBrowserBridge}};runtime?:{EventsOn?:(name:string,callback:(...args:any[])=>void)=>(()=>void)}};

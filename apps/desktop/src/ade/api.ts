@@ -317,8 +317,10 @@ export const resizeProjectTerminal = (id: string, rows: number, cols: number) =>
 export const stopTerminal = (id: string) =>
   request<void>(`/api/terminals/${id}/stop`, { method: "POST" });
 
-export async function getDiff(id: string, scope: "branch" | "working" | "staged" | "turn" = "branch"): Promise<string> {
-  return (await request<{ diff: string }>(`/api/sessions/${id}/diff?scope=${scope}`)).diff;
+export async function getDiff(id: string, scope: "branch" | "working" | "staged" | "turn" | "commit" = "branch", sha?: string): Promise<string> {
+  const params = new URLSearchParams({scope});
+  if (scope === "commit" && sha) params.set("sha", sha);
+  return (await request<{ diff: string }>(`/api/sessions/${id}/diff?${params}`)).diff;
 }
 
 export async function getFiles(id: string,ignored=false): Promise<string[]> {

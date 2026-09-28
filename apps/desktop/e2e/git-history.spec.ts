@@ -1,0 +1,58 @@
+import {expect} from "@playwright/test";
+import {create,daemon,open,panel,ready,test} from "./helpers";
+
+test("history columns persist and a commit opens a read-only diff tab",async({page,request})=>{
+ const session=await create(request,"History parity");
+ const historyResponse=await request.get(`${daemon}/api/sessions/${session.id}/history`);
+ expect(historyResponse.ok(),await historyResponse.text()).toBe(true);
+ const {commits}=await historyResponse.json() as {commits:{sha:string;subject:string}[]};
+ expect(commits.length).toBeGreaterThan(0);
+ const sha=commits[0].sha;
+ expect((await request.get(`${daemon}/api/sessions/${session.id}/diff?scope=commit&sha=not-a-sha`)).status()).toBe(400);
+ expect((await request.get(`${daemon}/api/sessions/${session.id}/diff?scope=commit&sha=${"0".repeat(40)}`)).status()).toBe(404);
+ const diffResponse=await request.get(`${daemon}/api/sessions/${session.id}/diff?scope=commit&sha=${sha}`);
+ expect(diffResponse.ok(),await diffResponse.text()).toBe(true);
+ expect((await diffResponse.json()).diff).toContain("diff --git");
+ await ready(page);await open(page,"History parity");await panel(page,"History");
+ await expect(page.getByLabel("Search history")).toBeVisible();
+ await page.getByLabel("History columns").click();
+ const menu=page.getByRole("menu",{name:"History columns"});
+ await expect(menu).toBeVisible();
+ await menu.getByRole("menuitemcheckbox",{name:"Date"}).click();
+ await expect(page.getByRole("menuitemcheckbox",{name:"Date"})).toHaveAttribute("aria-checked","false");
+ await page.keyboard.press("Escape");
+ await expect(page.getByLabel("History columns")).toBeFocused();
+ await page.getByRole("button",{name:"Author column"}).click();
+ const authorMenu=page.getByRole("menu",{name:"Author display"});
+ await authorMenu.getByRole("menuitemradio",{name:"Name"}).click();
+ await expect(page.locator(".history-row .history-cell").first()).toContainText(/\S/);
+ await page.reload();await expect(page.locator(".session-title h1")).toHaveText("History parity");
+ await panel(page,"History");
+ await expect(page.locator(".history-heading")).not.toContainText("Date");
+ await expect(page.getByRole("button",{name:"Author column"})).toBeVisible();
+ expect(await page.evaluate(()=>JSON.parse(localStorage.getItem("openade.preferences")!).history_author_display)).toBe("name");
+ const resize=page.getByRole("separator",{name:"Resize Author column"});
+ await resize.focus();await page.keyboard.press("ArrowRight");
+ expect(await page.evaluate(()=>JSON.parse(localStorage.getItem("openade.preferences")!).history_widths.author)).toBe(92);
+ await page.getByRole("button",{name:"Author column"}).focus();await page.keyboard.press("Alt+ArrowRight");
+ expect(await page.evaluate(()=>JSON.parse(localStorage.getItem("openade.preferences")!).history_order)).toEqual(["date","author","sha"]);
+ await page.getByRole("button",{name:"Author column"}).dragTo(page.getByRole("button",{name:"SHA column"}));
+ expect(await page.evaluate(()=>JSON.parse(localStorage.getItem("openade.preferences")!).history_order)).toEqual(["date","sha","author"]);
+ await page.locator(".history-row").first().click();
+ await expect(page.getByRole("tab",{name:`Commit ${sha.slice(0,7)}`})).toBeVisible();
+ await expect(page.locator(".commit-diff-label")).toHaveText(`Commit ${sha.slice(0,7)}`);
+ await expect(page.locator(".diff-document").first()).toBeVisible();
+ await expect(page.getByLabel("Diff scope")).toHaveCount(0);
+ await expect(page.getByRole("button",{name:"Commit",exact:true})).toHaveCount(0);
+ await expect(page.getByRole("button",{name:"Stage",exact:true})).toHaveCount(0);
+});
+
+test("shell session panels fill the available workspace",async({page,request})=>{
+ await create(request,"Shell history layout",{agent:"shell",mode:"chat"});
+ await ready(page);await open(page,"Shell history layout");await panel(page,"History");
+ await expect(page.getByLabel("Search history")).toBeVisible();
+ const widths=await page.locator(".session-workspace, .work-panel-clip").evaluateAll(elements=>elements.map(element=>element.getBoundingClientRect().width));
+ expect(widths[1]).toBeGreaterThan(widths[0]*.7);
+ const positions=await page.locator(".session-header, .work-panel-clip").evaluateAll(elements=>elements.map(element=>({top:element.getBoundingClientRect().top,bottom:element.getBoundingClientRect().bottom})));
+ expect(positions[1].top).toBeGreaterThanOrEqual(positions[0].bottom-1);
+});

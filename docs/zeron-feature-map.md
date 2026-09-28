@@ -58,7 +58,7 @@ Pinned Zeron v0.2.92, `68ef78bb1e6fa0b84feeb68c382230f8c560f96a`. Based on the s
 | Diff scopes/staging | Implemented | ReviewWorkspace/daemon | Working/branch/latest turn/staged scopes, stage/unstage and commit. |
 | Diff folding/split/navigation | Implemented | ReviewWorkspace | File fold/expand, split/unified, filter, previous/next changed file. |
 | Diff syntax/wrap/partial snapshots | Partial | ReviewWorkspace/SyntaxText/preferences | Persisted split/wrap choices and themed lexical syntax in diffs; Line-based CodeMirror/legacy-mode tokens approximate source Tree-sitter, with plain fallback above 2,000 file lines. Full partial snapshot selection and identical token boundaries remain gaps. |
-| Git history | Partial | WorkspacePanels | Commit search/detail/list; no source optional/resizable/reordered columns, author display or full commit actions. |
+| Git history | Partial | HistoryPanel/ReviewWorkspace/daemon | Search, optional columns, persisted order/widths and author avatar/name controls; row selection opens a read-only commit patch tab with validated SHA. Source graph, branch tips, fetch/pagination and full row/context actions remain gaps. |
 | Browser panel | Implemented | WorkspacePanels/native_browser | Native WKWebView, URL navigation/back/forward/reload and local server discovery; the page hides through Settings or pane closure and reappears without losing its WebView. |
 | Browser tabs/page lifecycle | Partial | browser / WorkspacePanels/native_browser | Multiple panel tabs now own independent native WKWebViews in one nonpersistent data store. A webpage's new-window request opens a new tab; page title, URL and back/forward state update the custom tab chrome. Switching, resizing and pane close/reopen preserve page state; closing a tab releases its view. The source's browser key context, favicon and exact chrome remain different. Pinned Zeron explicitly cancels downloads and exposes no browser devtools action, so those are not missing source features. |
 | Workspace panel tabs | Implemented | SessionWorkspace | Add/select/close browser, terminal, diffs, history, PR and editor; shortcuts and focus restoration. |
@@ -144,10 +144,10 @@ All 66 public fields of current `UiSettings` are enumerated. â€œNo counterpartâ€
 | `escape_stops_active_agent` | stop_on_escape |
 | `settings_section` | settings_section persisted; unknown values recover to General |
 | `appearance` | color_scheme |
-| `git_history_columns` | No counterpart; gap |
-| `git_history_column_widths` | No counterpart; gap |
-| `git_history_column_order` | No counterpart; gap |
-| `git_history_author_display` | No counterpart; gap |
+| `git_history_columns` | history_columns |
+| `git_history_column_widths` | history_widths |
+| `git_history_column_order` | history_order |
+| `git_history_author_display` | history_author_display |
 | `ui_font_family` | interface_font (native installed-font catalog; Nerd qualification differs) |
 | `ui_font_size` | interface_size |
 | `terminal_font_family` | terminal_font (native installed-font catalog; Nerd qualification differs) |
@@ -208,6 +208,7 @@ All 66 public fields of current `UiSettings` are enumerated. â€œNo counterpartâ€
 | Session ellipsis | Custom action menu below titlebar trigger | Rename/instructions/copy/archive; arrow navigation/Escape |
 | Add panel | Custom panel menu under panel plus | Opens corresponding panel and closes; arrow navigation/Escape |
 | Diff scope | Custom popup beneath scope trigger | All four scopes change real diff content/staging behavior |
+| Git History columns/Author | Custom popup below the matching toolbar/header trigger | Visibility, order, widths and avatar/name persist; keyboard Escape/focus and commit-detail tab verified |
 | Settings choices | Custom choice popup aligned to trailing preference row; flips upward when needed | Automatic inventory tests popup/expanded/bounds/Escape/focus; themes searchable |
 | Sessions status / Review repo | Same custom Select surface | Filters sessions / loads real PR list; source has different search layout |
 | File folders/activity groups/provider preferences | Disclosure/tree rows, not dropdowns | Expansion changes visible content; not incorrectly counted as popup controls |

@@ -6,6 +6,7 @@ export type ActivityDetail = "compact" | "expanded";
 export type ProjectOrganization = "project" | "device" | "list";
 export type ProjectSort = "priority" | "updated" | "created" | "manual";
 export interface SidebarSection { id:string; name:string; collapsed:boolean; }
+export type HistoryColumn = "author" | "date" | "sha";
 export const MAX_BACKGROUND_TRANSPARENCY = 90;
 export const settingsSections = ["General","Appearance","Notifications","Shortcuts","Providers","Devices","Files","Archived sessions"] as const;
 export type SettingsSection = typeof settingsSections[number];
@@ -18,6 +19,7 @@ export interface Preferences {
  sidebar_width:number; panel_width:number; sidebar_open:boolean; sidebar_compact:boolean; sidebar_show_branch:boolean; sidebar_show_pr:boolean; sidebar_show_provider:boolean; sidebar_show_project_icon:boolean; sidebar_show_project_label:boolean;
  notifications:boolean; background_only:boolean; sounds:boolean; sound_completed:boolean; sound_input:boolean; sound_errors:boolean;
  diff_split:boolean;diff_wrap:boolean;code_fences_fit_content:boolean;open_web_links_in_app:boolean;autosave_delay_ms:number;
+ history_columns:Record<HistoryColumn,boolean>;history_order:HistoryColumn[];history_widths:Record<HistoryColumn,number>;history_author_display:"avatar"|"name";
  word_wrap:boolean; show_hidden:boolean; show_ignored:boolean; autosave:boolean; new_thread_background_effect:NewThreadArtworkEffect;
  sidebar_sections:SidebarSection[]; session_sections:Record<string,string>; session_order:string[]; disabled_providers:string[]; archived_sessions:string[]; pinned_sessions:string[]; shortcuts:Record<string,string>;
 }
@@ -27,6 +29,7 @@ export const defaultPreferences: Preferences = {
  sidebar_width:256, panel_width:520, sidebar_open:true, sidebar_compact:true,sidebar_show_branch:false,sidebar_show_pr:false,sidebar_show_provider:true,sidebar_show_project_icon:false,sidebar_show_project_label:true,
  notifications:false, background_only:true, sounds:false, sound_completed:true, sound_input:true, sound_errors:true,
  diff_split:false,diff_wrap:false,code_fences_fit_content:false,open_web_links_in_app:true,autosave_delay_ms:900,
+ history_columns:{author:true,date:true,sha:true},history_order:["author","date","sha"],history_widths:{author:88,date:88,sha:74},history_author_display:"avatar",
  word_wrap:false, show_hidden:false, show_ignored:false, autosave:false, new_thread_background_effect:"none", sidebar_sections:[],session_sections:{},session_order:[], disabled_providers:[], archived_sessions:[], pinned_sessions:[], shortcuts:defaultShortcuts,
 };
 export function loadPreferences(): Preferences {
@@ -64,6 +67,14 @@ export function loadPreferences(): Preferences {
   result.autosave_delay_ms=Math.min(5000,Math.max(100,result.autosave_delay_ms));
   result.sidebar_width=Math.min(400,Math.max(224,result.sidebar_width)); result.panel_width=Math.min(900,Math.max(360,result.panel_width));
   result.conversation_width=Math.min(1200,Math.max(560,result.conversation_width));
+  const historyKeys:HistoryColumn[]=["author","date","sha"];
+  const rawColumns=raw.history_columns&&typeof raw.history_columns==="object"&&!Array.isArray(raw.history_columns)?raw.history_columns as Record<string,unknown>:{};
+  result.history_columns=Object.fromEntries(historyKeys.map(key=>[key,typeof rawColumns[key]==="boolean"?rawColumns[key]:true])) as Preferences["history_columns"];
+  const rawOrder=Array.isArray(raw.history_order)?raw.history_order.filter((key):key is HistoryColumn=>historyKeys.includes(key as HistoryColumn)):[];
+  result.history_order=[...new Set(rawOrder),...historyKeys.filter(key=>!rawOrder.includes(key))];
+  const rawWidths=raw.history_widths&&typeof raw.history_widths==="object"&&!Array.isArray(raw.history_widths)?raw.history_widths as Record<string,unknown>:{};
+  result.history_widths=Object.fromEntries(historyKeys.map(key=>{const bounds={author:[44,220],date:[68,180],sha:[58,140]}[key];const value=rawWidths[key];return [key,Math.min(bounds[1],Math.max(bounds[0],typeof value==="number"&&Number.isFinite(value)?value:defaultPreferences.history_widths[key]))];})) as Preferences["history_widths"];
+  result.history_author_display=raw.history_author_display==="name"?"name":"avatar";
   for(const key of ["interface_font","code_font","terminal_font"] as const){if(!result[key]||result[key].length>200||/[\x00-\x1f]/.test(result[key]))result[key]=defaultPreferences[key];}
   result.interface_size=Math.min(20,Math.max(12,result.interface_size)); result.terminal_size=Math.min(32,Math.max(8,result.terminal_size)); result.code_size=Math.min(32,Math.max(8,result.code_size));
   return result;

@@ -684,6 +684,18 @@ func (d *Daemon) handleDiff(w http.ResponseWriter, r *http.Request) {
 		}
 	case "working":
 		diff, err = worktreeDiff(r.Context(), session.WorktreePath, "HEAD")
+	case "commit":
+		sha := r.URL.Query().Get("sha")
+		if !validCommitSHA(sha) {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("choose a commit from this repository"))
+			return
+		}
+		kind, lookupErr := gitOutput(r.Context(), session.WorktreePath, "cat-file", "-t", sha)
+		if lookupErr != nil || kind != "commit" {
+			writeError(w, http.StatusNotFound, fmt.Errorf("commit is not available in this repository"))
+			return
+		}
+		diff, err = gitOutput(r.Context(), session.WorktreePath, "show", "-m", "--first-parent", "--format=", "--patch", "--no-ext-diff", "--no-color", sha, "--")
 	case "branch", "":
 		diff, err = worktreeDiff(r.Context(), session.WorktreePath, session.BaseBranch)
 	default:
@@ -695,6 +707,18 @@ func (d *Daemon) handleDiff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]any{"diff": diff})
+}
+
+func validCommitSHA(value string) bool {
+	if len(value) != 40 && len(value) != 64 {
+		return false
+	}
+	for _, digit := range value {
+		if !((digit >= '0' && digit <= '9') || (digit >= 'a' && digit <= 'f') || (digit >= 'A' && digit <= 'F')) {
+			return false
+		}
+	}
+	return true
 }
 
 func (d *Daemon) handleFiles(w http.ResponseWriter, r *http.Request) {
