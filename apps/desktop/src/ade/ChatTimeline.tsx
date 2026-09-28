@@ -12,20 +12,28 @@ import {
   Wrench,
 } from "@phosphor-icons/react";
 import { memo, useLayoutEffect, useEffect, useRef, useState } from "react";
-import { generatedImageMediaURL, Session } from "./api";
-import { ChatActivity, GeneratedImage, createTranscriptParser } from "./chat-model";
+import { generatedImageMediaURL, listSessionTurnTimes, Session, SessionTurnTime } from "./api";
+import { ChatActivity, GeneratedImage, createTranscriptParser, withDurableTurnTimestamps } from "./chat-model";
 import { MarkdownMessage } from "./MarkdownMessage";
 import { parseReviewComments } from "./ReviewComments";
 
 const hoverTimestampFormatter=new Intl.DateTimeFormat("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit",hour12:true});
+function formatHoverTimestamp(timestamp:number){
+ const parts=hoverTimestampFormatter.formatToParts(timestamp);
+ const value=(type:Intl.DateTimeFormatPartTypes)=>parts.find(part=>part.type===type)?.value??"";
+ return `${value("month")} ${value("day")}, ${value("hour")}:${value("minute")} ${value("dayPeriod")}`;
+}
 
 export function ChatTimeline({ session, output, activityExpanded = false }: { session: Session; output: string; activityExpanded?: boolean }) {
   const running = ["starting", "running", "waiting"].includes(session.status);
   const initialPrompt=session.parent_session_id?"":session.prompt;
+  const [durable,setDurable]=useState<{sessionId:string;records:SessionTurnTime[]}|null>(null);
+  useEffect(()=>{let stale=false;void listSessionTurnTimes(session.id).then(records=>{if(!stale)setDurable({sessionId:session.id,records});}).catch(()=>{});return()=>{stale=true;};},[session.id,session.generation,session.status]);
   const parser=useRef(createTranscriptParser(initialPrompt,session.created_at));const previous=useRef("");const prompt=useRef(initialPrompt);
   if(prompt.current!==initialPrompt||!output.startsWith(previous.current)){parser.current=createTranscriptParser(initialPrompt,session.created_at);previous.current="";prompt.current=initialPrompt;}
   parser.current.append(output.slice(previous.current.length));previous.current=output;
-  const turns=parser.current.snapshot(running);
+  const parsed=parser.current.snapshot(running);
+  const turns=durable?.sessionId===session.id?withDurableTurnTimestamps(parsed,durable.records,session.generation):parsed;
   const [visibleCount,setVisibleCount]=useState(80);const timeline=useRef<HTMLDivElement>(null);const jump=useRef<string|null>(null);
   useLayoutEffect(()=>{if(!jump.current)return;const target=timeline.current?.querySelector<HTMLElement>(`[data-message-id="${jump.current}"]`),scroll=timeline.current?.closest<HTMLElement>(".messages");if(target&&scroll){scroll.scrollTo({top:scroll.scrollTop+target.getBoundingClientRect().top-scroll.getBoundingClientRect().top-24,behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth"});jump.current=null;}},[visibleCount]);
 
@@ -106,7 +114,7 @@ function TurnMetadata({timestamp,text,side}:{timestamp?:number;text:string;side:
  const [copied,setCopied]=useState(false),[failed,setFailed]=useState(false),timer=useRef<number|undefined>(undefined),mounted=useRef(false);
  useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;if(timer.current!==undefined)window.clearTimeout(timer.current);};},[]);
  if(timestamp===undefined&&!text)return null;
- const formatted=timestamp===undefined?"":hoverTimestampFormatter.format(timestamp);
+ const formatted=timestamp===undefined?"":formatHoverTimestamp(timestamp);
  const copy=async()=>{try{await copyText(text);if(!mounted.current)return;setCopied(true);setFailed(false);if(timer.current!==undefined)window.clearTimeout(timer.current);timer.current=window.setTimeout(()=>setCopied(false),1200);}catch{if(mounted.current)setFailed(true);}};
  return <div className={`message-meta ${side}`}><div className="message-meta-content">{timestamp!==undefined&&<time dateTime={new Date(timestamp).toISOString()}>{formatted}</time>}{text&&<button type="button" aria-label={failed?"Unable to copy message":copied?"Message copied":"Copy message"} title={failed?"Unable to copy":copied?"Copied":"Copy message"} onClick={()=>void copy()}>{copied?<Check/>:<Copy/>}</button>}</div></div>;
 }

@@ -252,6 +252,12 @@ export const sendMessage = (id: string, text: string) =>
     body: JSON.stringify({ text }),
   });
 
+export interface SessionTurnTime {generation:number;prompt:string;started_at:string;finished_at:string|null}
+export async function listSessionTurnTimes(id:string):Promise<SessionTurnTime[]>{
+  const payload=await request<{turns:SessionTurnTime[]}>(`/api/sessions/${id}/turns`);
+  return Array.isArray(payload.turns)?payload.turns:[];
+}
+
 export async function listMessageQueue(id: string): Promise<QueuedMessage[]> {
   const payload = await request<{ messages: QueuedMessage[] }>(`/api/sessions/${id}/message-queue`);
   return payload.messages ?? [];

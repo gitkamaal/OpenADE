@@ -150,6 +150,32 @@ export function createTranscriptParser(initialPrompt:string,initialCreatedAt?:st
 }
 export function parseChatTranscript(value:string,initialPrompt:string,running:boolean,initialCreatedAt?:string):ChatTurn[]{const parser=createTranscriptParser(initialPrompt,initialCreatedAt);parser.append(value+"\n");return parser.snapshot(running);}
 
+// Older transcripts can lack inline created_at markers. The durable turn log
+// supplies exact start/finish times, but steering adds user rows without a new
+// turn. Only align a complete one-to-one history when every prompt agrees.
+export function withDurableTurnTimestamps(turns:ChatTurn[],records:{generation:number;prompt:string;started_at:string;finished_at:string|null}[],expectedGeneration:number):ChatTurn[]{
+  if(!records.length)return turns;
+  const ordered=[...records].sort((left,right)=>left.generation-right.generation);
+  if(ordered.at(-1)?.generation!==expectedGeneration)return turns;
+  const pairs:{user:ChatTurn;assistant?:ChatTurn}[]=[];
+  for(const turn of turns){
+    if(turn.role==="system")continue;
+    if(turn.role==="user")pairs.push({user:turn});
+    else if(!pairs.length||pairs.at(-1)?.assistant)return turns;
+    else pairs[pairs.length-1].assistant=turn;
+  }
+  if(pairs.length!==ordered.length)return turns;
+  const matched=pairs;
+  if(matched.some((pair,index)=>typeof ordered[index].prompt!=="string"||pair.user.markdown.trim()!==ordered[index].prompt.trim()))return turns;
+  const times=new Map<string,number>();
+  matched.forEach((pair,index)=>{
+    const start=Date.parse(ordered[index].started_at),finish=Date.parse(ordered[index].finished_at??"");
+    if(pair.user.timestamp===undefined&&Number.isFinite(start))times.set(pair.user.id,start);
+    if(pair.assistant&&pair.assistant.timestamp===undefined&&Number.isFinite(finish))times.set(pair.assistant.id,finish);
+  });
+  return times.size?turns.map(turn=>times.has(turn.id)?{...turn,timestamp:times.get(turn.id)}:turn):turns;
+}
+
 function parseTimestamp(value:unknown):number|undefined{if(typeof value!=="string")return undefined;const ms=Date.parse(value);return Number.isFinite(ms)?ms:undefined;}
 
 function newAssistant(index: number): ChatTurn {

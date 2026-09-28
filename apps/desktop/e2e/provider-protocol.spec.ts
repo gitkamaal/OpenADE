@@ -98,6 +98,25 @@ test('accepted steering timestamps a settled partial reply before the next user 
  await expect(replies.nth(1).locator('time')).toHaveAttribute('datetime',/\d{4}-\d{2}-\d{2}T/);
 });
 
+test('legacy transcript rows use exact durable turn times only when messages align',async({request,page})=>{
+ const s=await create(request,'Legacy transcript times',{prompt:'legacy first'});await expect.poll(()=>status(request,s.id)).toBe('completed');
+ expect((await request.post(`${daemon}/api/sessions/${s.id}/messages`,{data:{text:'legacy second'}})).status()).toBe(202);
+ await expect.poll(()=>status(request,s.id)).toBe('completed');
+ const records=(await(await request.get(`${daemon}/api/sessions/${s.id}/turns`)).json()).turns.sort((a:{generation:number},b:{generation:number})=>a.generation-b.generation);
+ expect(records).toHaveLength(2);
+ const transcript=path.join(tmp,'data/transcripts',s.id+'.log');
+ const old=fs.readFileSync(transcript,'utf8').split('\n').map(line=>{if(!line.startsWith('{'))return line;const event=JSON.parse(line);delete event.created_at;return JSON.stringify(event);}).join('\n');
+ fs.writeFileSync(transcript,old);
+ await ready(page);await open(page,'Legacy transcript times');
+ const users=page.locator('.chat-user-turn'),replies=page.locator('.chat-assistant-turn');await expect(users).toHaveCount(2);await expect(replies).toHaveCount(2);
+ await expect(users.nth(1).locator('time')).toHaveAttribute('datetime',new Date(records[1].started_at).toISOString());
+ await expect(replies.first().locator('time')).toHaveAttribute('datetime',new Date(records[0].finished_at).toISOString());
+ await expect(replies.first().locator('time')).toHaveText(/^[A-Z][a-z]{2} \d{1,2}, \d{1,2}:\d{2} [AP]M$/);
+ await expect(replies.nth(1).locator('time')).toHaveAttribute('datetime',new Date(records[1].finished_at).toISOString());
+ fs.appendFileSync(transcript,'{"type":"openade.user_message","text":"unmatched old marker"}\n');
+ await page.reload();await expect(page.locator('.chat-user-turn')).toHaveCount(3);await expect(page.locator('.chat-assistant-turn time')).toHaveCount(0);
+});
+
 test('connection count stays bounded, active-limit admission fails safely and releases turns',async({request})=>{
  const active:string[]=[];try{
  for(let i=0;i<8;i++){const s=await create(request,'Active connection '+i,{prompt:'wait limit'});expect(s.status).toBe('running');active.push(s.id);}
