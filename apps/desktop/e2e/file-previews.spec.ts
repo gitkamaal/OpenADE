@@ -4,6 +4,27 @@ import fs from 'node:fs';
 import path from 'node:path';
 const png=fs.readFileSync(new URL('./fixtures/preview-grid.png',import.meta.url));
 
+test('workspace WebP, BMP and TIFF files render through authenticated image media',async({page,request})=>{
+ const session=await create(request,'Raster file preview formats');await expect.poll(()=>status(request,session.id)).toBe('completed');
+ for(const name of ['media-grid.webp','media-grid.bmp','media-grid.tif'])fs.copyFileSync(new URL(`./fixtures/${name}`,import.meta.url),path.join(session.worktree_path,name));
+ await ready(page);await open(page,'Raster file preview formats');await page.getByLabel('Toggle files panel').click();
+ for(const name of ['media-grid.webp','media-grid.bmp','media-grid.tif']){
+  const response=await request.get(`${daemon}/api/sessions/${session.id}/file-media?path=${name}`);
+  expect(response.status()).toBe(200);
+  expect(response.headers()['content-type']).toContain(name.endsWith('.webp')?'image/webp':'image/png');
+  await page.getByRole('treeitem',{name,exact:true}).click();
+  const viewport=page.getByRole('region',{name:`${name} image viewport`});
+  await expect(viewport).toBeVisible();
+  await expect.poll(()=>viewport.locator('img').evaluate(node=>(node as HTMLImageElement).naturalWidth)).toBe(3);
+  await expect(page.getByLabel('Save file',{exact:true})).toBeDisabled();
+  if(name.endsWith('.tif')){
+   fs.copyFileSync(new URL('./fixtures/media-grid-updated.tif',import.meta.url),path.join(session.worktree_path,name));
+   await page.getByLabel('Reload file').click();
+   await expect.poll(()=>viewport.locator('img').evaluate(node=>(node as HTMLImageElement).naturalWidth)).toBe(6);
+  }
+ }
+});
+
 test('workspace image preview zooms and pans locally, Markdown preview preserves edits and undo',async({page,request})=>{
  const session=await create(request,'File preview parity audit');await expect.poll(()=>status(request,session.id)).toBe('completed');
  fs.mkdirSync(path.join(session.worktree_path,'docs'));fs.writeFileSync(path.join(session.worktree_path,'docs/grid.png'),png);fs.writeFileSync(path.join(session.worktree_path,'docs/guide.md'),'# Preview guide\n\n**This deliberately long emphasized description must wrap naturally in a narrow Markdown preview instead of inheriting the editor filename ellipsis and clipping the rest of its sentence.**\n\n![Workspace image](grid.png)\n\n![Outside image](../../outside.png)\n');

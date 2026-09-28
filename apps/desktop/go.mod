@@ -9,6 +9,7 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.50
 	github.com/titanous/json5 v1.0.0
 	github.com/wailsapp/wails/v2 v2.10.2
+	golang.org/x/image v0.43.0
 	golang.org/x/sys v0.46.0
 )
 

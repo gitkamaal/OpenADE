@@ -3,6 +3,11 @@ import {expect,type APIRequestContext} from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 const png=fs.readFileSync(new URL('./fixtures/preview-grid.png',import.meta.url));
+const rasterFormats=[
+ {name:'media-grid.webp',mime:'image/webp',stored:'.webp'},
+ {name:'media-grid.bmp',mime:'image/bmp',stored:'.png'},
+ {name:'media-grid.tif',mime:'image/tiff',stored:'.png'},
+];
 
 async function fillQueue(request:APIRequestContext,sessionId:string){
  const responses=await Promise.all(Array.from({length:100},(_,index)=>request.post(`${daemon}/api/sessions/${sessionId}/message-queue`,{data:{text:`Queue capacity fixture ${index}`}})));
@@ -76,6 +81,27 @@ test('media authentication, invalid uploads and image payloads are enforced by t
  await create(request,'Attachment paste audit');await ready(page);await open(page,'Attachment paste audit');
  await page.getByLabel('Session message').evaluate((node,base64)=>{const bytes=Uint8Array.from(atob(base64),c=>c.charCodeAt(0));const file=new File([bytes],'pasted.png',{type:'image/png'});const clipboard=new DataTransfer();clipboard.items.add(file);node.dispatchEvent(new ClipboardEvent('paste',{bubbles:true,cancelable:true,clipboardData:clipboard}));},png.toString('base64'));
  await expect(page.getByLabel('View pasted.png')).toBeVisible();await page.reload();await expect(page.getByLabel('View pasted.png')).toBeVisible();await page.getByLabel('Send message').click();await expect(page.getByLabel('Message attachments')).toBeVisible();
+});
+
+test('WebP, BMP and TIFF attachments preview and persist in provider-safe formats',async({page,request})=>{
+ await ready(page);await setRepository(page,repo);await choose(page,'Provider','codex');
+ for(const format of rasterFormats){
+  const buffer=fs.readFileSync(new URL(`./fixtures/${format.name}`,import.meta.url));
+  await page.getByLabel('Choose image attachments').setInputFiles({name:format.name,mimeType:format.mime,buffer});
+  const preview=page.getByLabel(`View ${format.name}`);
+  await expect(preview).toBeVisible();
+  await expect.poll(()=>preview.locator('img').evaluate(node=>(node as HTMLImageElement).naturalWidth)).toBe(3);
+  const uploaded=await request.post(`${daemon}/api/attachments?name=${format.name}`,{data:buffer,headers:{'Content-Type':format.mime}});
+  expect(uploaded.status()).toBe(201);
+  const metadata=await uploaded.json();
+  expect(metadata.path.endsWith(format.stored)).toBe(true);
+  expect(metadata.mime).toBe(format.stored==='.png'?'image/png':'image/webp');
+  const served=await request.get(`${daemon}/api/attachments/${metadata.id}/media`);
+  expect(served.status()).toBe(200);expect(served.headers()['content-type']).toContain(metadata.mime);
+  if(format.stored==='.png')expect((await served.body()).subarray(0,8)).toEqual(Buffer.from([137,80,78,71,13,10,26,10]));
+ }
+ await page.reload();
+ for(const format of rasterFormats)await expect(page.getByLabel(`View ${format.name}`)).toBeVisible();
 });
 
 

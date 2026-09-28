@@ -7,7 +7,7 @@ import (
 	"image"
 	_ "image/gif"
 	_ "image/jpeg"
-	_ "image/png"
+	"image/png"
 	"io"
 	"net/http"
 	"os"
@@ -16,9 +16,21 @@ import (
 	"unicode"
 
 	"github.com/google/uuid"
+	_ "golang.org/x/image/bmp"
+	_ "golang.org/x/image/tiff"
+	_ "golang.org/x/image/webp"
 )
 
 const maxAttachmentBytes = 24 * 1024 * 1024
+
+type boundedAttachmentWriter struct{ bytes.Buffer }
+
+func (b *boundedAttachmentWriter) Write(data []byte) (int, error) {
+	if b.Len()+len(data) > maxAttachmentBytes {
+		return 0, fmt.Errorf("image exceeds 24 MiB after conversion")
+	}
+	return b.Buffer.Write(data)
+}
 
 type Attachment struct {
 	ID   string `json:"id"`
@@ -36,13 +48,27 @@ func (d *Daemon) handleUploadAttachment(w http.ResponseWriter, r *http.Request) 
 	}
 	config, format, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil || config.Width <= 0 || config.Height <= 0 || int64(config.Width)*int64(config.Height) > 64_000_000 {
-		writeError(w, 400, fmt.Errorf("choose a valid PNG, JPEG or GIF image up to 64 megapixels"))
+		writeError(w, 400, fmt.Errorf("choose a valid PNG, JPEG, GIF, WebP, BMP or TIFF image up to 64 megapixels"))
 		return
 	}
-	ext := map[string]string{"png": ".png", "jpeg": ".jpg", "gif": ".gif"}[format]
+	ext := map[string]string{"png": ".png", "jpeg": ".jpg", "gif": ".gif", "webp": ".webp", "bmp": ".png", "tiff": ".png"}[format]
 	if ext == "" {
 		writeError(w, 400, fmt.Errorf("unsupported image format"))
 		return
+	}
+	if format == "bmp" || format == "tiff" {
+		decoded, _, decodeErr := image.Decode(bytes.NewReader(data))
+		if decodeErr != nil {
+			writeError(w, 400, fmt.Errorf("image cannot be decoded"))
+			return
+		}
+		encoded := &boundedAttachmentWriter{}
+		if encodeErr := png.Encode(encoded, decoded); encodeErr != nil {
+			writeError(w, 400, fmt.Errorf("image cannot be converted within the 24 MiB limit"))
+			return
+		}
+		data = encoded.Bytes()
+		format = "png"
 	}
 	name := filepath.Base(r.URL.Query().Get("name"))
 	name = strings.Map(func(c rune) rune {

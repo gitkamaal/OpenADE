@@ -13,7 +13,7 @@ export function parseAttachments(text:string){
  const marker="\n\nAttached images (local files — open them to view):\n";const at=text.lastIndexOf(marker);
  if(at<0)return{text,images:[] as Attachment[]};
  const lines=text.slice(at+marker.length).split("\n");const images:Attachment[]=[];
- for(const line of lines){const path=line.startsWith("- ")?line.slice(2):"";const match=path.match(/\/attachments\/([0-9a-f-]{36})\.(png|jpg|gif)$/);if(!match)return{text,images:[] as Attachment[]};images.push({id:match[1],path,name:`Image ${images.length+1}`,mime:`image/${match[2]}`,size:0});}
+ for(const line of lines){const path=line.startsWith("- ")?line.slice(2):"";const match=path.match(/\/attachments\/([0-9a-f-]{36})\.(png|jpg|gif|webp)$/);if(!match)return{text,images:[] as Attachment[]};images.push({id:match[1],path,name:`Image ${images.length+1}`,mime:`image/${match[2]==="jpg"?"jpeg":match[2]}`,size:0});}
  return{text:text.slice(0,at)==="See the attached image(s)."?"":text.slice(0,at),images};
 }
 export function useAttachments(key:string){
@@ -33,7 +33,7 @@ export function useAttachments(key:string){
  return{images,setImages,uploading,error,input,add,paste,drop,clear:()=>setImages([]),pick:()=>input.current?.click()};
 }
 export function AttachmentPicker({draft}:{draft:ReturnType<typeof useAttachments>}){
- return <><button type="button" className="command-trigger attachment-picker" disabled={draft.uploading} aria-label="Attach images" title="Attach images" onClick={draft.pick}><Paperclip/></button><input hidden ref={draft.input} type="file" accept="image/png,image/jpeg,image/gif" multiple aria-label="Choose image attachments" onChange={event=>{void draft.add([...event.target.files||[]]);event.target.value="";}}/></>;
+ return <><button type="button" className="command-trigger attachment-picker" disabled={draft.uploading} aria-label="Attach images" title="Attach images" onClick={draft.pick}><Paperclip/></button><input hidden ref={draft.input} type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/bmp,image/tiff" multiple aria-label="Choose image attachments" onChange={event=>{void draft.add([...event.target.files||[]]);event.target.value="";}}/></>;
 }
 export function AttachmentStrip({draft}:{draft:ReturnType<typeof useAttachments>}){
  return <>{draft.images.length>0&&<div className="attachment-strip" aria-label="Draft attachments">{draft.images.map((image,index)=><div key={`${image.id}-${index}`}><AttachmentImage image={image}/><button type="button" aria-label={`Remove ${image.name}`} onClick={()=>draft.setImages(current=>current.filter((_,i)=>i!==index))}><X/></button></div>)}</div>}{draft.uploading&&<div className="attachment-status" role="status">Adding images…</div>}{draft.error&&<div className="attachment-error" role="alert">{draft.error}</div>}</>;
