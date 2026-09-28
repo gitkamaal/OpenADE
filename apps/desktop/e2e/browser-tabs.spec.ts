@@ -30,8 +30,24 @@ test("browser tabs keep independent pages and navigation when switching or closi
   await expect(page.locator(".browser-panel:visible").getByLabel("Website address")).toHaveValue(`${base}/one`);
   await page.getByLabel("Close Browser tab").last().click();
   await expect(page.locator('.panel-tabs [role="tab"]')).toHaveCount(1);
+  await expect(page.locator('.panel-tabs [role="tab"][aria-selected="true"]')).toBeFocused();
   await expect(page.locator(".browser-panel:visible").getByLabel("Website address")).toHaveValue(`${base}/one`);
  }finally{server.close();}
+});
+
+test("workspace tabs swap their leading icon for Close and support middle-click plus keyboard closing",async({page,request})=>{
+ const session=await create(request,"Panel tab close parity");await expect.poll(()=>status(request,session.id)).toBe("completed");
+ await ready(page);await open(page,"Panel tab close parity");await page.getByLabel("Toggle right sidebar").click();
+ await page.locator(".panel-picker").getByRole("button",{name:"Browser",exact:true}).click();
+ await page.locator(".browser-panel:visible").getByLabel("New browser tab").click();
+ await page.locator(".browser-panel:visible").getByLabel("New browser tab").click();
+ const chips=page.locator('.panel-tabs>div');await expect(chips).toHaveCount(3);
+ const first=chips.first(),close=first.getByLabel('Close Browser tab');
+ expect(Math.round((await first.boundingBox())!.width)).toBe(112);
+ await first.hover();await expect(close).toHaveCSS('opacity','1');await expect(first.locator('.panel-tab-leading')).toHaveCSS('opacity','0');
+ await page.mouse.move(700,500);await expect(close).toHaveCSS('opacity','0');await expect(first.locator('.panel-tab-leading')).toHaveCSS('opacity','1');
+ await first.click({button:'middle'});await expect(chips).toHaveCount(2);
+ const keyboardClose=chips.first().getByLabel('Close Browser tab');await keyboardClose.focus();await expect(keyboardClose).toHaveCSS('opacity','1');await keyboardClose.press('Enter');await expect(chips).toHaveCount(1);await expect(chips.getByRole('tab',{selected:true})).toBeFocused();
 });
 
 test("native browser bridge opens each tab once and navigates existing WebViews without closing them",async({page,request})=>{
