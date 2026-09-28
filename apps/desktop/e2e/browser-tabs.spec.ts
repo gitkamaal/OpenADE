@@ -8,7 +8,7 @@ test("browser tabs keep independent pages and navigation when switching or closi
  const address=server.address();if(!address||typeof address==="string")throw Error("No preview port");
  const base=`http://127.0.0.1:${address.port}`;
  try{
-  const session=await create(request,"Browser tab lifecycle");await expect.poll(()=>status(request,session.id)).toBe("completed");
+  const session=await create(request,"Browser tab lifecycle");const other=await create(request,"Browser tab other",{agent:"shell",repo_root:"",prompt:"printf other"});await expect.poll(()=>status(request,session.id)).toBe("completed");await expect.poll(()=>status(request,other.id)).toBe("completed");
   await ready(page);await open(page,"Browser tab lifecycle");
   await page.getByLabel("Toggle right sidebar").click();await page.locator(".panel-picker").getByRole("button",{name:"Browser",exact:true}).click();
   await page.locator(".browser-panel:visible").getByLabel("Website address").fill(`${base}/one`);await page.locator(".browser-panel:visible").getByRole("button",{name:"Go",exact:true}).click();
@@ -26,6 +26,8 @@ test("browser tabs keep independent pages and navigation when switching or closi
   await page.locator('.panel-tabs [role="tab"]').first().click();
   await page.locator(".browser-panel:visible").getByLabel("Back in preview").click();
   await expect(page.locator(".browser-panel:visible").getByTitle("Workspace browser preview")).toHaveAttribute("src",`${base}/one`);
+  await open(page,"Browser tab other");await open(page,"Browser tab lifecycle");
+  await expect(page.locator(".browser-panel:visible").getByLabel("Website address")).toHaveValue(`${base}/one`);
   await page.getByLabel("Close right sidebar").click();await page.getByLabel("Toggle right sidebar").click();
   await expect(page.locator(".browser-panel:visible").getByLabel("Website address")).toHaveValue(`${base}/one`);
   await page.getByLabel("Close Browser tab").last().click();
@@ -33,6 +35,34 @@ test("browser tabs keep independent pages and navigation when switching or closi
   await expect(page.locator('.panel-tabs [role="tab"][aria-selected="true"]')).toBeFocused();
   await expect(page.locator(".browser-panel:visible").getByLabel("Website address")).toHaveValue(`${base}/one`);
  }finally{server.close();}
+});
+
+test("native browser tabs retain their owning chat and close only when dismissed",async({page,request})=>{
+ await page.addInitScript(()=>{
+  const state=window as typeof window&{browserCalls:string[];go?:unknown};state.browserCalls=[];
+  state.go={main:{App:{BrowserOpenTab:async(id:string)=>{state.browserCalls.push(`open:${id}`);},BrowserNavigateTab:async()=>{},BrowserBoundsTab:async()=>{},BrowserActionTab:async(id:string,action:string)=>{state.browserCalls.push(`${action}:${id}`);}}}};
+ });
+ const first=await create(request,"Browser owner first",{agent:"shell",repo_root:"",prompt:"printf first"});
+ const second=await create(request,"Browser owner second",{agent:"shell",repo_root:"",prompt:"printf second"});
+ await expect.poll(()=>status(request,first.id)).toBe("completed");await expect.poll(()=>status(request,second.id)).toBe("completed");
+ await ready(page);await open(page,"Browser owner first");await page.getByLabel("Add panel").click();await page.getByRole("menuitem",{name:"Browser",exact:true}).click();
+ const address=page.locator(".browser-panel:visible").getByLabel("Website address");
+ await address.fill("http://127.0.0.1:54321/one");await page.locator(".browser-panel:visible").getByRole("button",{name:"Go",exact:true}).click();
+ await page.locator(".browser-panel:visible").getByLabel("New browser tab").click();await address.fill("http://127.0.0.1:54321/two");await page.locator(".browser-panel:visible").getByRole("button",{name:"Go",exact:true}).click();
+ const chips=page.locator(".panel-tabs>div");const original=await chips.evaluateAll(elements=>elements.map(element=>(element as HTMLElement).dataset.panelTab));
+ await chips.nth(1).getByRole("tab").click();await expect(address).toHaveValue("http://127.0.0.1:54321/one");
+ await open(page,"Browser owner second");await expect(page.locator('.panel-tabs [role="tab"]')).toHaveCount(1);
+ expect(await page.evaluate(()=>(window as typeof window&{browserCalls:string[]}).browserCalls.filter(call=>call.startsWith("close:")))).toEqual([]);
+ await open(page,"Browser owner first");await expect.poll(()=>chips.evaluateAll(elements=>elements.map(element=>(element as HTMLElement).dataset.panelTab))).toEqual(original);
+ await expect(chips.nth(1).getByRole("tab")).toHaveAttribute("aria-selected","true");await expect(address).toHaveValue("http://127.0.0.1:54321/one");
+ expect(await page.evaluate(()=>(window as typeof window&{browserCalls:string[]}).browserCalls.filter(call=>call.startsWith("open:")))).toEqual([`open:${original[1]}`,`open:${original[2]}`,`open:${original[1]}`,`open:${original[2]}`]);
+ await chips.nth(1).getByLabel("Close Browser tab").click();await expect(chips).toHaveCount(2);
+ await expect.poll(()=>page.evaluate(()=>(window as typeof window&{browserCalls:string[]}).browserCalls.filter(call=>call.startsWith("close:")))).toEqual([`close:${original[1]}`]);
+ await open(page,"Browser owner second");await open(page,"Browser owner first");await expect(chips).toHaveCount(2);
+ await expect(chips.nth(1)).toHaveAttribute("data-panel-tab",original[2]!);
+ await page.locator(`[data-session-id="${first.id}"]`).click({button:"right"});await page.getByRole("menuitem",{name:"Delete…",exact:true}).click();
+ await page.getByRole("dialog",{name:"Delete chat",exact:true}).getByRole("button",{name:"Delete",exact:true}).click();
+ await expect.poll(()=>page.evaluate(()=>(window as typeof window&{browserCalls:string[]}).browserCalls.filter(call=>call.startsWith("close:")))).toEqual([`close:${original[1]}`,`close:${original[2]}`]);
 });
 
 test("workspace tabs swap their leading icon for Close and support middle-click plus keyboard closing",async({page,request})=>{

@@ -285,6 +285,7 @@ void openadeBrowserAction(const char *tab,int action) {
    else if(action==4)view.hidden=YES;
    else if(action==5) {
     for(NSString *key in browserViews)browserViews[key].hidden=![key isEqualToString:identifier];
+    if(view.URL)browserState(identifier,view);
    }
   }
   [identifier release];

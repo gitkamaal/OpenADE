@@ -4,6 +4,20 @@ import fs from 'node:fs';
 import path from 'node:path';
 const png=fs.readFileSync(new URL('./fixtures/preview-grid.png',import.meta.url));
 
+test('chat switching restores the selected file tab and reloads its saved Markdown preview',async({page,request})=>{
+ const first=await create(request,'File owner first',{agent:'shell',prompt:'printf first'});
+ const second=await create(request,'File owner second',{agent:'shell',prompt:'printf second'});
+ await expect.poll(()=>status(request,first.id)).toBe('completed');await expect.poll(()=>status(request,second.id)).toBe('completed');
+ const file=path.join(first.worktree_path,'retained.md');fs.writeFileSync(file,'# Original file\n');
+ await ready(page);await open(page,'File owner first');await page.getByLabel('Toggle files panel').click();
+ await page.getByRole('treeitem',{name:'retained.md',exact:true}).click();await expect(page.getByRole('tab',{name:'retained.md',exact:true})).toHaveAttribute('aria-selected','true');
+ await page.getByLabel('Preview Markdown').click();await expect(page.locator('.file-markdown-preview')).toContainText('Original file');
+ await open(page,'File owner second');fs.writeFileSync(file,'# Updated while away\n');await open(page,'File owner first');
+ await expect(page.getByRole('tab',{name:'retained.md',exact:true})).toHaveAttribute('aria-selected','true');
+ await expect(page.locator('.file-markdown-preview')).toContainText('Updated while away');
+ await expect(page.getByRole('treeitem',{name:'retained.md',exact:true})).toHaveClass(/active/);
+});
+
 test('macOS AVIF and HEIC workspace files render as bounded authenticated PNG previews',async({page,request})=>{
  const session=await create(request,'Native codec file previews');await expect.poll(()=>status(request,session.id)).toBe('completed');
  for(const name of ['media-grid.avif','media-grid.heic'])fs.copyFileSync(new URL(`./fixtures/${name}`,import.meta.url),path.join(session.worktree_path,name));
