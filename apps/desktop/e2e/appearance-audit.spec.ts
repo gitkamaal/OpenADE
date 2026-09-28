@@ -67,7 +67,7 @@ test('live themes reach editor and terminal while accessibility fallbacks preser
 
 test('Settings preserves draft, dirty editor, cursor focus and native preview visibility; unavailable Sites actions are explicit',async({page,request})=>{
  await bridge(page);
- await page.addInitScript(()=>{const state=window as typeof window&{go:{main:{App:Record<string,unknown>}};previewActions:string[]};state.previewActions=[];Object.assign(state.go.main.App,{BrowserNavigate:async()=>{},BrowserBounds:async()=>{},BrowserAction:async(action:string)=>{state.previewActions.push(action);}});});
+ await page.addInitScript(()=>{const state=window as typeof window&{go:{main:{App:Record<string,unknown>}};previewActions:string[]};state.previewActions=[];Object.assign(state.go.main.App,{BrowserOpenTab:async()=>{},BrowserNavigateTab:async()=>{},BrowserBoundsTab:async()=>{},BrowserActionTab:async(_id:string,action:string)=>{state.previewActions.push(action);}});});
  await create(request,'Settings continuity audit');await ready(page);await open(page,'Settings continuity audit');
  const message=page.getByLabel('Session message');await message.fill('Unsent draft survives appearance adjustments');
  await page.getByLabel('Toggle files panel').click();await page.getByRole('treeitem',{name:'README.md',exact:true}).click();

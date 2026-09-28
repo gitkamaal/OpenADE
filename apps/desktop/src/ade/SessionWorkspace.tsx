@@ -71,16 +71,27 @@ export function recoverRejectedDraft(original:string,current:string){
   return `${original}\n\n${current}`;
 }
 
-type WorkTab = "review" | "terminal" | "pull-request" | "ticket" | "browser" | "history" | "editor" | `side-chat:${string}`;
+type WorkTab = "review" | "terminal" | "pull-request" | "ticket" | "browser" | "history" | "editor" | `browser:${string}` | `side-chat:${string}`;
 
 export function SessionWorkspace({ activeView=true, session, projectLabel, preferences, onBack, onRefresh, onPreferences, onArchive }: { activeView?:boolean; session: Session; projectLabel?:string; preferences: Preferences; onPreferences:(next:Preferences,persist?:boolean)=>void; onArchive:()=>void; onBack: () => void; onRefresh: () => Promise<void> }) {
   const tuiMode = session.mode === "tui";
  const provider=useProviderState(session.id,["starting","running","waiting"].includes(session.status),activeView&&!tuiMode&&["codex","codex-cli","grok","devin","hermes","pi","antigravity"].includes(session.agent));const providerRequest=provider.state.requests[0];
   const defaultTab: WorkTab = session.agent === "shell" || (preferences.session_surface === "terminal" && !tuiMode) ? "terminal" : "review";
-  const [browserLink,setBrowserLink]=useState<{url:string;version:number}>();
+  const [browserPages,setBrowserPages]=useState<Record<string,{url?:string;label:string}>>({});
   const [tab, setTab] = useState<WorkTab>(defaultTab);
   const [rightOpen, setRightOpen] = useState(!tuiMode&&(session.agent === "shell" || (preferences.session_surface === "terminal" && !tuiMode)));
   const [tabs,setTabs]=useState<WorkTab[]>(session.agent === "shell" ? ["terminal"] : []);
+  const addBrowserTab=useCallback((url?:string)=>{
+    const surface:WorkTab=`browser:${crypto.randomUUID()}`;
+    setBrowserPages(current=>({...current,[surface]:{url,label:"Browser"}}));
+    setTabs(current=>[...current,surface]);
+    setTab(surface);
+    setRightOpen(true);
+    return surface;
+  },[]);
+  const updateBrowserLabel=useCallback((surface:string,label:string)=>{
+    setBrowserPages(current=>current[surface]&&current[surface].label!==label?{...current,[surface]:{...current[surface],label}}:current);
+  },[]);
   const [editorTarget,setEditorTarget]=useState<HTMLDivElement|null>(null);
   const openEditor=useCallback(()=>{setTabs(current=>current.includes("editor")?current:[...current,"editor"]);setTab("editor");setRightOpen(true);},[]);
   const [tabMenu,setTabMenu]=useState(false);
@@ -333,6 +344,7 @@ export function SessionWorkspace({ activeView=true, session, projectLabel, prefe
   useEffect(()=>{if(!engine.connected)return;const existing=new Set(engine.sessions.map(item=>item.id));setTabs(current=>{const next=current.filter(surface=>!surface.startsWith("side-chat:")||existing.has(surface.slice(10)));return next.length===current.length?current:next;});setTab(current=>current.startsWith("side-chat:")&&!existing.has(current.slice(10))?"review":current);},[engine.connected,engine.sessions]);
 
   const toggleSurface = (surface: WorkTab) => {
+    if(surface==="browser"){addBrowserTab();setTabMenu(false);return;}
     setTabs(current=>current.includes(surface)?current:[...current,surface]);
     setTabMenu(false);
     if (rightOpen && tab === surface && tabs.includes(surface)) {
@@ -343,7 +355,7 @@ export function SessionWorkspace({ activeView=true, session, projectLabel, prefe
     setRightOpen(true);
   };
 
-  useEffect(()=>{if(rightOpen){setPanelMounted(true);return;}const timer=window.setTimeout(()=>setPanelMounted(false),200);return()=>window.clearTimeout(timer);},[rightOpen]);
+  useEffect(()=>{if(rightOpen||tabs.some(surface=>surface.startsWith("browser:"))){setPanelMounted(true);return;}const timer=window.setTimeout(()=>setPanelMounted(false),200);return()=>window.clearTimeout(timer);},[rightOpen,tabs]);
   useEffect(()=>{if(filesOpen||tabs.includes("editor")){setFilesMounted(true);return;}const timer=window.setTimeout(()=>setFilesMounted(false),200);return()=>window.clearTimeout(timer);},[filesOpen,tabs]);
   const toggleFiles=()=>{if(filesOpen&&dirtyRef.current){setPanelError("Save or discard file changes before closing the files panel.");return;}setFilesOpen(value=>!value);};
   useEffect(()=>{const key=(event:KeyboardEvent)=>{
@@ -353,7 +365,7 @@ export function SessionWorkspace({ activeView=true, session, projectLabel, prefe
     else if(shortcutMatches(event,preferences.shortcuts.files)){event.preventDefault();toggleFiles();}
     else if(shortcutMatches(event,preferences.shortcuts.terminal)){event.preventDefault();toggleSurface("terminal");}
     else if(shortcutMatches(event,preferences.shortcuts.focusComposer)){event.preventDefault();document.querySelector<HTMLTextAreaElement>(tab.startsWith("side-chat:")?".side-chat-pane .session-composer textarea":".conversation .session-composer textarea")?.focus();}
-    else if(shortcutMatches(event,preferences.shortcuts.browser)||shortcutMatches(event,preferences.shortcuts.diffs)||shortcutMatches(event,preferences.shortcuts.history)){event.preventDefault();const target:WorkTab=shortcutMatches(event,preferences.shortcuts.browser)?"browser":shortcutMatches(event,preferences.shortcuts.diffs)?"review":"history";setTabs(current=>current.includes(target)?current:[...current,target]);setTab(target);setRightOpen(true);}
+    else if(shortcutMatches(event,preferences.shortcuts.browser)||shortcutMatches(event,preferences.shortcuts.diffs)||shortcutMatches(event,preferences.shortcuts.history)){event.preventDefault();if(shortcutMatches(event,preferences.shortcuts.browser)){addBrowserTab();}else{const target:WorkTab=shortcutMatches(event,preferences.shortcuts.diffs)?"review":"history";setTabs(current=>current.includes(target)?current:[...current,target]);setTab(target);setRightOpen(true);}}
     else if(shortcutMatches(event,preferences.shortcuts.closePanel)){event.preventDefault();if(rightOpen)closeTab(tab);}
     else if(shortcutMatches(event,preferences.shortcuts.nextPanel)||shortcutMatches(event,preferences.shortcuts.previousPanel)){event.preventDefault();if(tabs.length){const index=tabs.indexOf(tab);const delta=shortcutMatches(event,preferences.shortcuts.previousPanel)?-1:1;setTab(tabs[(index+delta+tabs.length)%tabs.length]);setRightOpen(true);}}
     else if(shortcutMatches(event,preferences.shortcuts.searchFiles)){event.preventDefault();setFilesOpen(true);window.setTimeout(()=>document.querySelector<HTMLInputElement>(".files-index input")?.focus(),200);}
@@ -366,9 +378,9 @@ export function SessionWorkspace({ activeView=true, session, projectLabel, prefe
   useEffect(()=>{const dismiss=()=>{setActionsOpen(false);setTabMenu(false);setCommandOpen(false);};window.addEventListener("openade-dismiss-menus",dismiss);return()=>window.removeEventListener("openade-dismiss-menus",dismiss);},[]);
   useEffect(()=>{if(actionsOpen)document.querySelector<HTMLElement>(".session-actions button")?.focus();if(tabMenu)document.querySelector<HTMLElement>(".panel-tab-menu button")?.focus();},[actionsOpen,tabMenu]);
   useEffect(()=>{if(!tabMenu&&!actionsOpen)return;const close=(event:PointerEvent)=>{if(!(event.target as Element).closest(".panel-tab-menu,.panel-add,.session-actions,.session-actions-trigger")){setTabMenu(false);setActionsOpen(false);}};document.addEventListener("pointerdown",close);return()=>document.removeEventListener("pointerdown",close);},[tabMenu,actionsOpen]);
-  const closeTab=(surface:WorkTab)=>{if(surface==="editor"&&dirtyRef.current){setPanelError("Save or discard changes before closing the editor.");return;}const remaining=tabs.filter(value=>value!==surface);setTabs(remaining);if(tab===surface){if(remaining.length)setTab(remaining[remaining.length-1]);else setRightOpen(false);}};
+  const closeTab=(surface:WorkTab)=>{if(surface==="editor"&&dirtyRef.current){setPanelError("Save or discard changes before closing the editor.");return;}const remaining=tabs.filter(value=>value!==surface);setTabs(remaining);if(surface.startsWith("browser:"))setBrowserPages(current=>{const next={...current};delete next[surface];return next;});if(tab===surface){if(remaining.length)setTab(remaining[remaining.length-1]);else setRightOpen(false);}};
   return (
-    <WebLinkContext.Provider value={preferences.open_web_links_in_app?url=>{setBrowserLink(current=>({url,version:(current?.version||0)+1}));setTabs(current=>current.includes("browser")?current:[...current,"browser"]);setTab("browser");setRightOpen(true);}:null}><div className={`session-workspace ${detailsEditor||tabMenu||actionsOpen?"has-overlay":""} ${rightOpen ? "with-panel" : ""} ${filesOpen?"with-files":""} ${tab.startsWith("side-chat:")?"with-side-chat":""} ${session.agent === "shell" && !tuiMode ? "shell-workspace" : ""}`} style={{"--panel-width":`${preferences.panel_width}px`} as CSSProperties}>
+    <WebLinkContext.Provider value={preferences.open_web_links_in_app?url=>{addBrowserTab(url);}:null}><div className={`session-workspace ${detailsEditor||tabMenu||actionsOpen?"has-overlay":""} ${rightOpen ? "with-panel" : ""} ${filesOpen?"with-files":""} ${tab.startsWith("side-chat:")?"with-side-chat":""} ${session.agent === "shell" && !tuiMode ? "shell-workspace" : ""}`} style={{"--panel-width":`${preferences.panel_width}px`} as CSSProperties}>
       <header className="session-header">
         <button className="icon-button" onClick={onBack} aria-label="Back"><ArrowLeft /></button>
         <span className={`status-dot ${session.status}`} />
@@ -435,8 +447,8 @@ export function SessionWorkspace({ activeView=true, session, projectLabel, prefe
       </section>
       <div className="work-panel-clip" inert={!rightOpen}>
       {panelMounted&&<aside className="work-panel" aria-label={`${workTabLabel(tab)} panel`}>
-        <header className="work-panel-header"><div className="panel-tabs" role="tablist" aria-label="Workspace panels">{tabs.map(surface=><div className={surface===tab?"active":""} key={surface}><button role="tab" aria-selected={surface===tab} onClick={()=>setTab(surface)}>{workTabIcon(surface)}{surface.startsWith("side-chat:")?engine.sessions.find(item=>item.id===surface.slice(10))?.title||"Side chat":workTabLabel(surface)}</button><button className="panel-tab-close" aria-label={`Close ${workTabLabel(surface)} tab`} onClick={()=>closeTab(surface)}><X/></button></div>)}</div><div className="panel-add-anchor"><button className="icon-button panel-add" aria-label="Add panel" aria-expanded={tabMenu} onClick={()=>setTabMenu(value=>!value)}><Plus/></button>{tabMenu&&<div className="panel-tab-menu" role="menu" onKeyDown={event=>menuKeys(event,()=>setTabMenu(false),()=>document.querySelector<HTMLElement>(".panel-add")?.focus())}>{(["browser","terminal","review","history","pull-request",...(session.ticket_key?["ticket"]:[])] as WorkTab[]).map(surface=><button role="menuitem" key={surface} onClick={()=>{setTabs(current=>current.includes(surface)?current:[...current,surface]);setTab(surface);setRightOpen(true);setTabMenu(false);}}>{workTabIcon(surface)}{workTabLabel(surface)}</button>)}<button role="menuitem" disabled={sideChatCreating} onClick={()=>{setTabMenu(false);void createChild(session.id,"fork");}}><ChatCircleDots/>Side chat</button></div>}</div><button className="icon-button" onClick={()=>{setRightOpen(false);requestAnimationFrame(()=>document.querySelector<HTMLElement>("[data-main-composer]")?.focus());}} aria-label="Close right sidebar"><SidebarSimple/></button></header>
-        <div className="panel-body">{panelError&&<div className="inline-error" role="alert"><span>{panelError}</span><button aria-label="Dismiss panel error" onClick={()=>setPanelError(null)}><X/></button></div>}<div className="file-editor-outlet" ref={setEditorTarget} hidden={tab!=="editor"}/>{tabs.length===0?<div className="panel-picker">{(["browser","terminal","review","history","pull-request"] as WorkTab[]).map(surface=><button key={surface} onClick={()=>toggleSurface(surface)}>{workTabIcon(surface)}{workTabLabel(surface)}</button>)}<button onClick={()=>void createChild(session.id,"fork")}><ChatCircleDots/>Side chat</button></div>:tab.startsWith("side-chat:")?(()=>{const child=engine.sessions.find(item=>item.id===tab.slice(10));return child?<SideChatPane key={child.id} session={child} sourceTitle={engine.sessions.find(item=>item.id===child.fork_source_id)?.title??session.title} preferences={preferences} onRefresh={onRefresh} onForkSibling={()=>void createChild(child.id,"fork")} onNewSibling={()=>void createChild(child.id,"fresh")}/>:<p className="panel-empty">Side chat unavailable.</p>;})():tab==="editor"?null:tab==="terminal"?<Suspense fallback={<div role="status">Opening terminal…</div>}><TerminalWorkspace session={session} preferences={preferences}/></Suspense>:tab==="review"?<ReviewWorkspace sessionId={session.id} git={Boolean(session.branch)} preferences={preferences} onPreferences={onPreferences} comments={comments} onComments={setComments}/>:tab==="history"?<HistoryPanel session={session}/>:tab==="browser"?<BrowserPanel session={session} requestedLink={browserLink}/>:tab==="ticket"?<TicketPanel ticket={ticket} session={session}/>:<PRPanel session={session} busy={busy} onCreate={createPR} onTicket={()=>setTab("ticket")}/>}</div>
+        <header className="work-panel-header"><div className="panel-tabs" role="tablist" aria-label="Workspace panels">{tabs.map(surface=><div className={surface===tab?"active":""} key={surface}><button role="tab" aria-selected={surface===tab} onClick={()=>setTab(surface)}>{workTabIcon(surface)}{surface.startsWith("side-chat:")?engine.sessions.find(item=>item.id===surface.slice(10))?.title||"Side chat":surface.startsWith("browser:")?browserPages[surface]?.label||"Browser":workTabLabel(surface)}</button><button className="panel-tab-close" aria-label={`Close ${workTabLabel(surface)} tab`} onClick={()=>closeTab(surface)}><X/></button></div>)}</div><div className="panel-add-anchor"><button className="icon-button panel-add" aria-label="Add panel" aria-expanded={tabMenu} onClick={()=>setTabMenu(value=>!value)}><Plus/></button>{tabMenu&&<div className="panel-tab-menu" role="menu" onKeyDown={event=>menuKeys(event,()=>setTabMenu(false),()=>document.querySelector<HTMLElement>(".panel-add")?.focus())}>{(["browser","terminal","review","history","pull-request",...(session.ticket_key?["ticket"]:[])] as WorkTab[]).map(surface=><button role="menuitem" key={surface} onClick={()=>{if(surface==="browser")addBrowserTab();else{setTabs(current=>current.includes(surface)?current:[...current,surface]);setTab(surface);setRightOpen(true);}setTabMenu(false);}}>{workTabIcon(surface)}{workTabLabel(surface)}</button>)}<button role="menuitem" disabled={sideChatCreating} onClick={()=>{setTabMenu(false);void createChild(session.id,"fork");}}><ChatCircleDots/>Side chat</button></div>}</div><button className="icon-button" onClick={()=>{setRightOpen(false);requestAnimationFrame(()=>document.querySelector<HTMLElement>("[data-main-composer]")?.focus());}} aria-label="Close right sidebar"><SidebarSimple/></button></header>
+        <div className="panel-body">{panelError&&<div className="inline-error" role="alert"><span>{panelError}</span><button aria-label="Dismiss panel error" onClick={()=>setPanelError(null)}><X/></button></div>}<div className="file-editor-outlet" ref={setEditorTarget} hidden={tab!=="editor"}/>{tabs.length===0?<div className="panel-picker">{(["browser","terminal","review","history","pull-request"] as WorkTab[]).map(surface=><button key={surface} onClick={()=>toggleSurface(surface)}>{workTabIcon(surface)}{workTabLabel(surface)}</button>)}<button onClick={()=>void createChild(session.id,"fork")}><ChatCircleDots/>Side chat</button></div>:tab.startsWith("browser:")?null:tab.startsWith("side-chat:")?(()=>{const child=engine.sessions.find(item=>item.id===tab.slice(10));return child?<SideChatPane key={child.id} session={child} sourceTitle={engine.sessions.find(item=>item.id===child.fork_source_id)?.title??session.title} preferences={preferences} onRefresh={onRefresh} onForkSibling={()=>void createChild(child.id,"fork")} onNewSibling={()=>void createChild(child.id,"fresh")}/>:<p className="panel-empty">Side chat unavailable.</p>;})():tab==="editor"?null:tab==="terminal"?<Suspense fallback={<div role="status">Opening terminal…</div>}><TerminalWorkspace session={session} preferences={preferences}/></Suspense>:tab==="review"?<ReviewWorkspace sessionId={session.id} git={Boolean(session.branch)} preferences={preferences} onPreferences={onPreferences} comments={comments} onComments={setComments}/>:tab==="history"?<HistoryPanel session={session}/>:tab==="ticket"?<TicketPanel ticket={ticket} session={session}/>:<PRPanel session={session} busy={busy} onCreate={createPR} onTicket={()=>setTab("ticket")}/>}{tabs.filter(surface=>surface.startsWith("browser:")).map(surface=><BrowserPanel key={surface} tabId={surface} session={session} initialUrl={browserPages[surface]?.url} active={activeView&&rightOpen&&tab===surface} onTitle={label=>updateBrowserLabel(surface,label)} onNewTab={addBrowserTab}/>)}</div>
       </aside>}
       </div>
       {rightOpen&&!(session.agent==="shell"&&!tuiMode)&&<ResizeBoundary className="panel-resizer" label="Resize right sidebar" width={preferences.panel_width} min={360} max={900} fraction={filesOpen?.45:.55} defaultWidth={520} direction={-1} onResize={width=>onPreferences({...preferences,panel_width:width},false)} onCommit={width=>onPreferences({...preferences,panel_width:width})}/>}
@@ -452,13 +464,14 @@ function InspectorButton({ active, icon, label, onClick }: { active: boolean; ic
 
 function workTabLabel(tab: WorkTab): string {
   if(tab.startsWith("side-chat:"))return "Side chat";
+  if(tab.startsWith("browser:"))return "Browser";
   return ({ review: "Diffs", terminal: "Terminal", "pull-request": "Pull request", ticket: "Ticket",browser:"Browser",history:"History",editor:"Editor" } as Record<string, string>)[tab];
 }
 
 function workTabIcon(tab: WorkTab): ReactNode {
   if(tab.startsWith("side-chat:"))return <ChatCircleDots/>;
   if (tab === "editor") return <FileCode/>;
-  if (tab === "browser") return <Globe/>;
+  if (tab === "browser" || tab.startsWith("browser:")) return <Globe/>;
   if (tab === "history") return <ClockCounterClockwise/>;
   if (tab === "terminal") return <TerminalWindow />;
   if (tab === "pull-request") return <GithubLogo />;

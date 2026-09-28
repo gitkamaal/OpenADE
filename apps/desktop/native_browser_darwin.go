@@ -6,15 +6,19 @@ package main
 #cgo CFLAGS: -x objective-c
 #cgo LDFLAGS: -framework Cocoa -framework WebKit -framework QuartzCore
 #include <stdlib.h>
-void openadeBrowserShow(const char *url,double x,double y,double width,double height);
-void openadeBrowserAction(int action);
+void openadeBrowserOpen(const char *tab,const char *url,double x,double y,double width,double height);
+void openadeBrowserNavigate(const char *tab,const char *url);
+void openadeBrowserBounds(const char *tab,double x,double y,double width,double height);
+void openadeBrowserAction(const char *tab,int action);
 int openadeAppearance(int appearance,int material);
 */
 import "C"
 import (
 	"fmt"
+	"github.com/google/uuid"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"net/url"
+	"strings"
 	"sync"
 	"unsafe"
 )
@@ -22,37 +26,101 @@ import (
 var browserAppMu sync.RWMutex
 var browserApp *App
 
-func (a *App) BrowserNavigate(address string, x, y, width, height float64) error {
+func browserAddress(address string) (string, error) {
 	parsed, err := url.Parse(address)
 	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.User != nil {
-		return fmt.Errorf("enter an HTTP or HTTPS address without credentials")
+		return "", fmt.Errorf("enter an HTTP or HTTPS address without credentials")
+	}
+	return parsed.String(), nil
+}
+
+func browserTabID(tab string) error {
+	if tab == "browser" {
+		return nil
+	}
+	if !strings.HasPrefix(tab, "browser:") || len(tab) != 44 {
+		return fmt.Errorf("invalid browser tab")
+	}
+	if _, err := uuid.Parse(tab[8:]); err != nil {
+		return fmt.Errorf("invalid browser tab")
+	}
+	return nil
+}
+
+func (a *App) BrowserOpenTab(tab, address string, x, y, width, height float64) error {
+	if err := browserTabID(tab); err != nil {
+		return err
+	}
+	normalized, err := browserAddress(address)
+	if err != nil {
+		return err
 	}
 	browserAppMu.Lock()
 	browserApp = a
 	browserAppMu.Unlock()
-	value := C.CString(parsed.String())
+	id, value := C.CString(tab), C.CString(normalized)
+	defer C.free(unsafe.Pointer(id))
 	defer C.free(unsafe.Pointer(value))
-	C.openadeBrowserShow(value, C.double(x), C.double(y), C.double(width), C.double(height))
+	C.openadeBrowserOpen(id, value, C.double(x), C.double(y), C.double(width), C.double(height))
 	return nil
 }
-func (a *App) BrowserBounds(x, y, width, height float64) {
-	C.openadeBrowserShow(nil, C.double(x), C.double(y), C.double(width), C.double(height))
+
+func (a *App) BrowserNavigateTab(tab, address string) error {
+	if err := browserTabID(tab); err != nil {
+		return err
+	}
+	normalized, err := browserAddress(address)
+	if err != nil {
+		return err
+	}
+	id, value := C.CString(tab), C.CString(normalized)
+	defer C.free(unsafe.Pointer(id))
+	defer C.free(unsafe.Pointer(value))
+	C.openadeBrowserNavigate(id, value)
+	return nil
 }
-func (a *App) BrowserAction(action string) {
+
+func (a *App) BrowserBoundsTab(tab string, x, y, width, height float64) {
+	if browserTabID(tab) != nil {
+		return
+	}
+	id := C.CString(tab)
+	defer C.free(unsafe.Pointer(id))
+	C.openadeBrowserBounds(id, C.double(x), C.double(y), C.double(width), C.double(height))
+}
+
+func (a *App) BrowserActionTab(tab, action string) {
+	if browserTabID(tab) != nil {
+		return
+	}
 	value := map[string]int{"close": 0, "back": 1, "forward": 2, "reload": 3, "hide": 4, "show": 5}
 	if code, ok := value[action]; ok {
-		C.openadeBrowserAction(C.int(code))
+		id := C.CString(tab)
+		defer C.free(unsafe.Pointer(id))
+		C.openadeBrowserAction(id, C.int(code))
 	}
 }
 
-//export openadeBrowserNavigated
-func openadeBrowserNavigated(value *C.char, back, forward C.int) {
+//export openadeBrowserChanged
+func openadeBrowserChanged(tab, value, title *C.char, back, forward C.int) {
+	id := C.GoString(tab)
 	address := C.GoString(value)
+	label := C.GoString(title)
 	browserAppMu.RLock()
 	app := browserApp
 	browserAppMu.RUnlock()
 	if app != nil && app.ctx != nil {
-		go runtime.EventsEmit(app.ctx, "browser:navigated", address, back != 0, forward != 0)
+		go runtime.EventsEmit(app.ctx, "browser:state", id, address, label, back != 0, forward != 0)
+	}
+}
+
+//export openadeBrowserNewTab
+func openadeBrowserNewTab(tab, value *C.char) {
+	browserAppMu.RLock()
+	app := browserApp
+	browserAppMu.RUnlock()
+	if app != nil && app.ctx != nil {
+		go runtime.EventsEmit(app.ctx, "browser:new-tab", C.GoString(tab), C.GoString(value))
 	}
 }
 
