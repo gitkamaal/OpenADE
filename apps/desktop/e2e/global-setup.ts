@@ -52,6 +52,21 @@ if structured:
   print('env: node: No such file or directory',flush=True);sys.exit(127)
  if name=='claude':emit({'type':'system','session_id':'claude-'+sid})
  else:emit({'type':'thread.started','thread_id':'codex-'+sid})
+ if name=='claude' and 'claude-child' in prompt:
+  if 'early' in prompt:emit({'type':'assistant','parent_tool_use_id':'agent-one','message':{'content':[{'type':'text','text':'Early child output.'}]}})
+  emit({'type':'assistant','message':{'content':[{'type':'tool_use','id':'agent-one','name':'Agent','input':{'description':'Inspect Claude child','prompt':'Inspect the fixture child'}}]}})
+  emit({'type':'system','subtype':'task_started','task_id':'task-one','tool_use_id':'agent-one','subagent_type':'Explore'})
+  emit({'type':'assistant','parent_tool_use_id':'agent-one','message':{'content':[{'type':'text','text':'Child found the answer.'}]}})
+  if 'foreground' in prompt:
+   emit({'type':'user','message':{'content':[{'type':'tool_result','tool_use_id':'agent-one','content':'Done','is_error':False}]}})
+   emit({'type':'result','result':'Parent finished independently.'})
+   sys.exit(0)
+  emit({'type':'assistant','message':{'content':[{'type':'tool_use','id':'send-one','name':'SendMessage','input':{'to':'task-one','message':'Check the follow-up'}}]}})
+  emit({'type':'assistant','parent_tool_use_id':'agent-one','message':{'content':[{'type':'text','text':'Follow-up confirmed.'}]}})
+  emit({'type':'system','subtype':'task_notification','tool_use_id':'agent-one','status':'completed'})
+  emit({'type':'assistant','message':{'content':[{'type':'text','text':'Parent finished independently.'}]}})
+  emit({'type':'result','result':'Parent finished independently.'})
+  sys.exit(0)
  if 'fail-provider' in prompt:sys.exit(7)
  if 'wait-controlled' in prompt:
   while not os.path.exists('.e2e-release'):time.sleep(.02)

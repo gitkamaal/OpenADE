@@ -68,6 +68,20 @@ def work(turn,prompt):
   complete(turn,'Generated image fixture reply')
   return
  if 'unknown' in prompt:emit({'id':700,'method':'unknown/method','params':{'threadId':thread,'turnId':turn}})
+ if 'resume-child' in prompt:
+  child='child-turn-1';revisit='revisit-'+turn
+  notify('item/completed',{'threadId':thread,'turnId':turn,'item':{'type':'collabAgentToolCall','id':'send-followup','tool':'sendInput','status':'completed','receiverThreadIds':[child]}})
+  notify('turn/started',{'threadId':child,'turn':{'id':revisit,'status':'inProgress'}})
+  notify('turn/started',{'threadId':child,'turn':{'id':revisit,'status':'inProgress'}})
+  notify('item/agentMessage/delta',{'threadId':child,'itemId':revisit,'delta':'Second assignment is running. '})
+  complete(turn,'Parent delegated a follow-up')
+  if 'held' in prompt:
+   release=os.path.join(folder,sid+'.release-revisit')
+   while not os.path.exists(release):time.sleep(.02)
+  notify('item/agentMessage/delta',{'threadId':child,'itemId':revisit,'delta':'Second assignment finished.'})
+  notify('turn/completed',{'threadId':child,'turn':{'id':revisit,'status':'completed'}})
+  notify('turn/completed',{'threadId':child,'turn':{'id':revisit,'status':'completed'}})
+  return
  if 'subagent' in prompt:
   if 'siblings' in prompt:
    for name in ('alpha','beta'):
@@ -90,9 +104,15 @@ def work(turn,prompt):
   notify('turn/started',{'threadId':child,'turn':{'id':'child-turn','status':'inProgress'}})
   notify('item/completed',{'threadId':child,'item':{'type':'userMessage','id':'child-prompt','text':'Inspect the fixture child'}})
   notify('item/agentMessage/delta',{'threadId':child,'itemId':'child-message','delta':'Child is working. '})
+  if 'nested' in prompt:
+   nested={'type':'collabAgentToolCall','id':'nested-spawn','tool':'spawnAgent','status':'inProgress','receiverThreadIds':[],'prompt':'Inspect nested dependency'}
+   notify('item/started',{'threadId':child,'item':nested})
+   notify('item/completed',{'threadId':child,'item':{**nested,'status':'completed','receiverThreadIds':['grandchild-'+turn]}})
+   notify('turn/completed',{'threadId':'grandchild-'+turn,'turn':{'id':'grandchild-turn','status':'completed'}})
   if 'early' in prompt:
    notify('item/agentMessage/delta',{'threadId':child,'itemId':'child-message','delta':'Finished early.'})
    notify('turn/completed',{'threadId':child,'turn':{'id':'child-turn','status':'completed'}})
+   notify('item/agentMessage/delta',{'threadId':child,'itemId':'child-message','delta':'STALE_AFTER_DONE'})
   if 'failed-spawn' in prompt:
    notify('item/completed',{'threadId':thread,'turnId':turn,'item':{**spawn,'status':'failed'}})
   elif 'v2' in prompt:

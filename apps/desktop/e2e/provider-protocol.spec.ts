@@ -8,6 +8,41 @@ const state=async(request:any,id:string)=>(await(await request.get(`${daemon}/ap
 const logs=(id:string)=>fs.readFileSync(path.join(tmp,'provider-home/rpc-log',id+'.jsonl'),'utf8').trim().split('\n').map(line=>JSON.parse(line));
 test.beforeAll(async({request})=>{original=fs.readFileSync(program);fs.copyFileSync(path.join(tmp,'../codex-app-server-fixture.py'),program);fs.writeFileSync(program,'#!/usr/bin/env python3\n'+fs.readFileSync(program,'utf8'),{mode:0o755});fs.chmodSync(program,0o755);const meta=await(await request.get(daemon+'/api/meta')).json();expect(meta.agents.find((agent:any)=>agent.id==='codex').path).toBe(program);});
 test.afterAll(()=>{fs.writeFileSync(program,original,{mode:0o755});fs.chmodSync(program,0o755);});
+test('Claude Agent/Task child output stays in its own document and SendMessage reopens it',async({request,page})=>{
+ const s=await create(request,'Claude linked agent',{agent:'claude',prompt:'claude-child'});
+ await expect.poll(()=>status(request,s.id)).toBe('completed');
+ const parent=fs.readFileSync(path.join(tmp,'data/transcripts',s.id+'.log'),'utf8');
+ expect(parent).toContain('Parent finished independently.');expect(parent).not.toContain('Child found the answer.');
+ const markers=parent.trim().split('\n').map(line=>JSON.parse(line)).filter(event=>event.type==='openade.subagent');expect(markers).toHaveLength(1);
+ const child=await(await request.get(`${daemon}/api/sessions/${s.id}/subagents/${markers[0].doc_id}`)).json();
+ expect(child.status).toBe('done');expect(child.output).toContain('Inspect the fixture child');expect(child.output).toContain('Child found the answer.');expect(child.output).toContain('Check the follow-up');expect(child.output).toContain('Follow-up confirmed.');
+ await ready(page);await open(page,'Claude linked agent');const chip=page.getByRole('button',{name:/Open agent Inspect Claude child/});await expect(chip).toContainText('Done');await chip.click();await expect(page.getByLabel('Agent panel')).toContainText('Follow-up confirmed.');
+});
+test('Claude early child frames and foreground Agent results preserve the child document',async({request})=>{
+ const s=await create(request,'Claude foreground child',{agent:'claude',prompt:'claude-child early foreground'});await expect.poll(()=>status(request,s.id)).toBe('completed');
+ const parent=fs.readFileSync(path.join(tmp,'data/transcripts',s.id+'.log'),'utf8');expect(parent).not.toContain('Early child output.');
+ const marker=parent.trim().split('\n').map(line=>JSON.parse(line)).find(event=>event.type==='openade.subagent');expect(marker).toBeTruthy();
+ const child=await(await request.get(`${daemon}/api/sessions/${s.id}/subagents/${marker.doc_id}`)).json();expect(child.status).toBe('done');expect(child.output).toContain('Early child output.');expect(child.output).toContain('Child found the answer.');
+});
+test('Claude child tool IDs reused by a later CLI process still create a new owned document',async({request})=>{
+ const s=await create(request,'Claude repeated spawn',{agent:'claude',prompt:'claude-child'});await expect.poll(()=>status(request,s.id)).toBe('completed');
+ expect((await request.post(`${daemon}/api/sessions/${s.id}/messages`,{data:{text:'claude-child'}})).status()).toBe(202);
+ await expect.poll(async()=>{const current=await(await request.get(`${daemon}/api/sessions/${s.id}`)).json();return current.generation===2?current.status:'previous';}).toBe('completed');
+ const parent=fs.readFileSync(path.join(tmp,'data/transcripts',s.id+'.log'),'utf8');const markers=parent.trim().split('\n').map(line=>JSON.parse(line)).filter(event=>event.type==='openade.subagent');expect(markers).toHaveLength(2);expect(new Set(markers.map(event=>event.doc_id)).size).toBe(2);
+ for(const marker of markers){const child=await(await request.get(`${daemon}/api/sessions/${s.id}/subagents/${marker.doc_id}`)).json();expect(child.status).toBe('done');}
+});
+test('Copilot CLI opens an interactive prompt with a stable session ID and resumes it',async({request})=>{
+ const s=await create(request,'Copilot interactive',{agent:'copilot',mode:'tui'});
+ await expect.poll(async()=>fs.existsSync(path.join(tmp,'data/transcripts',s.id+'.log'))?fs.readFileSync(path.join(tmp,'data/transcripts',s.id+'.log'),'utf8').includes('copilot-shim started'):false).toBe(true);
+ const initial=fs.readFileSync(path.join(tmp,'data/transcripts',s.id+'.log'),'utf8');expect(initial).toContain(`args: --session-id ${s.id} -i Copilot interactive`);
+ expect(initial).not.toContain('openade.provider_session');
+ expect((await request.post(`${daemon}/api/sessions/${s.id}/stop`)).ok()).toBe(true);await expect.poll(()=>status(request,s.id)).toBe('stopped');
+ expect((await request.post(`${daemon}/api/sessions/${s.id}/resume-tui`)).ok()).toBe(true);
+ await expect.poll(()=>status(request,s.id)).toBe('running');
+ await expect.poll(()=>fs.readFileSync(path.join(tmp,'data/transcripts',s.id+'.log'),'utf8').split('copilot-shim started').length).toBe(3);
+ const resumed=fs.readFileSync(path.join(tmp,'data/transcripts',s.id+'.log'),'utf8');expect(resumed.slice(resumed.lastIndexOf('copilot-shim started'))).toContain(`args: --session-id ${s.id}`);expect(resumed.slice(resumed.lastIndexOf('copilot-shim started'))).not.toContain(' -i ');
+ await request.post(`${daemon}/api/sessions/${s.id}/stop`);
+});
 test('persistent stdio conversation, typed images, context and completion-before-ACK/EOF',async({request,page})=>{
  const s=await create(request,'Persistent Codex');await expect.poll(()=>status(request,s.id)).toBe('completed');expect((await state(request,s.id)).context).toEqual({tokens:32000,window:128000});
  const upload=await request.post(`${daemon}/api/attachments?name=fixture.png`,{headers:{'Content-Type':'image/png'},data:fs.readFileSync(path.join(tmp,'../fixtures/preview-grid.png'))});expect(upload.status()).toBe(201);const image=await upload.json();
@@ -146,6 +181,20 @@ test('sibling child streams stay bound to their own spawn cards',async({request,
  await ready(page);await open(page,'Sibling linked agents');await expect(page.getByRole('button',{name:/Open agent/})).toHaveCount(2);await page.getByRole('button',{name:'Open agent Inspect beta'}).click();const panel=page.getByLabel('Agent panel');await expect(panel).toContainText('beta report');await expect(panel).not.toContainText('alpha report');
  await page.getByRole('button',{name:'Open agent Inspect alpha'}).click();await expect(panel.getByRole('tab')).toHaveCount(2);await expect(panel).toContainText('alpha report');await panel.getByRole('tab',{name:'Inspect beta'}).click();await expect(panel).toContainText('beta report');
  const other=await create(request,'Different chat for agent tabs');await expect.poll(()=>status(request,other.id)).toBe('completed');await open(page,'Different chat for agent tabs');await open(page,'Sibling linked agents');await expect(page.getByRole('tab',{name:'Inspect alpha'})).toBeVisible();await expect(page.getByRole('tab',{name:'Inspect beta'})).toHaveAttribute('aria-selected','true');
+});
+test('a completed child reopens as a separate answer when the parent sends a follow-up',async({request,page})=>{
+ const s=await create(request,'Child follow-up turn',{prompt:'subagent early'});await expect.poll(()=>status(request,s.id)).toBe('completed');
+ const parent=fs.readFileSync(path.join(tmp,'data/transcripts',s.id+'.log'),'utf8');const spawn=parent.split('\n').filter(Boolean).map(line=>JSON.parse(line)).find(event=>event.type==='openade.subagent');const endpoint=`${daemon}/api/sessions/${s.id}/subagents/${spawn.doc_id}`;
+ await ready(page);await open(page,'Child follow-up turn');await page.getByRole('button',{name:'Open agent Inspect the fixture child'}).click();const panel=page.getByLabel('Agent panel');await expect(panel.locator('.chat-assistant-turn')).toHaveCount(1);await expect(panel).toContainText('Finished early.');
+ expect((await request.post(`${daemon}/api/sessions/${s.id}/messages`,{data:{text:'resume-child held'}})).status()).toBe(202);await expect.poll(()=>status(request,s.id)).toBe('completed');await expect.poll(async()=>(await(await request.get(endpoint)).json()).status).toBe('running');
+ await expect(page.getByRole('button',{name:'Open agent Inspect the fixture child'})).toContainText('Working');await expect(panel.locator('.chat-assistant-turn')).toHaveCount(2);await expect(panel.locator('.chat-assistant-turn').nth(1)).toContainText('Second assignment is running.');await expect(page.getByRole('button',{name:/Open agent/})).toHaveCount(1);
+ fs.writeFileSync(path.join(tmp,'provider-home/rpc-log',s.id+'.release-revisit'),'go');await expect.poll(async()=>(await(await request.get(endpoint)).json()).status).toBe('done');await expect(panel.locator('.chat-assistant-turn').nth(1)).toContainText('Second assignment finished.');await expect(page.locator('.conversation .activity-group').last()).toContainText('Send agent message');
+ const output=(await(await request.get(endpoint)).json()).output;expect((output.match(/"type":"openade.child_turn_started"/g)||[])).toHaveLength(2);expect((output.match(/"type":"turn.completed"/g)||[])).toHaveLength(2);expect((output.match(/"type":"openade.user_message"/g)||[])).toHaveLength(1);expect(output).not.toContain('STALE_AFTER_DONE');
+});
+test('a nested spawn is a visible non-link agent card inside its owning child transcript',async({request,page})=>{
+ const s=await create(request,'Nested agent fallback',{prompt:'subagent nested'});await expect.poll(()=>status(request,s.id)).toBe('completed');
+ await ready(page);await open(page,'Nested agent fallback');await page.getByRole('button',{name:'Open agent Inspect the fixture child'}).click();const panel=page.getByLabel('Agent panel');const nested=panel.getByRole('note',{name:'Agent Inspect nested dependency'});await expect(nested).toContainText('Spawned');await expect(panel.getByRole('button',{name:'Open agent Inspect nested dependency'})).toHaveCount(0);await expect(panel).toContainText('Child is working.');
+ const parent=fs.readFileSync(path.join(tmp,'data/transcripts',s.id+'.log'),'utf8');expect(parent).not.toContain('grandchild-turn');expect(parent.match(/"type":"openade.subagent"/g)).toHaveLength(1);
 });
 test('known steering rejection stays queued, unknown delivery is quarantined and never retried',async({request})=>{
  const s=await create(request,'Steering failure',{prompt:'wait parent'});const a=await(await request.post(`${daemon}/api/sessions/${s.id}/message-queue`,{data:{text:'reject-steer'}})).json();expect((await request.post(`${daemon}/api/sessions/${s.id}/message-queue/${a.id}/steer`)).status()).toBe(409);expect((await(await request.get(`${daemon}/api/sessions/${s.id}/message-queue`)).json()).messages[0].status).toBe('queued');await request.delete(`${daemon}/api/sessions/${s.id}/message-queue/${a.id}`);

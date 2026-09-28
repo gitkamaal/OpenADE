@@ -53,6 +53,7 @@ type liveSession struct {
 	turnID            string
 	rawPTY            bool
 	codex             *codexConversation
+	claude            *claudeSubagents
 	acp               *acpConversation
 	cursor            *cursorConversation
 }
@@ -278,7 +279,7 @@ func (m *SessionManager) writeProviderSessionMarker(session Session, providerID 
 
 func tuiProviderCommand(session Session, providerID string) (string, []string, error) {
 	agent := strings.ToLower(session.Agent)
-	if mapped := map[string]string{"claude-code": "claude", "codex-cli": "codex"}[agent]; mapped != "" {
+	if mapped := map[string]string{"claude-code": "claude", "codex-cli": "codex", "github-copilot": "copilot"}[agent]; mapped != "" {
 		agent = mapped
 	}
 	program, err := resolveProgram(agent)
@@ -290,8 +291,10 @@ func tuiProviderCommand(session Session, providerID string) (string, []string, e
 		return program, []string{"resume", "--include-non-interactive", "--no-alt-screen", "-C", session.WorktreePath, providerID}, nil
 	case "claude":
 		return program, []string{"--resume", providerID, "--permission-mode", "acceptEdits"}, nil
+	case "copilot", "github-copilot":
+		return program, []string{"--session-id", providerID}, nil
 	default:
-		return "", nil, fmt.Errorf("conversation import is only supported for Codex and Claude Code")
+		return "", nil, fmt.Errorf("conversation import is only supported for Codex, Claude Code, and Copilot CLI")
 	}
 }
 
@@ -369,6 +372,9 @@ func (m *SessionManager) launchCommand(session Session, program string, args []s
 	live.forkBootstrap = session.forkBootstrap
 	live.generation = generation
 	live.turnID = turnID
+	if session.Mode == "chat" && isClaudeAgent(session.Agent) {
+		live.claude = newClaudeSubagents(m.store, m.dataDir, session.ID, generation)
+	}
 	if err := m.store.UpdateRuntime(session.ID, "running", cmd.Process.Pid, nil); err != nil {
 		terminateUnmanagedProcess(live)
 		return err
@@ -676,6 +682,12 @@ func agentCommand(session Session) (string, []string, error) {
 				args = append(args, session.Prompt)
 			}
 			return program, args, nil
+		case "copilot":
+			args := []string{"--session-id", session.ID}
+			if session.Prompt != "" {
+				args = append(args, "-i", session.Prompt)
+			}
+			return program, args, nil
 		default:
 			if session.Prompt != "" {
 				return program, []string{session.Prompt}, nil
@@ -713,7 +725,7 @@ func agentCommand(session Session) (string, []string, error) {
 
 func tuiResumeCommand(session Session) (string, []string, error) {
 	agent := strings.ToLower(session.Agent)
-	agent = map[string]string{"claude-code": "claude", "codex-cli": "codex"}[agent]
+	agent = map[string]string{"claude-code": "claude", "codex-cli": "codex", "github-copilot": "copilot"}[agent]
 	if agent == "" {
 		agent = strings.ToLower(session.Agent)
 	}
@@ -726,8 +738,10 @@ func tuiResumeCommand(session Session) (string, []string, error) {
 		return program, []string{"--no-alt-screen", "-C", session.WorktreePath}, nil
 	case "claude":
 		return program, []string{"--session-id", session.ID, "--permission-mode", "acceptEdits"}, nil
+	case "copilot", "github-copilot":
+		return program, []string{"--session-id", session.ID}, nil
 	default:
-		return "", nil, fmt.Errorf("direct TUI mode is only supported for Codex and Claude Code")
+		return "", nil, fmt.Errorf("direct TUI mode is only supported for Codex, Claude Code, and Copilot CLI")
 	}
 }
 
@@ -777,6 +791,15 @@ func (m *SessionManager) readOutput(id string, live *liveSession, transcript *os
 		n, err := reader.Read(buf)
 		if n > 0 {
 			chunk := append([]byte(nil), buf[:n]...)
+			if live.claude != nil {
+				chunk = live.claude.consume(chunk)
+			}
+			if len(chunk) == 0 {
+				if err != nil {
+					break
+				}
+				continue
+			}
 			live.mu.Lock()
 			if transcript != nil {
 				_, _ = transcript.Write(chunk)
@@ -798,8 +821,27 @@ func (m *SessionManager) readOutput(id string, live *liveSession, transcript *os
 			live.mu.Unlock()
 		}
 		if err != nil {
-			return
+			break
 		}
+	}
+	if live.claude != nil {
+		if chunk := live.claude.flush(); len(chunk) > 0 {
+			live.mu.Lock()
+			if transcript != nil {
+				_, _ = transcript.Write(chunk)
+			}
+			live.scrollback = append(live.scrollback, chunk...)
+			for subscriber := range live.subscribers {
+				select {
+				case subscriber <- chunk:
+				default:
+					delete(live.subscribers, subscriber)
+					close(subscriber)
+				}
+			}
+			live.mu.Unlock()
+		}
+		live.claude.finishProcess()
 	}
 }
 

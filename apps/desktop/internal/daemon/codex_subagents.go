@@ -22,6 +22,8 @@ type subagentDoc struct {
 	file                                      *os.File
 	bytes                                     int64
 	truncated                                 bool
+	startedTurns                              map[string]bool
+	completedTurns                            map[string]bool
 }
 
 type codexSubagents struct {
@@ -58,11 +60,11 @@ type subagentWireItem struct {
 }
 
 type subagentWireParams struct {
-	ThreadID string                  `json:"threadId"`
-	ItemID   string                  `json:"itemId"`
-	Delta    string                  `json:"delta"`
-	Turn     struct{ Status string } `json:"turn"`
-	Item     subagentWireItem        `json:"item"`
+	ThreadID string                      `json:"threadId"`
+	ItemID   string                      `json:"itemId"`
+	Delta    string                      `json:"delta"`
+	Turn     struct{ ID, Status string } `json:"turn"`
+	Item     subagentWireItem            `json:"item"`
 }
 
 func subagentTitle(item subagentWireItem) string {
@@ -76,6 +78,13 @@ func subagentTitle(item subagentWireItem) string {
 		return "Subagent"
 	}
 	return clipSubagentText(title, 100)
+}
+
+func subagentControlTitle(tool string) string {
+	if title := (map[string]string{"sendInput": "Send agent message", "send_input": "Send agent message", "wait": "Wait for agents", "closeAgent": "Close agent", "close_agent": "Close agent", "resumeAgent": "Resume agent", "resume_agent": "Resume agent"})[tool]; title != "" {
+		return title
+	}
+	return "Agent control: " + clipSubagentText(tool, 80)
 }
 
 func clipSubagentText(value string, limit int) string {
@@ -112,7 +121,7 @@ func (s *codexSubagents) parentItem(frame providerRPCFrame, generation int64, em
 	spawnKey := fmt.Sprintf("%d:%s", generation, item.ID)
 	doc := s.bySpawn[spawnKey]
 	if doc == nil {
-		doc = &subagentDoc{ID: uuid.NewString(), SpawnID: item.ID, Title: subagentTitle(item), Status: "running"}
+		doc = &subagentDoc{ID: uuid.NewString(), SpawnID: item.ID, Title: subagentTitle(item), Status: "running", startedTurns: map[string]bool{}, completedTurns: map[string]bool{}}
 		_, err := s.store.db.Exec(`INSERT INTO subagent_docs(id,session_id,generation,spawn_item_id,title,status,updated_at) VALUES(?,?,?,?,?,?,?)`, doc.ID, s.sessionID, generation, doc.SpawnID, doc.Title, doc.Status, encodeTime(time.Now()))
 		if err != nil {
 			return true
@@ -195,27 +204,68 @@ func (s *codexSubagents) record(doc *subagentDoc, frame providerRPCFrame) {
 	}
 	switch frame.Method {
 	case "turn/started":
+		if p.Turn.ID != "" && doc.startedTurns[p.Turn.ID] {
+			return
+		}
+		if p.Turn.ID != "" {
+			doc.startedTurns[p.Turn.ID] = true
+		}
 		s.setStatus(doc, "running")
+		s.write(doc, map[string]any{"type": "openade.child_turn_started"})
 	case "turn/completed":
+		if p.Turn.ID != "" && doc.completedTurns[p.Turn.ID] {
+			return
+		}
+		if p.Turn.ID != "" {
+			doc.completedTurns[p.Turn.ID] = true
+		}
+		s.write(doc, map[string]any{"type": "turn.completed", "created_at": encodeTime(time.Now())})
 		if p.Turn.Status == "failed" || p.Turn.Status == "interrupted" {
 			s.setStatus(doc, "failed")
 		} else {
 			s.setStatus(doc, "done")
 		}
 	case "turn/failed", "turn/aborted":
+		if p.Turn.ID != "" && doc.completedTurns[p.Turn.ID] {
+			return
+		}
+		if p.Turn.ID != "" {
+			doc.completedTurns[p.Turn.ID] = true
+		}
+		s.write(doc, map[string]any{"type": "turn.completed", "created_at": encodeTime(time.Now())})
 		s.setStatus(doc, "failed")
 	case "thread/closed":
 		if doc.Status == "running" {
 			s.setStatus(doc, "done")
 		}
 	case "item/agentMessage/delta":
+		if doc.Status != "running" {
+			return
+		}
 		s.write(doc, map[string]any{"type": "openade.agent_delta", "id": clipSubagentText(p.ItemID, 256), "text": clipSubagentText(p.Delta, 64*1024)})
 	case "item/reasoning/textDelta", "item/reasoning/summaryTextDelta":
+		if doc.Status != "running" {
+			return
+		}
 		s.write(doc, map[string]any{"type": "stream_event", "event": map[string]any{"delta": map[string]string{"type": "thinking_delta"}}})
 	case "item/started", "item/completed":
 		item := p.Item
 		if (item.Type == "userMessage" || item.Type == "user_message") && frame.Method == "item/completed" {
+			if doc.Status != "running" {
+				s.setStatus(doc, "running")
+			}
 			s.write(doc, map[string]any{"type": "openade.user_message", "text": clipSubagentText(item.Text, 64*1024)})
+		} else if doc.Status != "running" {
+			return
+		} else if ((item.Type == "collabAgentToolCall" || item.Type == "collab_agent_tool_call") && (item.Tool == "spawnAgent" || item.Tool == "spawn_agent")) || ((item.Type == "subAgentActivity" || item.Type == "sub_agent_activity") && (item.Kind == "started" || item.Kind == "spawned") && item.AgentPath != "/" && item.AgentPath != "/root") {
+			state := "starting"
+			if frame.Method == "item/completed" {
+				state = "spawned"
+				if item.Status == "failed" || item.Status == "errored" {
+					state = "failed"
+				}
+			}
+			s.write(doc, map[string]any{"type": "openade.unlinked_agent", "id": clipSubagentText(item.ID, 256), "title": subagentTitle(item), "status": state})
 		} else if (item.Type == "agentMessage" || item.Type == "agent_message") && frame.Method == "item/completed" {
 			s.write(doc, map[string]any{"type": "openade.agent_message", "id": clipSubagentText(item.ID, 256), "text": clipSubagentText(item.Text, 64*1024)})
 		} else if item.Type == "commandExecution" || item.Type == "command_execution" {
@@ -225,7 +275,11 @@ func (s *codexSubagents) record(doc *subagentDoc, frame providerRPCFrame) {
 			}
 			s.write(doc, map[string]any{"type": phase, "item": map[string]string{"type": "command_execution", "command": clipSubagentText(item.Command, 4096), "aggregated_output": clipSubagentText(item.AggregatedOutput, 64*1024)}})
 		} else if frame.Method == "item/completed" && (item.Type == "mcpToolCall" || item.Type == "mcp_tool_call" || item.Type == "webSearch" || item.Type == "web_search" || item.Type == "collabAgentToolCall" || item.Type == "collab_agent_tool_call") {
-			s.write(doc, map[string]any{"type": "openade.tool", "id": clipSubagentText(item.ID, 256), "title": clipSubagentText(item.Type, 100), "detail": clipSubagentText(item.Status, 100)})
+			title := clipSubagentText(item.Type, 100)
+			if item.Type == "collabAgentToolCall" || item.Type == "collab_agent_tool_call" {
+				title = subagentControlTitle(item.Tool)
+			}
+			s.write(doc, map[string]any{"type": "openade.tool", "id": clipSubagentText(item.ID, 256), "title": title, "detail": clipSubagentText(item.Status, 100)})
 		}
 	case "error":
 		s.write(doc, map[string]any{"type": "error", "message": "Subagent reported a provider error."})

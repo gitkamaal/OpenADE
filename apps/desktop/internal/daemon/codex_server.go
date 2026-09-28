@@ -852,11 +852,7 @@ func (c *codexConversation) handle(frame providerRPCFrame) {
 			}
 			c.emit(map[string]any{"type": "openade.tool", "id": p.Item.ID, "title": title, "detail": p.Item.Status})
 		case "collabAgentToolCall", "collab_agent_tool_call":
-			title := map[string]string{"sendInput": "Send agent message", "send_input": "Send agent message", "wait": "Wait for agents", "closeAgent": "Close agent", "close_agent": "Close agent", "resumeAgent": "Resume agent", "resume_agent": "Resume agent"}[p.Item.Tool]
-			if title == "" {
-				title = "Agent control: " + clipSubagentText(p.Item.Tool, 80)
-			}
-			c.emit(map[string]any{"type": "openade.tool", "id": p.Item.ID, "title": title, "detail": p.Item.Status})
+			c.emit(map[string]any{"type": "openade.tool", "id": p.Item.ID, "title": subagentControlTitle(p.Item.Tool), "detail": p.Item.Status})
 		}
 	case "thread/tokenUsage/updated":
 		tokens := p.TokenUsage.Last.TotalTokens

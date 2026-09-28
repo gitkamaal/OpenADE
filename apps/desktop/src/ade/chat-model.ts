@@ -7,6 +7,7 @@ export interface ChatActivity {
   detail?: string;
   status?: "pending" | "answered" | "dismissed";
   docId?: string;
+  subagentState?: "starting" | "spawned" | "failed";
 }
 
 export interface GeneratedImage {id:string;name:string;mime:"image/png";size:number}
@@ -78,6 +79,17 @@ export function createTranscriptParser(initialPrompt:string,initialCreatedAt?:st
       return;
     }
 
+    if (event.type === "openade.child_turn_started") {
+      // A provider may resume a child thread without echoing another user
+      // item. Keep its next answer separate from the completed assignment.
+      commitAssistant(turns, assistant, finalMessage || partial);
+      assistant = newAssistant(turns.length);
+      partial = "";
+      finalMessage = "";
+      providerMessages = new Map();
+      return;
+    }
+
     const type = String(event.type ?? "");
     if(type==="turn.completed")assistant.timestamp=parseTimestamp(event.created_at);
     if(type==="openade.turn_finished"&&assistant.timestamp===undefined)assistant.timestamp=parseTimestamp(event.created_at);
@@ -111,6 +123,15 @@ export function createTranscriptParser(initialPrompt:string,initialCreatedAt?:st
       const docId=String(event.doc_id??""),title=String(event.title??"Subagent").trim().slice(0,100),wireID=String(event.id??"");
       if(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(docId)&&wireID&&wireID.length<=256&&!assistant.activities.some(activity=>activity.docId===docId)){
         assistant.activities.push({id:`${assistant.id}-subagent-${docId}`,kind:"subagent",title:title||"Subagent",docId});
+      }
+    }
+    if(type==="openade.unlinked_agent"){
+      const wireID=String(event.id??""),title=String(event.title??"Subagent").trim().slice(0,100),status=String(event.status??"");
+      if(wireID&&wireID.length<=256&&(status==="starting"||status==="spawned"||status==="failed")){
+        const id=`${assistant.id}-unlinked-agent-${wireID}`;
+        const existing=assistant.activities.find(activity=>activity.id===id);
+        if(existing){existing.subagentState=status;existing.title=title||"Subagent";}
+        else assistant.activities.push({id,kind:"subagent",title:title||"Subagent",subagentState:status});
       }
     }
     if(type==="openade.generated_image"){
@@ -150,6 +171,7 @@ export function createTranscriptParser(initialPrompt:string,initialCreatedAt?:st
         .trim();
       if (text) finalMessage = text;
       for (const block of content.filter((entry) => entry.type === "tool_use")) {
+		if(block.name==="Agent"||block.name==="Task")continue;
         addActivity(assistant, "tool", toolTitle(String(block.name ?? "Use tool")));
       }
     }
