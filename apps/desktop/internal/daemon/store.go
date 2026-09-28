@@ -13,34 +13,39 @@ import (
 )
 
 type Session struct {
-	queueMessageID    string
-	autoTitle         bool
-	Model             string     `json:"model"`
-	Instructions      string     `json:"instructions"`
-	ProviderSessionID string     `json:"provider_session_id"`
-	ServiceTier       string     `json:"service_tier"`
-	Effort            string     `json:"effort"`
-	CurrentTurnID     string     `json:"current_turn_id"`
-	Generation        int64      `json:"generation"`
-	ID                string     `json:"id"`
-	Title             string     `json:"title"`
-	Prompt            string     `json:"prompt"`
-	Agent             string     `json:"agent"`
-	Mode              string     `json:"mode"`
-	RepoRoot          string     `json:"repo_root"`
-	WorktreePath      string     `json:"worktree_path"`
-	Branch            string     `json:"branch"`
-	BaseBranch        string     `json:"base_branch"`
-	TicketKey         string     `json:"ticket_key,omitempty"`
-	TicketURL         string     `json:"ticket_url,omitempty"`
-	Status            string     `json:"status"`
-	Archived          bool       `json:"archived"`
-	PID               int        `json:"pid,omitempty"`
-	ExitCode          *int       `json:"exit_code,omitempty"`
-	PRURL             string     `json:"pr_url,omitempty"`
-	CreatedAt         time.Time  `json:"created_at"`
-	UpdatedAt         time.Time  `json:"updated_at"`
-	FinishedAt        *time.Time `json:"finished_at,omitempty"`
+	queueMessageID       string
+	autoTitle            bool
+	forkContext          string
+	forkContextSessionID string
+	forkBootstrap        bool
+	Model                string     `json:"model"`
+	Instructions         string     `json:"instructions"`
+	ProviderSessionID    string     `json:"provider_session_id"`
+	ServiceTier          string     `json:"service_tier"`
+	Effort               string     `json:"effort"`
+	CurrentTurnID        string     `json:"current_turn_id"`
+	Generation           int64      `json:"generation"`
+	ID                   string     `json:"id"`
+	ParentSessionID      string     `json:"parent_session_id,omitempty"`
+	ForkSourceID         string     `json:"fork_source_id,omitempty"`
+	Title                string     `json:"title"`
+	Prompt               string     `json:"prompt"`
+	Agent                string     `json:"agent"`
+	Mode                 string     `json:"mode"`
+	RepoRoot             string     `json:"repo_root"`
+	WorktreePath         string     `json:"worktree_path"`
+	Branch               string     `json:"branch"`
+	BaseBranch           string     `json:"base_branch"`
+	TicketKey            string     `json:"ticket_key,omitempty"`
+	TicketURL            string     `json:"ticket_url,omitempty"`
+	Status               string     `json:"status"`
+	Archived             bool       `json:"archived"`
+	PID                  int        `json:"pid,omitempty"`
+	ExitCode             *int       `json:"exit_code,omitempty"`
+	PRURL                string     `json:"pr_url,omitempty"`
+	CreatedAt            time.Time  `json:"created_at"`
+	UpdatedAt            time.Time  `json:"updated_at"`
+	FinishedAt           *time.Time `json:"finished_at,omitempty"`
 }
 
 type TerminalSession struct {
@@ -162,6 +167,16 @@ CREATE INDEX IF NOT EXISTS message_queue_session_idx ON message_queue(session_id
 	// Home chats marked pending may be replaced by automatic naming.
 	if _, alterErr := s.db.Exec(`ALTER TABLE sessions ADD COLUMN title_source TEXT NOT NULL DEFAULT 'manual'`); alterErr != nil && !strings.Contains(alterErr.Error(), "duplicate column") {
 		return fmt.Errorf("add session title source: %w", alterErr)
+	}
+	for _, column := range []struct{ name, sql string }{
+		{"parent_session_id", `ALTER TABLE sessions ADD COLUMN parent_session_id TEXT NOT NULL DEFAULT ''`},
+		{"fork_source_id", `ALTER TABLE sessions ADD COLUMN fork_source_id TEXT NOT NULL DEFAULT ''`},
+		{"fork_context", `ALTER TABLE sessions ADD COLUMN fork_context TEXT NOT NULL DEFAULT ''`},
+		{"fork_context_session_id", `ALTER TABLE sessions ADD COLUMN fork_context_session_id TEXT NOT NULL DEFAULT ''`},
+	} {
+		if _, alterErr := s.db.Exec(column.sql); alterErr != nil && !strings.Contains(alterErr.Error(), "duplicate column") {
+			return fmt.Errorf("add session %s: %w", column.name, alterErr)
+		}
 	}
 	if _, err := s.db.Exec(`UPDATE message_queue SET status='uncertain' WHERE status IN ('steering','provider-starting')`); err != nil {
 		return err
@@ -337,10 +352,18 @@ func (s *Store) CreateSession(session Session) error {
 		titleSource = "pending"
 	}
 	_, err := s.db.Exec(`INSERT INTO sessions
-(id,title,prompt,agent,mode,repo_root,worktree_path,branch,base_branch,ticket_key,ticket_url,status,pid,created_at,updated_at,model,effort,service_tier,instructions,title_source)
-VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, session.ID, session.Title, session.Prompt, session.Agent, session.Mode,
+(id,title,prompt,agent,mode,repo_root,worktree_path,branch,base_branch,ticket_key,ticket_url,status,pid,created_at,updated_at,model,effort,service_tier,instructions,title_source,parent_session_id,fork_source_id,fork_context,fork_context_session_id)
+VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, session.ID, session.Title, session.Prompt, session.Agent, session.Mode,
 		session.RepoRoot, session.WorktreePath, session.Branch, session.BaseBranch, session.TicketKey,
-		session.TicketURL, session.Status, session.PID, encodeTime(session.CreatedAt), encodeTime(session.UpdatedAt), session.Model, session.Effort, session.ServiceTier, session.Instructions, titleSource)
+		session.TicketURL, session.Status, session.PID, encodeTime(session.CreatedAt), encodeTime(session.UpdatedAt), session.Model, session.Effort, session.ServiceTier, session.Instructions, titleSource, session.ParentSessionID, session.ForkSourceID, session.forkContext, session.forkContextSessionID)
+	return err
+}
+
+func (s *Store) markForkContextDelivered(id, providerSessionID string) error {
+	if providerSessionID == "" {
+		return nil
+	}
+	_, err := s.db.Exec(`UPDATE sessions SET fork_context_session_id=? WHERE id=? AND fork_source_id<>''`, providerSessionID, id)
 	return err
 }
 
@@ -403,7 +426,7 @@ func (s *Store) SetPR(id, url string) error {
 
 func (s *Store) ListSessions() ([]Session, error) {
 	rows, err := s.db.Query(`SELECT id,title,prompt,agent,mode,repo_root,worktree_path,branch,base_branch,
-ticket_key,ticket_url,status,pid,exit_code,pr_url,created_at,updated_at,finished_at,current_turn_id,generation,model,effort,service_tier,instructions,provider_session_id,archived
+ticket_key,ticket_url,status,pid,exit_code,pr_url,created_at,updated_at,finished_at,current_turn_id,generation,model,effort,service_tier,instructions,provider_session_id,archived,parent_session_id,fork_source_id,'' AS fork_context,'' AS fork_context_session_id
 FROM sessions ORDER BY updated_at DESC`)
 	if err != nil {
 		return nil, err
@@ -422,7 +445,7 @@ FROM sessions ORDER BY updated_at DESC`)
 
 func (s *Store) GetSession(id string) (Session, error) {
 	row := s.db.QueryRow(`SELECT id,title,prompt,agent,mode,repo_root,worktree_path,branch,base_branch,
-ticket_key,ticket_url,status,pid,exit_code,pr_url,created_at,updated_at,finished_at,current_turn_id,generation,model,effort,service_tier,instructions,provider_session_id,archived
+ticket_key,ticket_url,status,pid,exit_code,pr_url,created_at,updated_at,finished_at,current_turn_id,generation,model,effort,service_tier,instructions,provider_session_id,archived,parent_session_id,fork_source_id,fork_context,fork_context_session_id
 FROM sessions WHERE id=?`, id)
 	return scanSession(row)
 }
@@ -672,6 +695,10 @@ func (s *Store) DeleteSession(id string, dataDir string) error {
 			return err
 		}
 	}
+	// A surviving child must remain reachable if its parent is deleted.
+	if _, err = tx.Exec(`UPDATE sessions SET parent_session_id='',updated_at=? WHERE parent_session_id=?`, encodeTime(time.Now().UTC()), id); err != nil {
+		return err
+	}
 	result, err := tx.Exec(`DELETE FROM sessions WHERE id=?`, id)
 	if err != nil {
 		return err
@@ -755,7 +782,7 @@ func scanSession(row scanner) (Session, error) {
 	var exitCode sql.NullInt64
 	err := row.Scan(&session.ID, &session.Title, &session.Prompt, &session.Agent, &session.Mode, &session.RepoRoot,
 		&session.WorktreePath, &session.Branch, &session.BaseBranch, &session.TicketKey, &session.TicketURL,
-		&session.Status, &session.PID, &exitCode, &session.PRURL, &created, &updated, &finished, &session.CurrentTurnID, &session.Generation, &session.Model, &session.Effort, &session.ServiceTier, &session.Instructions, &session.ProviderSessionID, &session.Archived)
+		&session.Status, &session.PID, &exitCode, &session.PRURL, &created, &updated, &finished, &session.CurrentTurnID, &session.Generation, &session.Model, &session.Effort, &session.ServiceTier, &session.Instructions, &session.ProviderSessionID, &session.Archived, &session.ParentSessionID, &session.ForkSourceID, &session.forkContext, &session.forkContextSessionID)
 	if err != nil {
 		return session, err
 	}

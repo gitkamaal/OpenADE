@@ -181,7 +181,7 @@ function AppShell() {
     if (page === "settings") previousPage.current = { page: "home", id: null };
     else setPage("home");
   }, [connected, editorDirtyRevision, liveSelected, page, retainedSelected, selectedId]);
-  const visibleSessions = sessions.filter(item=>!item.archived);
+  const visibleSessions = sessions.filter(item=>!item.archived&&!item.parent_session_id);
   const removedProjectSet = new Set(removedProjects);
   const visibleProjects = [...new Set([...scannedProjects, ...projects])].filter(project=>Boolean(project)&&!removedProjectSet.has(project));
   const visibleExternalConversations = externalConversations.filter(conversation=>!removedProjectSet.has(conversation.project_root));
@@ -283,7 +283,7 @@ function AppShell() {
   useEffect(() => {if(preferences.sidebar_open!==sidebarOpen)updatePreferences({...preferences,sidebar_open:sidebarOpen});}, [sidebarOpen]);
   useEffect(() => {
     const navigationSessions=()=>{
-      const eligible=sessions.filter(session=>!preferences.sidebar_project_filter||session.repo_root===preferences.sidebar_project_filter);
+      const eligible=sessions.filter(session=>!session.archived&&!session.parent_session_id&&(!preferences.sidebar_project_filter||session.repo_root===preferences.sidebar_project_filter));
       const ids=visibleSidebarSessionIds(eligible);
       return ids.length?ids.map(id=>eligible.find(session=>session.id===id)!):eligible;
     };
@@ -381,7 +381,7 @@ function AppShell() {
         {!connected && <div className="connection-banner"><SpinnerGap className="spin" /> {error || "Connecting to the local daemon…"}<button onClick={()=>{const bridge=window as typeof window & {go?:{main?:{App?:{Reconnect?:()=>Promise<void>}}}};void (bridge.go?.main?.App?.Reconnect?.()||Promise.resolve()).then(refresh).catch(reason=>setError(String(reason)));}}>Reconnect</button></div>}
         {connected && error && <button aria-label="Dismiss error" className="error-toast" onClick={() => setError(null)}><span role="alert">{error}</span><X /></button>}
         {selected&&<div className="retained-workspace" hidden={page==="settings"} inert={page==="settings"}><Suspense fallback={<div className="opening-session" role="status">Opening session…</div>}><SessionWorkspace activeView={page!=="settings"} key={selected.id} session={selected} projectLabel={projectNames[selected.repo_root]} preferences={preferences} onPreferences={updatePreferences} onArchive={()=>{if(editorDirty.current){setError("Save or discard file changes before archiving.");return;}void setArchived(selected.id,!selected.archived).then(done=>{if(done&&!selected.archived)setSelectedId(null);});}} onBack={() => {if(editorDirty.current){setError("Save or discard file changes before leaving this session.");return;}setSelectedId(null);}} onRefresh={refresh} /></Suspense></div>}
-        <div className="retained-home" hidden={Boolean(selected)||page!=="home"} inert={Boolean(selected)||page!=="home"}><Home activeView={!selected&&page==="home"} sessions={sessions} projects={visibleProjects} projectNames={projectNames} removedProjects={removedProjects} meta={meta} preferences={preferences} artwork={engine.new_thread_artwork} onCreated={(session) => { setPendingSelectionID(session.id); void refresh(); }} onOpen={openSession} onError={setError} /></div>
+        <div className="retained-home" hidden={Boolean(selected)||page!=="home"} inert={Boolean(selected)||page!=="home"}><Home activeView={!selected&&page==="home"} sessions={sessions.filter(item=>!item.parent_session_id)} projects={visibleProjects} projectNames={projectNames} removedProjects={removedProjects} meta={meta} preferences={preferences} artwork={engine.new_thread_artwork} onCreated={(session) => { setPendingSelectionID(session.id); void refresh(); }} onOpen={openSession} onError={setError} /></div>
         {selected&&page!=="settings" || page === "home" ? null : page === "sites" ? (
           <SitesPage />
         ) : page === "sessions" ? (

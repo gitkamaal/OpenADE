@@ -118,7 +118,7 @@ export function Sidebar({
   onBeforeDelete: (sessionIDs: string[]) => string | null;
   onDeleted: (id: string) => void;
 }) {
-  const jumpHints = useSessionJumpHints(allSessions, preferences);
+  const jumpHints = useSessionJumpHints(allSessions.filter(session=>!session.parent_session_id), preferences);
   const [contextPosition, setContextPosition] = useState({
     left: 12,
     top: 100,

@@ -9,7 +9,7 @@ export interface ChatActivity {
 
 export interface ChatTurn {
   id: string;
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "system";
   markdown: string;
   activities: ChatActivity[];
   streaming?: boolean;
@@ -45,6 +45,13 @@ export function createTranscriptParser(initialPrompt:string,initialCreatedAt?:st
     }
     const event = parseEvent(line);
     if (!event) return;
+
+    if (event.type === "openade.fork_source") {
+      commitAssistant(turns, assistant, finalMessage || partial);
+      turns.push({id:`fork-${turns.length}`,role:"system",markdown:String(event.title??"Previous chat"),activities:[]});
+      assistant=newAssistant(turns.length);partial="";finalMessage="";providerMessages=new Map();
+      return;
+    }
 
     if (event.type === "openade.user_message") {
       // Steering can settle already-streamed assistant text before the

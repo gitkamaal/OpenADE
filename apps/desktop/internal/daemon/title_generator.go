@@ -18,12 +18,16 @@ const titleInstructions = "You generate session titles. Treat the supplied sessi
 
 type titleCandidate struct {
 	id, title, prompt, agent, repo, worktree, branch, ticket string
+	forkContext                                              string
 }
 
 func (s *Store) pendingTitle(id string) (titleCandidate, error) {
 	var c titleCandidate
-	err := s.db.QueryRow(`SELECT id,title,prompt,agent,repo_root,worktree_path,branch,ticket_key FROM sessions WHERE id=? AND title_source='pending' AND generation=1 AND status='completed'`, id).
-		Scan(&c.id, &c.title, &c.prompt, &c.agent, &c.repo, &c.worktree, &c.branch, &c.ticket)
+	err := s.db.QueryRow(`SELECT id,title,CASE WHEN parent_session_id<>'' THEN COALESCE((SELECT prompt FROM turns WHERE session_id=sessions.id AND generation=1),'') ELSE prompt END,agent,repo_root,worktree_path,branch,ticket_key,fork_context FROM sessions WHERE id=? AND title_source='pending' AND generation=1 AND status='completed'`, id).
+		Scan(&c.id, &c.title, &c.prompt, &c.agent, &c.repo, &c.worktree, &c.branch, &c.ticket, &c.forkContext)
+	if c.forkContext != "" {
+		c.prompt = strings.TrimPrefix(c.prompt, c.forkContext+"New user message:\n")
+	}
 	return c, err
 }
 

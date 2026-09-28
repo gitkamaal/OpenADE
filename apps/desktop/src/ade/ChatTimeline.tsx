@@ -21,8 +21,9 @@ const hoverTimestampFormatter=new Intl.DateTimeFormat("en-US",{month:"short",day
 
 export function ChatTimeline({ session, output, activityExpanded = false }: { session: Session; output: string; activityExpanded?: boolean }) {
   const running = ["starting", "running", "waiting"].includes(session.status);
-  const parser=useRef(createTranscriptParser(session.prompt,session.created_at));const previous=useRef("");const prompt=useRef(session.prompt);
-  if(prompt.current!==session.prompt||!output.startsWith(previous.current)){parser.current=createTranscriptParser(session.prompt,session.created_at);previous.current="";prompt.current=session.prompt;}
+  const initialPrompt=session.parent_session_id?"":session.prompt;
+  const parser=useRef(createTranscriptParser(initialPrompt,session.created_at));const previous=useRef("");const prompt=useRef(initialPrompt);
+  if(prompt.current!==initialPrompt||!output.startsWith(previous.current)){parser.current=createTranscriptParser(initialPrompt,session.created_at);previous.current="";prompt.current=initialPrompt;}
   parser.current.append(output.slice(previous.current.length));previous.current=output;
   const turns=parser.current.snapshot(running);
   const [visibleCount,setVisibleCount]=useState(80);const timeline=useRef<HTMLDivElement>(null);const jump=useRef<string|null>(null);
@@ -33,7 +34,7 @@ export function ChatTimeline({ session, output, activityExpanded = false }: { se
       <MessageRail turns={turns} timeline={timeline} onJump={index=>{const target=turns[index];const row=timeline.current?.querySelector<HTMLElement>(`[data-message-id="${target.id}"]`),scroll=timeline.current?.closest<HTMLElement>(".messages");if(row&&scroll)scroll.scrollTo({top:scroll.scrollTop+row.getBoundingClientRect().top-scroll.getBoundingClientRect().top-24,behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth"});else{jump.current=target.id;setVisibleCount(current=>Math.max(current,turns.length-index));}}}/>
       {turns.length>visibleCount&&<button className="load-earlier" onClick={()=>setVisibleCount(count=>count+80)}>Show earlier messages</button>}
       {turns.slice(-visibleCount).map((turn) =>
-        turn.role === "user" ? (
+        turn.role === "system" ? <div className="fork-seam" key={turn.id} role="note">Forked from <strong>{turn.markdown}</strong></div> : turn.role === "user" ? (
           <UserTurn key={turn.id} id={turn.id} text={turn.markdown} timestamp={turn.timestamp} />
         ) : (
           <AssistantTurn

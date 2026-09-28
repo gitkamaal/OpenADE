@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -182,6 +183,7 @@ func (d *Daemon) routes() http.Handler {
 	mux.HandleFunc("POST /api/projects/remove", d.handleRemoveProject)
 	mux.HandleFunc("POST /api/projects/scan", d.handleScanProjects)
 	mux.HandleFunc("GET /api/sessions/{id}", d.handleGetSession)
+	mux.HandleFunc("POST /api/sessions/{id}/fork", d.handleForkSession)
 	mux.HandleFunc("PATCH /api/sessions/{id}", d.handleSessionDetails)
 	mux.HandleFunc("PATCH /api/sessions/{id}/archive", d.handleSessionArchive)
 	mux.HandleFunc("DELETE /api/sessions/{id}", d.handleDeleteSession)
@@ -337,6 +339,44 @@ func (d *Daemon) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	d.projectMu.Unlock()
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, session)
+}
+
+func (d *Daemon) handleForkSession(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		ParentSessionID string `json:"parent_session_id"`
+		Mode            string `json:"mode"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if request.Mode != "" && request.Mode != "fork" && request.Mode != "fresh" {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("side chat mode must be fork or fresh"))
+		return
+	}
+	sourceID := r.PathValue("id")
+	release, err := d.deletions.admit(sourceID)
+	if err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	defer release()
+	if request.ParentSessionID != "" && request.ParentSessionID != sourceID {
+		releaseParent, admitErr := d.deletions.admit(request.ParentSessionID)
+		if admitErr != nil {
+			writeError(w, http.StatusConflict, admitErr)
+			return
+		}
+		defer releaseParent()
+	}
+	d.projectMu.Lock()
+	session, err := d.sessions.Fork(r.Context(), sourceID, request.ParentSessionID, request.Mode != "fresh")
+	d.projectMu.Unlock()
+	if err != nil {
+		writeError(w, http.StatusConflict, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, session)

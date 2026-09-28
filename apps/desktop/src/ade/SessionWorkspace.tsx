@@ -7,6 +7,7 @@ import {ResizeBoundary} from "./ResizeBoundary";
 import {
   ArrowLeft,
   ArrowUp,
+  ChatCircleDots,
   DotsThree,
   GitBranch,
   Folder,
@@ -27,6 +28,7 @@ import {
 import { CSSProperties, FormEvent, ReactNode, lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import {
   createPullRequest,
+  createSideChat,
   enqueueMessage,
   updateQueuedMessage,
   getTicket,
@@ -48,6 +50,7 @@ import { copyText } from "./clipboard";
 import { ChatTimeline } from "./ChatTimeline";
 import { ReviewWorkspace } from "./ReviewWorkspace";
 import { ReviewComment, withReviewComments } from "./ReviewComments";
+import { SideChatPane } from "./SideChatPane";
 const TerminalWorkspace=lazy(()=>import("./Terminal").then(module=>({default:module.TerminalWorkspace})));
 const DirectTUIWorkspace=lazy(()=>import("./Terminal").then(module=>({default:module.DirectTUIWorkspace})));
 import { Preferences, shortcutMatches, shouldSend } from "./preferences";
@@ -68,7 +71,7 @@ export function recoverRejectedDraft(original:string,current:string){
   return `${original}\n\n${current}`;
 }
 
-type WorkTab = "review" | "terminal" | "pull-request" | "ticket" | "browser" | "history" | "editor";
+type WorkTab = "review" | "terminal" | "pull-request" | "ticket" | "browser" | "history" | "editor" | `side-chat:${string}`;
 
 export function SessionWorkspace({ activeView=true, session, projectLabel, preferences, onBack, onRefresh, onPreferences, onArchive }: { activeView?:boolean; session: Session; projectLabel?:string; preferences: Preferences; onPreferences:(next:Preferences,persist?:boolean)=>void; onArchive:()=>void; onBack: () => void; onRefresh: () => Promise<void> }) {
   const tuiMode = session.mode === "tui";
@@ -108,10 +111,12 @@ export function SessionWorkspace({ activeView=true, session, projectLabel, prefe
   const [editingMessageId,setEditingMessageId]=useState<string|null>(null);
   const [output, setOutput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [sideChatCreating,setSideChatCreating]=useState(false);
   const [streamVersion, setStreamVersion] = useState(0);
   const [commands, setCommands] = useState<AgentCommand[]>([]);
   const [commandOpen, setCommandOpen] = useState(false);
   const engine=useEngine();
+  const sideChats=engine.sessions.filter(child=>child.parent_session_id===session.id&&!child.archived);
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
   const outputRef = useRef<HTMLDivElement>(null);
   const reconnectStreamRef = useRef(false);
@@ -309,6 +314,24 @@ export function SessionWorkspace({ activeView=true, session, projectLabel, prefe
     }
   };
 
+  const openSideChat=(id:string)=>{
+    const surface:WorkTab=`side-chat:${id}`;
+    setTabs(current=>current.includes(surface)?current:[...current,surface]);
+    setTab(surface);setRightOpen(true);
+  };
+  const createChild=async(sourceId:string,mode:"fresh"|"fork")=>{
+    if(sideChatCreating)return;
+    setSideChatCreating(true);setPanelError(null);
+    try{
+      const source=engine.sessions.find(item=>item.id===sourceId)??session;
+      const child=await createSideChat(sourceId,mode,source.parent_session_id||source.id);
+      await onRefresh();await refreshEngine();
+      openSideChat(child.id);
+    }catch(reason){setPanelError(reason instanceof Error?reason.message:String(reason));}
+    finally{setSideChatCreating(false);}
+  };
+  useEffect(()=>{if(!engine.connected)return;const existing=new Set(engine.sessions.map(item=>item.id));setTabs(current=>{const next=current.filter(surface=>!surface.startsWith("side-chat:")||existing.has(surface.slice(10)));return next.length===current.length?current:next;});setTab(current=>current.startsWith("side-chat:")&&!existing.has(current.slice(10))?"review":current);},[engine.connected,engine.sessions]);
+
   const toggleSurface = (surface: WorkTab) => {
     setTabs(current=>current.includes(surface)?current:[...current,surface]);
     setTabMenu(false);
@@ -329,7 +352,7 @@ export function SessionWorkspace({ activeView=true, session, projectLabel, prefe
     if(shortcutMatches(event,preferences.shortcuts.panel)){event.preventDefault();setRightOpen(value=>!value);}
     else if(shortcutMatches(event,preferences.shortcuts.files)){event.preventDefault();toggleFiles();}
     else if(shortcutMatches(event,preferences.shortcuts.terminal)){event.preventDefault();toggleSurface("terminal");}
-    else if(shortcutMatches(event,preferences.shortcuts.focusComposer)){event.preventDefault();document.querySelector<HTMLTextAreaElement>(".session-composer textarea")?.focus();}
+    else if(shortcutMatches(event,preferences.shortcuts.focusComposer)){event.preventDefault();document.querySelector<HTMLTextAreaElement>(tab.startsWith("side-chat:")?".side-chat-pane .session-composer textarea":".conversation .session-composer textarea")?.focus();}
     else if(shortcutMatches(event,preferences.shortcuts.browser)||shortcutMatches(event,preferences.shortcuts.diffs)||shortcutMatches(event,preferences.shortcuts.history)){event.preventDefault();const target:WorkTab=shortcutMatches(event,preferences.shortcuts.browser)?"browser":shortcutMatches(event,preferences.shortcuts.diffs)?"review":"history";setTabs(current=>current.includes(target)?current:[...current,target]);setTab(target);setRightOpen(true);}
     else if(shortcutMatches(event,preferences.shortcuts.closePanel)){event.preventDefault();if(rightOpen)closeTab(tab);}
     else if(shortcutMatches(event,preferences.shortcuts.nextPanel)||shortcutMatches(event,preferences.shortcuts.previousPanel)){event.preventDefault();if(tabs.length){const index=tabs.indexOf(tab);const delta=shortcutMatches(event,preferences.shortcuts.previousPanel)?-1:1;setTab(tabs[(index+delta+tabs.length)%tabs.length]);setRightOpen(true);}}
@@ -345,13 +368,14 @@ export function SessionWorkspace({ activeView=true, session, projectLabel, prefe
   useEffect(()=>{if(!tabMenu&&!actionsOpen)return;const close=(event:PointerEvent)=>{if(!(event.target as Element).closest(".panel-tab-menu,.panel-add,.session-actions,.session-actions-trigger")){setTabMenu(false);setActionsOpen(false);}};document.addEventListener("pointerdown",close);return()=>document.removeEventListener("pointerdown",close);},[tabMenu,actionsOpen]);
   const closeTab=(surface:WorkTab)=>{if(surface==="editor"&&dirtyRef.current){setPanelError("Save or discard changes before closing the editor.");return;}const remaining=tabs.filter(value=>value!==surface);setTabs(remaining);if(tab===surface){if(remaining.length)setTab(remaining[remaining.length-1]);else setRightOpen(false);}};
   return (
-    <WebLinkContext.Provider value={preferences.open_web_links_in_app?url=>{setBrowserLink(current=>({url,version:(current?.version||0)+1}));setTabs(current=>current.includes("browser")?current:[...current,"browser"]);setTab("browser");setRightOpen(true);}:null}><div className={`session-workspace ${detailsEditor||tabMenu||actionsOpen?"has-overlay":""} ${rightOpen ? "with-panel" : ""} ${filesOpen?"with-files":""} ${session.agent === "shell" && !tuiMode ? "shell-workspace" : ""}`} style={{"--panel-width":`${preferences.panel_width}px`} as CSSProperties}>
+    <WebLinkContext.Provider value={preferences.open_web_links_in_app?url=>{setBrowserLink(current=>({url,version:(current?.version||0)+1}));setTabs(current=>current.includes("browser")?current:[...current,"browser"]);setTab("browser");setRightOpen(true);}:null}><div className={`session-workspace ${detailsEditor||tabMenu||actionsOpen?"has-overlay":""} ${rightOpen ? "with-panel" : ""} ${filesOpen?"with-files":""} ${tab.startsWith("side-chat:")?"with-side-chat":""} ${session.agent === "shell" && !tuiMode ? "shell-workspace" : ""}`} style={{"--panel-width":`${preferences.panel_width}px`} as CSSProperties}>
       <header className="session-header">
         <button className="icon-button" onClick={onBack} aria-label="Back"><ArrowLeft /></button>
         <span className={`status-dot ${session.status}`} />
         <div className="session-title"><h1>{session.title}</h1><p>{projectLabel??projectName(session.repo_root)} <span>·</span> <code title={session.branch}>{session.branch||"Folder workspace"}</code></p></div>
         <span className="session-header-spacer"/>
         {active && <button className="header-stop" onClick={() => void stopSession(session.id).then(onRefresh)}><Square weight="fill" /> Stop</button>}
+        {chatCapable&&<><button className="icon-button" aria-label="New side chat" title="New side chat" disabled={sideChatCreating} onClick={()=>void createChild(session.id,"fresh")}><Plus/></button><button className="icon-button" aria-label="Fork this chat" title="Fork this chat" disabled={sideChatCreating} onClick={()=>void createChild(session.id,"fork")}><GitBranch/></button></>}
         <div className="session-actions-anchor"><button className="icon-button session-actions-trigger" aria-label="Session actions" aria-expanded={actionsOpen} onClick={()=>setActionsOpen(value=>!value)}><DotsThree/></button>{actionsOpen&&<div className="session-actions" role="menu" onKeyDown={event=>menuKeys(event,()=>setActionsOpen(false),()=>document.querySelector<HTMLElement>(".session-actions-trigger")?.focus())}><button role="menuitem" onClick={()=>{setDetailsEditor("title");setDetailsValue(session.title);setActionsOpen(false);}}>Rename chat</button><button role="menuitem" onClick={()=>{setDetailsEditor("instructions");setDetailsValue(session.instructions||"");setActionsOpen(false);}}>Chat instructions</button><button role="menuitem" onClick={()=>{void copyText(session.worktree_path).catch(()=>setPanelError("Unable to copy workspace path."));setActionsOpen(false);}}>Copy workspace path</button><button role="menuitem" onClick={()=>{setActionsOpen(false);onArchive();}}><Archive/>{session.archived?"Unarchive session":"Archive session"}</button></div>}</div>
         <button className="icon-button" aria-label="Toggle files panel" aria-pressed={filesOpen} onClick={toggleFiles}><Folder/></button>
         <button className="icon-button" aria-label="Toggle right sidebar" aria-pressed={rightOpen} onClick={()=>setRightOpen(value=>!value)}><SidebarSimple/></button>
@@ -411,12 +435,12 @@ export function SessionWorkspace({ activeView=true, session, projectLabel, prefe
       </section>
       <div className="work-panel-clip" inert={!rightOpen}>
       {panelMounted&&<aside className="work-panel" aria-label={`${workTabLabel(tab)} panel`}>
-        <header className="work-panel-header"><div className="panel-tabs" role="tablist" aria-label="Workspace panels">{tabs.map(surface=><div className={surface===tab?"active":""} key={surface}><button role="tab" aria-selected={surface===tab} onClick={()=>setTab(surface)}>{workTabIcon(surface)}{workTabLabel(surface)}</button><button className="panel-tab-close" aria-label={`Close ${workTabLabel(surface)} tab`} onClick={()=>closeTab(surface)}><X/></button></div>)}</div><div className="panel-add-anchor"><button className="icon-button panel-add" aria-label="Add panel" aria-expanded={tabMenu} onClick={()=>setTabMenu(value=>!value)}><Plus/></button>{tabMenu&&<div className="panel-tab-menu" role="menu" onKeyDown={event=>menuKeys(event,()=>setTabMenu(false),()=>document.querySelector<HTMLElement>(".panel-add")?.focus())}>{(["browser","terminal","review","history","pull-request",...(session.ticket_key?["ticket"]:[])] as WorkTab[]).map(surface=><button role="menuitem" key={surface} onClick={()=>{setTabs(current=>current.includes(surface)?current:[...current,surface]);setTab(surface);setRightOpen(true);setTabMenu(false);}}>{workTabIcon(surface)}{workTabLabel(surface)}</button>)}</div>}</div><button className="icon-button" onClick={()=>{setRightOpen(false);requestAnimationFrame(()=>document.querySelector<HTMLElement>("[data-main-composer]")?.focus());}} aria-label="Close right sidebar"><SidebarSimple/></button></header>
-        <div className="panel-body">{panelError&&<div className="inline-error" role="alert"><span>{panelError}</span><button aria-label="Dismiss panel error" onClick={()=>setPanelError(null)}><X/></button></div>}<div className="file-editor-outlet" ref={setEditorTarget} hidden={tab!=="editor"}/>{tabs.length===0?<div className="panel-picker">{(["browser","terminal","review","history","pull-request"] as WorkTab[]).map(surface=><button key={surface} onClick={()=>toggleSurface(surface)}>{workTabIcon(surface)}{workTabLabel(surface)}</button>)}</div>:tab==="editor"?null:tab==="terminal"?<Suspense fallback={<div role="status">Opening terminal…</div>}><TerminalWorkspace session={session} preferences={preferences}/></Suspense>:tab==="review"?<ReviewWorkspace sessionId={session.id} git={Boolean(session.branch)} preferences={preferences} onPreferences={onPreferences} comments={comments} onComments={setComments}/>:tab==="history"?<HistoryPanel session={session}/>:tab==="browser"?<BrowserPanel session={session} requestedLink={browserLink}/>:tab==="ticket"?<TicketPanel ticket={ticket} session={session}/>:<PRPanel session={session} busy={busy} onCreate={createPR} onTicket={()=>setTab("ticket")}/>}</div>
+        <header className="work-panel-header"><div className="panel-tabs" role="tablist" aria-label="Workspace panels">{tabs.map(surface=><div className={surface===tab?"active":""} key={surface}><button role="tab" aria-selected={surface===tab} onClick={()=>setTab(surface)}>{workTabIcon(surface)}{surface.startsWith("side-chat:")?engine.sessions.find(item=>item.id===surface.slice(10))?.title||"Side chat":workTabLabel(surface)}</button><button className="panel-tab-close" aria-label={`Close ${workTabLabel(surface)} tab`} onClick={()=>closeTab(surface)}><X/></button></div>)}</div><div className="panel-add-anchor"><button className="icon-button panel-add" aria-label="Add panel" aria-expanded={tabMenu} onClick={()=>setTabMenu(value=>!value)}><Plus/></button>{tabMenu&&<div className="panel-tab-menu" role="menu" onKeyDown={event=>menuKeys(event,()=>setTabMenu(false),()=>document.querySelector<HTMLElement>(".panel-add")?.focus())}>{(["browser","terminal","review","history","pull-request",...(session.ticket_key?["ticket"]:[])] as WorkTab[]).map(surface=><button role="menuitem" key={surface} onClick={()=>{setTabs(current=>current.includes(surface)?current:[...current,surface]);setTab(surface);setRightOpen(true);setTabMenu(false);}}>{workTabIcon(surface)}{workTabLabel(surface)}</button>)}<button role="menuitem" disabled={sideChatCreating} onClick={()=>{setTabMenu(false);void createChild(session.id,"fork");}}><ChatCircleDots/>Side chat</button></div>}</div><button className="icon-button" onClick={()=>{setRightOpen(false);requestAnimationFrame(()=>document.querySelector<HTMLElement>("[data-main-composer]")?.focus());}} aria-label="Close right sidebar"><SidebarSimple/></button></header>
+        <div className="panel-body">{panelError&&<div className="inline-error" role="alert"><span>{panelError}</span><button aria-label="Dismiss panel error" onClick={()=>setPanelError(null)}><X/></button></div>}<div className="file-editor-outlet" ref={setEditorTarget} hidden={tab!=="editor"}/>{tabs.length===0?<div className="panel-picker">{(["browser","terminal","review","history","pull-request"] as WorkTab[]).map(surface=><button key={surface} onClick={()=>toggleSurface(surface)}>{workTabIcon(surface)}{workTabLabel(surface)}</button>)}<button onClick={()=>void createChild(session.id,"fork")}><ChatCircleDots/>Side chat</button></div>:tab.startsWith("side-chat:")?(()=>{const child=engine.sessions.find(item=>item.id===tab.slice(10));return child?<SideChatPane key={child.id} session={child} sourceTitle={engine.sessions.find(item=>item.id===child.fork_source_id)?.title??session.title} preferences={preferences} onRefresh={onRefresh} onForkSibling={()=>void createChild(child.id,"fork")} onNewSibling={()=>void createChild(child.id,"fresh")}/>:<p className="panel-empty">Side chat unavailable.</p>;})():tab==="editor"?null:tab==="terminal"?<Suspense fallback={<div role="status">Opening terminal…</div>}><TerminalWorkspace session={session} preferences={preferences}/></Suspense>:tab==="review"?<ReviewWorkspace sessionId={session.id} git={Boolean(session.branch)} preferences={preferences} onPreferences={onPreferences} comments={comments} onComments={setComments}/>:tab==="history"?<HistoryPanel session={session}/>:tab==="browser"?<BrowserPanel session={session} requestedLink={browserLink}/>:tab==="ticket"?<TicketPanel ticket={ticket} session={session}/>:<PRPanel session={session} busy={busy} onCreate={createPR} onTicket={()=>setTab("ticket")}/>}</div>
       </aside>}
       </div>
       {rightOpen&&!(session.agent==="shell"&&!tuiMode)&&<ResizeBoundary className="panel-resizer" label="Resize right sidebar" width={preferences.panel_width} min={360} max={900} fraction={filesOpen?.45:.55} defaultWidth={520} direction={-1} onResize={width=>onPreferences({...preferences,panel_width:width},false)} onCommit={width=>onPreferences({...preferences,panel_width:width})}/>}
-      <div className="files-panel-clip" inert={!filesOpen}>{filesMounted&&<FilesPanel session={session} preferences={preferences} onDirtyChange={onDirtyChange} editorTarget={editorTarget} onOpenEditor={openEditor} comments={comments} onComments={setComments}/>}</div>
+      <div className="files-panel-clip" inert={!filesOpen}>{filesMounted&&<FilesPanel session={session} preferences={preferences} onDirtyChange={onDirtyChange} editorTarget={editorTarget} onOpenEditor={openEditor} comments={comments} onComments={setComments} sideChats={sideChats} onOpenSideChat={openSideChat} onNewSideChat={()=>void createChild(session.id,"fresh")} onForkSideChat={()=>void createChild(session.id,"fork")} sideChatCreating={sideChatCreating}/>}</div>
       <aside className="inspector-rail" aria-label="Session tools"><InspectorButton active={rightOpen&&tab==="review"} onClick={()=>toggleSurface("review")} icon={<GitDiff/>} label="Changes"/><InspectorButton active={rightOpen&&tab==="terminal"} onClick={()=>toggleSurface("terminal")} icon={<TerminalWindow/>} label="Terminal"/><InspectorButton active={rightOpen&&tab==="pull-request"} onClick={()=>toggleSurface("pull-request")} icon={<GithubLogo/>} label="PR"/></aside>
     </div></WebLinkContext.Provider>
   );
@@ -427,10 +451,12 @@ function InspectorButton({ active, icon, label, onClick }: { active: boolean; ic
 }
 
 function workTabLabel(tab: WorkTab): string {
-  return ({ review: "Diffs", terminal: "Terminal", "pull-request": "Pull request", ticket: "Ticket",browser:"Browser",history:"History",editor:"Editor" } as Record<WorkTab, string>)[tab];
+  if(tab.startsWith("side-chat:"))return "Side chat";
+  return ({ review: "Diffs", terminal: "Terminal", "pull-request": "Pull request", ticket: "Ticket",browser:"Browser",history:"History",editor:"Editor" } as Record<string, string>)[tab];
 }
 
 function workTabIcon(tab: WorkTab): ReactNode {
+  if(tab.startsWith("side-chat:"))return <ChatCircleDots/>;
   if (tab === "editor") return <FileCode/>;
   if (tab === "browser") return <Globe/>;
   if (tab === "history") return <ClockCounterClockwise/>;

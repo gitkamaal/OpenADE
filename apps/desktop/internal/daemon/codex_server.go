@@ -291,6 +291,7 @@ func (m *SessionManager) startCodexTurn(session Session, program string) error {
 	}
 	live := newLiveSession(nil, c.rpc.cmd)
 	live.rawPTY = false
+	live.forkBootstrap = session.forkBootstrap
 	live.generation = generation
 	live.turnID = turnID
 	live.codex = c
@@ -376,6 +377,11 @@ func (m *SessionManager) startCodexTurn(session Session, program string) error {
 	}
 	if c.live == live && c.providerTurn == "" {
 		c.providerTurn = result.Turn.ID
+	}
+	if live.forkBootstrap {
+		if err := m.store.markForkContextDelivered(session.ID, c.threadID); err != nil {
+			c.emit(map[string]any{"type": "error", "message": "Unable to save side-chat history delivery; the next turn may repeat its context."})
+		}
 	}
 	if c.completedStatus != "" {
 		c.finish(c.completedStatus)
@@ -463,6 +469,9 @@ func (c *codexConversation) finish(status string) {
 		code = 1
 	}
 	_ = c.manager.store.updateGeneration(c.sessionID, live.generation, status, 0, &code)
+	if status == "completed" && live.forkBootstrap {
+		_ = c.manager.store.markForkContextDelivered(c.sessionID, c.threadID)
+	}
 	c.manager.mu.Lock()
 	if c.manager.live[c.sessionID] == live {
 		delete(c.manager.live, c.sessionID)

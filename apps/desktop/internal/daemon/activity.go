@@ -114,7 +114,8 @@ func (s *Store) beginTurn(sessionID, prompt, messageID, startTree string, pendin
 	return id, generation, tx.Commit()
 }
 
-const sessionColumns = `id,title,prompt,agent,mode,repo_root,worktree_path,branch,base_branch,ticket_key,ticket_url,status,pid,exit_code,pr_url,created_at,updated_at,finished_at,current_turn_id,generation,model,effort,service_tier,instructions,provider_session_id,archived`
+// List/snapshot reads never need the potentially large private bootstrap.
+const sessionColumns = `id,title,prompt,agent,mode,repo_root,worktree_path,branch,base_branch,ticket_key,ticket_url,status,pid,exit_code,pr_url,created_at,updated_at,finished_at,current_turn_id,generation,model,effort,service_tier,instructions,provider_session_id,archived,parent_session_id,fork_source_id,'' AS fork_context,'' AS fork_context_session_id`
 
 func (s *Store) Snapshot(ctx context.Context) (map[string]any, error) {
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})

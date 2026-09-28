@@ -35,6 +35,8 @@ export type SessionStatus =
 export interface Session {
  model:string;effort:string;service_tier:string;instructions:string;provider_session_id:string;archived:boolean;
   id: string;
+  parent_session_id?: string;
+  fork_source_id?: string;
   title: string;
   prompt: string;
   agent: string;
@@ -216,6 +218,12 @@ export const createSession = (input: CreateSessionInput) =>
   request<Session>("/api/sessions", {
     method: "POST",
     body: JSON.stringify(input),
+  });
+
+export const createSideChat = (sourceId:string, mode:"fresh"|"fork", parentSessionId?:string) =>
+  request<Session>(`/api/sessions/${encodeURIComponent(sourceId)}/fork`, {
+    method:"POST",
+    body:JSON.stringify({mode,parent_session_id:parentSessionId??""}),
   });
 
 export const switchSessionSurface = (id: string, mode: "chat" | "tui") =>

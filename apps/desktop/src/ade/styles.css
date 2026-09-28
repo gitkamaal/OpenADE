@@ -1010,3 +1010,28 @@ html[data-input-modality="pointer"] :is(button,a,input,textarea,select,[role="co
 html[data-input-modality="pointer"] .ade .cm-focused{outline:none}
 html[data-input-modality="pointer"] .ade[data-native-material="increased-contrast"] :is(button,a,input,textarea,select,[role="combobox"],[tabindex]):focus-visible{outline:2px solid var(--text)!important;outline-offset:2px}
 .ade>.model-menu{max-height:calc(100vh - 16px);overflow-y:auto}
+
+.files-side-chats{flex:none;max-height:min(280px,38%);min-height:44px;border-top:1px solid var(--line-soft);display:flex;flex-direction:column;overflow:hidden;padding:4px 6px 6px}
+.files-side-chats>header{min-height:29px;display:flex;align-items:center;gap:3px}
+.files-side-chats>header button{width:25px;height:25px;border:0;border-radius:6px;background:transparent;color:var(--muted);display:grid;place-items:center;cursor:pointer}
+.files-side-chats>header button:disabled,.files-side-empty button:disabled{opacity:.4;cursor:default}
+.files-side-chats>header button:not(:disabled):hover{background:var(--surface-2);color:var(--text)}
+.files-side-chats>header .files-side-toggle{display:flex;align-items:center;gap:7px;flex:1;width:auto;justify-content:flex-start;text-align:left;padding:0 5px;font-size:11px}
+.files-side-toggle strong{font-weight:600;color:var(--text)}.files-side-toggle span{color:var(--muted-2)}
+.files-side-chats svg{width:13px;height:13px}
+.files-side-chat-list{min-height:0;overflow:auto;padding:2px 0}
+.files-side-chat-list>button{width:100%;height:28px;display:flex;align-items:center;gap:7px;border:0;border-radius:6px;padding:0 7px;background:transparent;color:var(--text);font-size:11px;text-align:left;cursor:pointer}
+.files-side-chat-list>button:hover{background:var(--surface-2)}.files-side-chat-list>button>span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.files-side-empty{padding:8px 5px 6px;color:var(--muted);font-size:10px}.files-side-empty>svg{display:none}.files-side-empty p{margin:0 0 9px}.files-side-empty>div{display:flex;gap:5px}
+.files-side-empty button{display:flex;align-items:center;gap:5px;min-height:25px;border:1px solid var(--line);border-radius:6px;background:var(--surface-2);color:var(--text);padding:0 6px;font-size:10px;cursor:pointer}
+.side-chat-pane{height:100%;min-height:0;display:flex;flex-direction:column;background:transparent}
+.side-chat-heading{flex:none;min-height:48px;display:flex;align-items:center;gap:4px;padding:5px 12px;border-bottom:1px solid var(--line-soft)}
+.side-chat-heading>div{flex:1;min-width:0;display:grid;gap:2px}.side-chat-heading strong,.side-chat-heading small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.side-chat-heading strong{font-size:12px;font-weight:600}.side-chat-heading small{font-size:10px;color:var(--muted)}
+.side-chat-heading>button{width:25px;height:25px;border:0;border-radius:6px;background:transparent;color:var(--muted);display:grid;place-items:center;cursor:pointer}.side-chat-heading>button:hover{background:var(--surface-2);color:var(--text)}.side-chat-heading>button:disabled{opacity:.4;cursor:default}.side-chat-heading svg{width:14px;height:14px}
+.side-chat-messages{flex:1;min-height:0;padding:22px 18px 12px}.side-chat-messages .chat-timeline{max-width:100%;width:100%}.side-chat-messages .chat-user-turn{max-width:94%}.side-chat-messages .chat-assistant-turn{margin-bottom:30px}
+.side-chat-composer{flex:none;width:calc(100% - 24px);max-width:none;margin:0 12px 12px}.side-chat-composer .session-composer{width:100%}
+.fork-seam{align-self:center;max-width:100%;display:flex;align-items:center;gap:4px;padding:5px 10px;border:1px solid var(--line-soft);border-radius:999px;background:var(--surface-2);color:var(--muted);font-size:10px}.fork-seam strong{font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.session-workspace.with-panel.with-files.with-side-chat{grid-template-columns:minmax(300px,1fr) minmax(340px,min(var(--panel-width),45%)) 220px}
+.with-side-chat.with-files .panel-resizer{right:calc(max(340px,min(var(--panel-width),45%)) + 217px)}
+.side-chat-messages .chat-timeline{gap:16px}.side-chat-messages .chat-assistant-turn{margin-bottom:12px}
+@media(max-width:900px){.session-workspace.with-panel.with-files.with-side-chat{grid-template-columns:0 minmax(0,1fr) 230px}.with-side-chat.with-files .panel-resizer{display:none}}

@@ -48,6 +48,7 @@ type liveSession struct {
 	done              chan struct{}
 	stopRequested     bool
 	terminationReason string
+	forkBootstrap     bool
 	generation        int64
 	turnID            string
 	rawPTY            bool
@@ -330,6 +331,7 @@ func (m *SessionManager) launchCommand(session Session, program string, args []s
 	}
 	live := newLiveSession(ptmx, cmd)
 	live.rawPTY = rawPTY
+	live.forkBootstrap = session.forkBootstrap
 	live.generation = generation
 	live.turnID = turnID
 	if err := m.store.UpdateRuntime(session.ID, "running", cmd.Process.Pid, nil); err != nil {
@@ -370,6 +372,11 @@ func (m *SessionManager) Resume(session Session, prompt string) error {
 	}
 	transcriptPath := filepath.Join(m.dataDir, "transcripts", session.ID+".log")
 	providerID := m.providerID(session)
+	providerPrompt := prompt
+	session.forkBootstrap = session.ForkSourceID != "" && session.forkContext != "" && (session.forkContextSessionID == "" || providerID != session.forkContextSessionID)
+	if session.forkBootstrap {
+		providerPrompt = session.forkContext + "New user message:\n" + prompt
+	}
 	if providerID == "" && isClaudeAgent(session.Agent) {
 		providerID = session.ID
 		if err := m.writeProviderSessionMarker(session, providerID); err != nil {
@@ -391,17 +398,17 @@ func (m *SessionManager) Resume(session Session, prompt string) error {
 	var args []string
 	if providerID == "" {
 		fresh := session
-		fresh.Prompt = prompt
+		fresh.Prompt = providerPrompt
 		program, args, err = agentCommand(fresh)
 	} else if needsFreshClaudeSession(session, providerID) {
-		program, args, err = startClaudeAgentCommand(session, providerID, prompt)
+		program, args, err = startClaudeAgentCommand(session, providerID, providerPrompt)
 	} else {
-		program, args, err = resumeAgentCommand(session, providerID, prompt)
+		program, args, err = resumeAgentCommand(session, providerID, providerPrompt)
 	}
 	if err != nil {
 		return err
 	}
-	session.Prompt = prompt
+	session.Prompt = providerPrompt
 	return m.launchCommand(session, program, args)
 }
 
@@ -811,7 +818,10 @@ func (m *SessionManager) wait(id string, live *liveSession, transcript *os.File)
 		_ = transcript.Close()
 	}
 	if session, err := m.store.GetSession(id); err == nil {
-		_ = m.providerID(session)
+		providerID := m.providerID(session)
+		if status == "completed" && live.forkBootstrap {
+			_ = m.store.markForkContextDelivered(id, providerID)
+		}
 	}
 	if status == "completed" {
 		m.maybeGenerateTitle(id, live.generation)
