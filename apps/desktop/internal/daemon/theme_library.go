@@ -7,6 +7,8 @@ package daemon
 // normalized VS Code documents for the renderer to map to its fixed palette.
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -65,6 +67,112 @@ type ThemeLibraryEntry struct {
 	Variants           []ThemeVariantSource  `json:"variants"`
 	Failures           []ThemeVariantFailure `json:"failures,omitempty"`
 	Status             ThemeLibraryStatus    `json:"status"`
+}
+
+// A review uses the same bounded compiler as installation. The digest makes
+// selection refer to exactly the analyzed source, even if the files change
+// while the dialog is open.
+type ThemeImportPreview struct {
+	Path       string                `json:"path"`
+	Name       string                `json:"name"`
+	SourceKind string                `json:"sourceKind"`
+	Variants   []ThemeVariantSource  `json:"variants"`
+	Failures   []ThemeVariantFailure `json:"failures"`
+	Digest     string                `json:"digest"`
+}
+
+const themePreviewID = "custom-preview"
+
+func themeSourceName(path string) string {
+	name := filepath.Base(filepath.Clean(path))
+	if name == "package.json" {
+		name = filepath.Base(filepath.Dir(filepath.Clean(path)))
+	}
+	return strings.TrimSuffix(name, filepath.Ext(name))
+}
+
+func compileThemePreview(path string) (ThemeImportPreview, error) {
+	if !filepath.IsAbs(path) {
+		return ThemeImportPreview{}, fmt.Errorf("choose an absolute theme file or extension folder")
+	}
+	resolved, err := filepath.EvalSymlinks(filepath.Clean(path))
+	if err != nil {
+		return ThemeImportPreview{}, fmt.Errorf("resolve theme source: %w", err)
+	}
+	compiled, source, err := compileThemeSource(resolved, themePreviewID, themeSourceName(resolved))
+	if err != nil {
+		return ThemeImportPreview{}, err
+	}
+	preview := ThemeImportPreview{Path: source.Path, Name: compiled.name, SourceKind: source.Kind, Variants: compiled.variants, Failures: compiled.failures}
+	data, err := json.Marshal(struct {
+		Path     string
+		Name     string
+		Kind     string
+		Variants []ThemeVariantSource
+		Failures []ThemeVariantFailure
+	}{preview.Path, preview.Name, preview.SourceKind, preview.Variants, preview.Failures})
+	if err != nil {
+		return ThemeImportPreview{}, err
+	}
+	sum := sha256.Sum256(data)
+	preview.Digest = hex.EncodeToString(sum[:])
+	return preview, nil
+}
+
+func (l *ThemeLibrary) importReviewed(path, digest, mode string, selected []string) (ThemeLibraryEntry, error) {
+	if mode != "snapshot" && mode != "link" {
+		return ThemeLibraryEntry{}, fmt.Errorf("choose Import a copy or Link to source")
+	}
+	if len(digest) != 64 || len(selected) == 0 || len(selected) > themeVariantLimit {
+		return ThemeLibraryEntry{}, fmt.Errorf("analyze the source and select at least one variant")
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	next := cloneThemeEntries(l.entries)
+	if len(next) >= themeEntryLimit {
+		return ThemeLibraryEntry{}, fmt.Errorf("custom theme library is limited to %d entries", themeEntryLimit)
+	}
+	preview, err := compileThemePreview(path)
+	if err != nil {
+		return ThemeLibraryEntry{}, err
+	}
+	if preview.Digest != digest {
+		return ThemeLibraryEntry{}, fmt.Errorf("the theme source changed after analysis; analyze it again")
+	}
+	wanted := make(map[string]bool, len(selected))
+	for _, id := range selected {
+		if wanted[id] {
+			return ThemeLibraryEntry{}, fmt.Errorf("duplicate selected variant")
+		}
+		wanted[id] = true
+	}
+	id := uniqueThemeID(slugTheme(preview.Name), next)
+	variants := make([]ThemeVariantSource, 0, len(wanted))
+	for _, variant := range preview.Variants {
+		if !wanted[variant.ID] {
+			continue
+		}
+		if !strings.HasPrefix(variant.ID, themePreviewID) {
+			return ThemeLibraryEntry{}, fmt.Errorf("invalid compiled variant identity")
+		}
+		originalID := variant.ID
+		variant.ID = id + strings.TrimPrefix(variant.ID, themePreviewID)
+		variants = append(variants, variant)
+		delete(wanted, originalID)
+	}
+	if len(wanted) != 0 || len(variants) == 0 {
+		return ThemeLibraryEntry{}, fmt.Errorf("selected theme variants changed; analyze again")
+	}
+	source := ThemeLibrarySource{Kind: preview.SourceKind, Path: preview.Path}
+	if mode == "snapshot" {
+		source.Kind = "snapshot"
+	}
+	entry := ThemeLibraryEntry{ID: id, Name: preview.Name, Source: source, SelectedVariantIDs: variantIDs(variants), Variants: variants, Status: ThemeLibraryStatus{State: "ready"}}
+	next = append(next, entry)
+	if err := l.saveLocked(next); err != nil {
+		return ThemeLibraryEntry{}, err
+	}
+	return entry, nil
 }
 
 type themeLibraryDisk struct {
@@ -525,9 +633,12 @@ func readJSON5(path, kind string) (map[string]any, error) {
 	return value, nil
 }
 func boundedFile(path string, limit int64) ([]byte, error) {
-	info, err := os.Stat(path)
+	info, err := os.Lstat(path)
 	if err != nil {
 		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular theme file", filepath.Base(path))
 	}
 	if info.Size() > limit {
 		return nil, fmt.Errorf("%s exceeds the %d-byte limit", filepath.Base(path), limit)
@@ -537,6 +648,10 @@ func boundedFile(path string, limit int64) ([]byte, error) {
 		return nil, err
 	}
 	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil || !opened.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular theme file", filepath.Base(path))
+	}
 	data, err := io.ReadAll(io.LimitReader(file, limit+1))
 	if err != nil {
 		return nil, err
@@ -942,6 +1057,43 @@ func (d *Daemon) handleThemeLibrary(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]any{"entries": d.themeLibrary.snapshot()})
+}
+func (d *Daemon) handlePreviewThemeSource(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Path string `json:"path"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&body); err != nil {
+		writeError(w, 400, fmt.Errorf("choose a local theme source"))
+		return
+	}
+	preview, err := compileThemePreview(body.Path)
+	if err != nil {
+		writeError(w, 400, err)
+		return
+	}
+	writeJSON(w, 200, preview)
+}
+func (d *Daemon) handleImportReviewedTheme(w http.ResponseWriter, r *http.Request) {
+	if d.themeLibrary == nil {
+		writeError(w, 503, fmt.Errorf("theme library unavailable"))
+		return
+	}
+	var body struct {
+		Path     string   `json:"path"`
+		Digest   string   `json:"digest"`
+		Mode     string   `json:"mode"`
+		Selected []string `json:"selected"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 16*1024)).Decode(&body); err != nil {
+		writeError(w, 400, fmt.Errorf("invalid theme selection"))
+		return
+	}
+	entry, err := d.themeLibrary.importReviewed(body.Path, body.Digest, body.Mode, body.Selected)
+	if err != nil {
+		writeError(w, 400, err)
+		return
+	}
+	writeJSON(w, 201, entry)
 }
 func (d *Daemon) handleLinkThemeSource(w http.ResponseWriter, r *http.Request) {
 	var body struct {

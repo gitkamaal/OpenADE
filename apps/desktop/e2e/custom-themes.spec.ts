@@ -2,8 +2,8 @@ import { expect } from "@playwright/test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { ready, test, tmp, token } from "./helpers";
-import {spawn,ChildProcess} from "node:child_process";
+import { daemon, ready, test, tmp, token } from "./helpers";
+import {execFileSync,spawn,ChildProcess} from "node:child_process";
 
 const nativeThemeId=(entryId:string,variantId:string)=>`native:${encodeURIComponent(entryId)}:${encodeURIComponent(variantId)}`;
 
@@ -25,6 +25,63 @@ test("linked selections restore before Settings, missing package variants retain
 });
 
 const fixture=(name:string,type:string,background:string,keyword:string,ansiRed:string)=>JSON.stringify({name,type,colors:{"editor.background":background,"editor.foreground":"#20242a","sideBar.background":"#e5e8ed","terminal.background":"#11151a","terminal.foreground":"#f2f4f8","terminal.ansiRed":ansiRed},tokenColors:[{scope:"keyword",settings:{foreground:keyword}}]});
+
+test("native theme import reviews variants, rejects changed sources and installs only selected palettes",async({page,request})=>{
+ const folder=fs.mkdtempSync(path.join(os.tmpdir(),"openade-theme-review-"));
+ const manifest=path.join(folder,"package.json"),light=path.join(folder,"light.json"),dark=path.join(folder,"dark.json");
+ fs.writeFileSync(manifest,JSON.stringify({displayName:"Review family",contributes:{themes:[{label:"Review Light",uiTheme:"vs",path:"light.json"},{label:"Review Dark",uiTheme:"vs-dark",path:"dark.json"},{label:"Broken",uiTheme:"vs-dark",path:"missing.json"}]}}));
+ fs.writeFileSync(light,fixture("Review Light","light","#f5f6f8","#7744bb","#cc3344"));
+ fs.writeFileSync(dark,fixture("Review Dark","dark","#151b26","#aa88dd","#ee5577"));
+ await page.addInitScript(({folder,daemon,token})=>{Object.assign(window,{go:{main:{App:{EngineConnection:async()=>({url:daemon,token}),SelectThemeSource:async()=>folder,SelectThemePackage:async()=>folder,RevealThemeSource:async(id:string)=>{Object.assign(window,{__revealedTheme:id});}}}}});},{folder,daemon,token});
+ try{
+  await ready(page);await page.getByLabel("Open settings").click();await page.getByRole("tab",{name:"Appearance",exact:true}).click();
+  const trigger=page.getByRole("button",{name:"Import themes…"});await trigger.click();
+  const dialog=page.getByRole("dialog",{name:"Import a theme"});await expect(dialog).toBeVisible();
+  await dialog.getByRole("button",{name:"Browse folder"}).click();
+  await expect(dialog.getByText("Review Light",{exact:true})).toBeVisible();
+  await expect(dialog.getByText("Review Dark",{exact:true})).toBeVisible();
+  await expect(dialog).toContainText("Broken could not be compiled");
+  await dialog.getByRole("button",{name:"Details",exact:true}).first().click();
+  await expect(dialog.getByLabel("Review Light color preview")).toHaveCount(2);
+  await dialog.getByRole("button",{name:"Select Review Light"}).click();
+  await dialog.getByRole("button",{name:"Link to source"}).click();
+  fs.writeFileSync(dark,fixture("Review Dark","dark","#222c3a","#aa88dd","#ee5577"));
+  await dialog.getByRole("button",{name:"Import selected"}).click();
+  await expect(dialog.getByRole("alert")).toContainText("changed after analysis");
+  await dialog.getByRole("button",{name:"Analyze theme"}).click();
+  await expect(dialog.getByText("Review Dark",{exact:true})).toBeVisible();
+  await dialog.getByRole("button",{name:"Cancel"}).click();await expect(trigger).toBeFocused();
+  let library=await(await request.get(`${daemon}/api/themes`)).json() as {entries:{name:string}[]};
+  expect((library.entries??[]).some(item=>item.name==="Review family")).toBe(false);
+  await trigger.click();await dialog.getByLabel("Source").fill(folder);await dialog.getByRole("button",{name:"Analyze theme"}).click();
+  await dialog.getByRole("button",{name:"Select Review Light"}).click();await dialog.getByRole("button",{name:"Link to source"}).click();
+  await dialog.getByRole("button",{name:"Import selected"}).click();await expect(dialog).toHaveCount(0);
+  library=await(await request.get(`${daemon}/api/themes`)).json();
+  const entry=library.entries.find(item=>item.name==="Review family") as {id:string;source:{kind:string};variants:{id:string;name:string}[]};
+  expect(entry.source.kind).toBe("linkedPackage");expect(entry.variants.map(item=>item.name)).toEqual(["Review Dark"]);
+  const row=page.locator(".linked-theme-item").filter({hasText:"Review family"});await row.getByRole("button",{name:"Apply",exact:true}).click();
+  await expect(page.locator(".ade")).toHaveCSS("--bg","#222c3a");
+  await page.reload();await expect(page.locator(".ade")).toHaveAttribute("data-theme-id",nativeThemeId(entry.id,entry.variants[0].id));
+  await page.getByLabel("Open settings").click();await page.getByRole("tab",{name:"Appearance",exact:true}).click();
+  await trigger.click();await dialog.getByLabel("Source").fill(dark);await dialog.getByRole("button",{name:"Analyze theme"}).click();
+  await expect(dialog.getByRole("button",{name:"Import a copy"})).toHaveAttribute("aria-pressed","true");
+  await dialog.getByRole("button",{name:"Import selected"}).click();
+  library=await(await request.get(`${daemon}/api/themes`)).json();
+  const copy=library.entries.find(item=>item.name==="Review Dark") as {id:string;source:{kind:string};variants:{id:string}[]};
+  expect(copy.source.kind).toBe("snapshot");
+  fs.writeFileSync(dark,fixture("Review Dark","dark","#414950","#aa88dd","#ee5577"));
+  await page.reload();await page.getByLabel("Open settings").click();await page.getByRole("tab",{name:"Appearance",exact:true}).click();
+  const copyRow=page.locator(".linked-theme-item").filter({has:page.locator(".linked-theme-title small").getByText("snapshot",{exact:true})}).filter({hasText:"Review Dark"});
+  await copyRow.getByRole("button",{name:"Apply",exact:true}).click();await expect(page.locator(".ade")).toHaveCSS("--bg","#222c3a");
+  await copyRow.getByRole("button",{name:"Reveal",exact:true}).click();
+  expect(await page.evaluate(()=>(window as typeof window&{__revealedTheme?:string}).__revealedTheme)).toBe(copy.id);
+  const fifo=path.join(folder,"blocking.json");execFileSync("mkfifo",[fifo]);
+  const blocked=await request.post(`${daemon}/api/themes/preview`,{data:{path:fifo},timeout:3000});
+  expect(blocked.status()).toBe(400);expect(await blocked.text()).toContain("not a regular theme file");
+  await request.delete(`${daemon}/api/themes/${entry.id}`);
+  await request.delete(`${daemon}/api/themes/${copy.id}`);
+ }finally{const response=await request.get(`${daemon}/api/themes`);if(response.ok()){const current=await response.json() as {entries?:{id:string;source:{path?:string}}[]};for(const item of current.entries??[]){if(item.source.path?.startsWith(folder))await request.delete(`${daemon}/api/themes/${item.id}`);}}fs.rmSync(folder,{recursive:true,force:true});}
+});
 
 test("linked renderer identity stays distinct from an active browser snapshot with the same raw ID",async({page,request})=>{
  const folder=fs.mkdtempSync(path.join(os.tmpdir(),"openade-snapshot-native-id-"));fs.writeFileSync(path.join(folder,"package.json"),JSON.stringify({displayName:"Snapshot owner",contributes:{themes:[{label:"Variant",uiTheme:"vs-dark",path:"dark.json"}]}}));fs.writeFileSync(path.join(folder,"dark.json"),fixture("Linked palette","dark","#172433","#8844cc","#bb3344"));
@@ -114,7 +171,7 @@ test("removing a linked family repairs both active appearance preferences",async
 test("theme library recovers when shutdown interrupts the replacement between its two renames",async({page})=>{
  const data=path.join(tmp,"theme-backup-recovery"),source=path.join(tmp,"backup-theme.json");fs.writeFileSync(source,fixture("Recovery Theme","dark","#121212","#abcdef","#f45678"));const base="http://127.0.0.1:7478";const start=()=>spawn(path.join(tmp,"openade-e2e"),["--daemon","--addr","127.0.0.1:7478","--data-dir",data],{env:{...process.env,OPENADE_AUTH_TOKEN:token},stdio:"pipe"});const stop=async(child:ChildProcess)=>{if(child.exitCode!==null)return;child.kill("SIGTERM");await new Promise<void>((resolve,reject)=>{const timer=setTimeout(()=>reject(Error("fixture engine did not stop")),5000);child.once("exit",()=>{clearTimeout(timer);resolve();});});};let child=start();const healthy=()=>expect.poll(async()=>{try{return(await fetch(base+"/api/health")).status;}catch{return 0;}}).toBe(200);
  try{await healthy();const response=await fetch(base+"/api/themes/link",{method:"POST",headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},body:JSON.stringify({path:source})});expect(response.status).toBe(201);const entry=await response.json();await stop(child);const library=path.join(data,"custom-themes/library.json");fs.renameSync(library,library+".bak");child=start();await healthy();const restored=await(await fetch(base+"/api/themes",{headers:{Authorization:`Bearer ${token}`}})).json();expect(restored.entries[0].id).toBe(entry.id);expect(restored.entries[0].variants[0].document.colors["editor.background"]).toBe("#121212");
- await page.addInitScript(({base,token})=>Object.assign(window,{go:{main:{App:{EngineConnection:async()=>({url:base,token})}}}}),{base,token});await ready(page);await page.getByLabel("Open settings").click();await page.getByRole("tab",{name:"Appearance",exact:true}).click();const libraryUI=page.getByRole("region",{name:"Linked theme library"});await expect(libraryUI).toContainText("Recovery Theme");await libraryUI.getByRole("button",{name:"Apply",exact:true}).click();await expect(page.locator(".ade")).toHaveAttribute("data-theme-id",nativeThemeId(entry.id,entry.variants[0].id));
+ await page.addInitScript(({base,token})=>Object.assign(window,{go:{main:{App:{EngineConnection:async()=>({url:base,token})}}}}),{base,token});await ready(page);await page.getByLabel("Open settings").click();await page.getByRole("tab",{name:"Appearance",exact:true}).click();const libraryUI=page.getByRole("region",{name:"Theme library"});await expect(libraryUI).toContainText("Recovery Theme");await libraryUI.getByRole("button",{name:"Apply",exact:true}).click();await expect(page.locator(".ade")).toHaveAttribute("data-theme-id",nativeThemeId(entry.id,entry.variants[0].id));
  }finally{await stop(child);}
 });
 
@@ -128,6 +185,6 @@ test("within-family duplicate labels reserve later canonical IDs and reject edit
 test("broken duplicate declarations keep the selected sibling identity through repair and reject reordering",async({page,request})=>{
  const folder=fs.mkdtempSync(path.join(os.tmpdir(),"openade-declaration-recovery-"));const manifest=path.join(folder,"package.json"),first=path.join(folder,"first.json"),second=path.join(folder,"second.json");const declarations=[{label:"Dark",uiTheme:"vs-dark",path:"first.json"},{label:"Dark",uiTheme:"vs-dark",path:"second.json"},{label:"Dark 2",uiTheme:"vs-dark"}];const writeManifest=(items=declarations)=>fs.writeFileSync(manifest,JSON.stringify({displayName:"Declaration recovery",contributes:{themes:items}}));writeManifest();fs.writeFileSync(first,`{ colors: { "editor.background": "url(https://invalid.test)" } }`);fs.writeFileSync(second,fixture("Selected sibling","dark","#253040","#b18cff","#dc5272"));
  const created=await request.post("http://127.0.0.1:7455/api/themes/link",{data:{path:folder,name:"declaration recovery"}});expect(created.status()).toBe(201);const entry=await created.json() as {id:string;variants:{id:string}[];failures:{id:string}[]};const selectedID=`${entry.id}-dark-3`;expect(entry.variants.map(variant=>variant.id)).toEqual([selectedID]);expect(entry.failures.map(failure=>failure.id)).toEqual([`${entry.id}-dark`,`${entry.id}-dark-2`]);
- try{await ready(page);await page.getByLabel("Open settings").click();await page.getByRole("tab",{name:"Appearance",exact:true}).click();await page.getByRole("button",{name:"Dark",exact:true}).click();const family=page.locator(".linked-theme-item").filter({hasText:"Declaration recovery"});await family.getByRole("button",{name:"Apply",exact:true}).click();await expect(page.locator(".ade")).toHaveAttribute("data-theme-id",nativeThemeId(entry.id,selectedID));await expect(page.locator(".ade")).toHaveCSS("--bg","#253040");fs.writeFileSync(first,fixture("Repaired first","dark","#4a1820","#b18cff","#dc5272"));await family.getByRole("button",{name:"Reload",exact:true}).click();await expect(page.locator(".ade")).toHaveCSS("--bg","#253040");const repaired=await request.get("http://127.0.0.1:7455/api/themes");const repairedEntry=(await repaired.json() as {entries:{id:string;variants:{id:string;document:{colors:{"editor.background":string}}}[]}[]}).entries.find(value=>value.id===entry.id)!;expect(repairedEntry.variants).toHaveLength(1);expect(repairedEntry.variants[0].id).toBe(selectedID);expect(repairedEntry.variants[0].document.colors["editor.background"]).toBe("#253040");await page.reload();await expect(page.locator(".ade")).toHaveAttribute("data-theme-id",nativeThemeId(entry.id,selectedID));await expect(page.locator(".ade")).toHaveCSS("--bg","#253040");writeManifest([declarations[1],declarations[0],declarations[2]]);await page.getByLabel("Open settings").click();await page.getByRole("tab",{name:"Appearance",exact:true}).click();await page.locator(".linked-theme-item").filter({hasText:"Declaration recovery"}).getByRole("button",{name:"Reload",exact:true}).click();await expect(page.getByLabel("Linked theme library").getByRole("status").filter({hasText:"different source declaration"})).toBeVisible();await expect(page.locator(".ade")).toHaveCSS("--bg","#253040");
+ try{await ready(page);await page.getByLabel("Open settings").click();await page.getByRole("tab",{name:"Appearance",exact:true}).click();await page.getByRole("button",{name:"Dark",exact:true}).click();const family=page.locator(".linked-theme-item").filter({hasText:"Declaration recovery"});await family.getByRole("button",{name:"Apply",exact:true}).click();await expect(page.locator(".ade")).toHaveAttribute("data-theme-id",nativeThemeId(entry.id,selectedID));await expect(page.locator(".ade")).toHaveCSS("--bg","#253040");fs.writeFileSync(first,fixture("Repaired first","dark","#4a1820","#b18cff","#dc5272"));await family.getByRole("button",{name:"Reload",exact:true}).click();await expect(page.locator(".ade")).toHaveCSS("--bg","#253040");const repaired=await request.get("http://127.0.0.1:7455/api/themes");const repairedEntry=(await repaired.json() as {entries:{id:string;variants:{id:string;document:{colors:{"editor.background":string}}}[]}[]}).entries.find(value=>value.id===entry.id)!;expect(repairedEntry.variants).toHaveLength(1);expect(repairedEntry.variants[0].id).toBe(selectedID);expect(repairedEntry.variants[0].document.colors["editor.background"]).toBe("#253040");await page.reload();await expect(page.locator(".ade")).toHaveAttribute("data-theme-id",nativeThemeId(entry.id,selectedID));await expect(page.locator(".ade")).toHaveCSS("--bg","#253040");writeManifest([declarations[1],declarations[0],declarations[2]]);await page.getByLabel("Open settings").click();await page.getByRole("tab",{name:"Appearance",exact:true}).click();await page.locator(".linked-theme-item").filter({hasText:"Declaration recovery"}).getByRole("button",{name:"Reload",exact:true}).click();await expect(page.getByLabel("Theme library").getByRole("status").filter({hasText:"different source declaration"})).toBeVisible();await expect(page.locator(".ade")).toHaveCSS("--bg","#253040");
  }finally{await request.delete(`http://127.0.0.1:7455/api/themes/${entry.id}`);fs.rmSync(folder,{recursive:true,force:true});}
 });

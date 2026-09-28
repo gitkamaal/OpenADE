@@ -170,6 +170,8 @@ func (d *Daemon) routes() http.Handler {
 	mux.HandleFunc("GET /api/diagnostics", d.handleDiagnostics)
 	mux.HandleFunc("GET /api/events", d.handleEvents)
 	mux.HandleFunc("GET /api/themes", d.handleThemeLibrary)
+	mux.HandleFunc("POST /api/themes/preview", d.handlePreviewThemeSource)
+	mux.HandleFunc("POST /api/themes/import", d.handleImportReviewedTheme)
 	mux.HandleFunc("GET /api/new-thread-artwork", d.handleNewThreadArtwork)
 	mux.HandleFunc("POST /api/new-thread-artwork", d.handleUploadNewThreadArtwork)
 	mux.HandleFunc("PATCH /api/new-thread-artwork/effect", d.handleArtworkEffect)

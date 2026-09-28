@@ -55,7 +55,7 @@ func (a *App) RevealThemeSource(id string) error {
 	}
 	path := ""
 	for _, entry := range library.Entries {
-		if entry.ID == id && (entry.Source.Kind == "linkedFile" || entry.Source.Kind == "linkedPackage" || entry.Source.Kind == "editableFile") {
+		if entry.ID == id && (entry.Source.Kind == "linkedFile" || entry.Source.Kind == "linkedPackage" || entry.Source.Kind == "editableFile" || entry.Source.Kind == "snapshot") {
 			path = entry.Source.Path
 			break
 		}
