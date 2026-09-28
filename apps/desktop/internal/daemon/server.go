@@ -221,6 +221,7 @@ func (d *Daemon) routes() http.Handler {
 	mux.HandleFunc("GET /api/sessions/{id}/diff", d.handleDiff)
 	mux.HandleFunc("GET /api/sessions/{id}/files", d.handleFiles)
 	mux.HandleFunc("GET /api/sessions/{id}/file-media", d.handleFileMedia)
+	mux.HandleFunc("GET /api/sessions/{id}/generated-images/{imageID}/media", d.handleGeneratedImageMedia)
 	mux.HandleFunc("GET /api/sessions/{id}/file", d.handleFile)
 	mux.HandleFunc("PUT /api/sessions/{id}/file", d.handleFile)
 	mux.HandleFunc("GET /api/sessions/{id}/history", d.handleHistory)

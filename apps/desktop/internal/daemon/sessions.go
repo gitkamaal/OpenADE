@@ -58,28 +58,29 @@ type liveSession struct {
 }
 
 type SessionManager struct {
-	store           *Store
-	dataDir         string
-	titleCtx        context.Context
-	titleCancel     context.CancelFunc
-	titleMu         sync.Mutex
-	titleWG         sync.WaitGroup
-	titling         map[string]struct{}
-	titleStopping   bool
-	mu              sync.RWMutex
-	queueMu         sync.Mutex
-	surfaceMu       sync.Mutex
-	launchMu        sync.Mutex
-	live            map[string]*liveSession
-	providerMu      sync.Mutex
-	codex           map[string]*codexConversation
-	acp             map[string]*acpConversation
-	cursor          map[string]*cursorConversation
-	acpCatalogMu    sync.Mutex
-	acpCatalog      map[string]acpCatalogEntry
-	cursorCatalogMu sync.Mutex
-	cursorCatalog   cursorCatalogEntry
-	deletions       *deletionFence
+	store            *Store
+	dataDir          string
+	titleCtx         context.Context
+	titleCancel      context.CancelFunc
+	titleMu          sync.Mutex
+	titleWG          sync.WaitGroup
+	titling          map[string]struct{}
+	titleStopping    bool
+	mu               sync.RWMutex
+	queueMu          sync.Mutex
+	surfaceMu        sync.Mutex
+	launchMu         sync.Mutex
+	live             map[string]*liveSession
+	providerMu       sync.Mutex
+	generatedImageMu sync.Mutex
+	codex            map[string]*codexConversation
+	acp              map[string]*acpConversation
+	cursor           map[string]*cursorConversation
+	acpCatalogMu     sync.Mutex
+	acpCatalog       map[string]acpCatalogEntry
+	cursorCatalogMu  sync.Mutex
+	cursorCatalog    cursorCatalogEntry
+	deletions        *deletionFence
 }
 
 func NewSessionManager(store *Store, dataDir string, deletions *deletionFence) *SessionManager {

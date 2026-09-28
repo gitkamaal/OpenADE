@@ -12,8 +12,8 @@ import {
   Wrench,
 } from "@phosphor-icons/react";
 import { memo, useLayoutEffect, useEffect, useRef, useState } from "react";
-import { Session } from "./api";
-import { ChatActivity, createTranscriptParser } from "./chat-model";
+import { generatedImageMediaURL, Session } from "./api";
+import { ChatActivity, GeneratedImage, createTranscriptParser } from "./chat-model";
 import { MarkdownMessage } from "./MarkdownMessage";
 import { parseReviewComments } from "./ReviewComments";
 
@@ -42,6 +42,7 @@ export function ChatTimeline({ session, output, activityExpanded = false }: { se
             session={session}
             markdown={turn.markdown}
             activities={turn.activities}
+            generatedImages={turn.generatedImages}
             streaming={Boolean(turn.streaming)}
             agent={session.agent}
             activityExpanded={activityExpanded}
@@ -71,6 +72,7 @@ const AssistantTurn=memo(function AssistantTurn({
   session,
   markdown,
   activities,
+  generatedImages,
   streaming,
   agent,
   activityExpanded,
@@ -79,6 +81,7 @@ const AssistantTurn=memo(function AssistantTurn({
   session: Session;
   markdown: string;
   activities: ChatActivity[];
+  generatedImages: GeneratedImage[];
   streaming: boolean;
   agent: string;
   activityExpanded: boolean;
@@ -92,6 +95,7 @@ const AssistantTurn=memo(function AssistantTurn({
       {visibleMarkdown ? <MarkdownMessage session={session}>{visibleMarkdown}</MarkdownMessage> : streaming ? (
         <div className="native-thinking"><SpinnerGap className="spin" /> Working through the task…</div>
       ) : null}
+      {generatedImages.length>0&&<section className="generated-images" aria-label="Generated images">{generatedImages.map(image=><AttachmentImage key={image.id} image={{...image,path:""}} sourceURL={generatedImageMediaURL(session.id,image.id)} className="generated-image"/>)}</section>}
       {streaming && visibleMarkdown && <span className="streaming-cursor" aria-label="Streaming" />}
       {!streaming&&<TurnMetadata timestamp={timestamp} text={markdown} side="assistant"/>}
     </article>

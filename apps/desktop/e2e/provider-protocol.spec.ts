@@ -15,6 +15,37 @@ test('persistent stdio conversation, typed images, context and completion-before
  await ready(page);await open(page,'Persistent Codex');await expect(page.getByRole('button',{name:'Context usage 25%'})).toBeVisible();await page.getByRole('button',{name:'Context usage 25%'}).click();await expect(page.getByRole('dialog',{name:'Context usage details'})).toContainText('32,000 of 128,000');expect(await page.getByRole('dialog',{name:'Context usage details'}).evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2));})).toBe(true);await page.keyboard.press('Escape');await expect(page.getByRole('dialog',{name:'Context usage details'})).toBeHidden();
  const tail=await create(request,'Final tail',{prompt:'eof-final'});await expect.poll(()=>status(request,tail.id)).toBe('completed');expect(fs.readFileSync(path.join(tmp,'data/transcripts',tail.id+'.log'),'utf8')).toContain('Final tail survives EOF');
 });
+
+test('Codex generated image is imported once, path-free, durable and owned by its chat',async({request,page})=>{
+ const session=await create(request,'Generated image in chat',{prompt:'generated-image snake duplicate large-inline'});
+ await expect.poll(()=>status(request,session.id)).toBe('completed');
+ const transcript=fs.readFileSync(path.join(tmp,'data/transcripts',session.id+'.log'),'utf8');
+ const images=transcript.trim().split('\n').map(line=>JSON.parse(line)).filter(event=>event.type==='openade.generated_image');
+ expect(images).toHaveLength(2);expect(images[0]).toMatchObject({name:'Generated image',mime:'image/png'});expect(images[0].id).toMatch(/^[0-9a-f]{64}$/);expect(images[1].id).toBe(images[0].id);
+ for(const secret of ['INLINE_IMAGE_SENTINEL','PRIVATE_REVISED_PROMPT_SENTINEL','generated_images','saved_path','savedPath'])expect(transcript).not.toContain(secret);
+ const media=`${daemon}/api/sessions/${session.id}/generated-images/${images[0].id}/media`;
+ const response=await request.get(media);expect(response.status()).toBe(200);expect(response.headers()['content-type']).toContain('image/png');expect((await response.body()).subarray(0,8)).toEqual(Buffer.from([137,80,78,71,13,10,26,10]));
+ expect((await page.request.get(media,{headers:{Authorization:''}})).status()).toBe(401);
+ const other=await create(request,'Different image owner');expect((await request.get(`${daemon}/api/sessions/${other.id}/generated-images/${images[0].id}/media`)).status()).toBe(404);
+ await ready(page);await open(page,'Generated image in chat');const card=page.getByLabel('Generated images').getByRole('button',{name:'View Generated image'});await expect(card).toHaveCount(1);await expect.poll(()=>card.locator('img').evaluate(node=>(node as HTMLImageElement).naturalWidth)).toBe(1200);
+ await card.click();const dialog=page.getByRole('dialog',{name:'Generated image'});await expect(dialog).toBeVisible();await page.keyboard.press('Escape');await expect(card).toBeFocused();
+ await page.reload();await expect(page.getByLabel('Generated images').getByRole('button',{name:'View Generated image'})).toHaveCount(1);
+ expect((await request.delete(`${daemon}/api/sessions/${session.id}`)).status()).toBe(204);expect((await request.get(media)).status()).toBe(404);expect(fs.existsSync(path.join(tmp,'data/generated-images',session.id))).toBe(false);
+});
+
+test('generated images reject outside paths, symlinks, invalid bytes and oversized files without leaking the source',async({request,page})=>{
+ for(const kind of ['external','symlink','invalid','oversized','missing','failure']){
+  const session=await create(request,`Generated image rejection ${kind}`,{prompt:`generated-image-${kind}`});await expect.poll(()=>status(request,session.id)).toBe('completed');
+  const transcript=fs.readFileSync(path.join(tmp,'data/transcripts',session.id+'.log'),'utf8');expect(transcript).toContain('Generated image unavailable');expect(transcript).not.toContain('outside-generated.png');expect(transcript).not.toContain('generated_images');expect(transcript).not.toContain('private provider detail');expect(transcript).not.toContain('openade.generated_image');
+  const folder=path.join(tmp,'data/generated-images',session.id);if(fs.existsSync(folder))expect(fs.readdirSync(folder)).toEqual([]);
+ }
+ const replay=await create(request,'Generated image replay spoof',{prompt:'generated-image replay-spoof'});await expect.poll(()=>status(request,replay.id)).toBe('completed');const replayText=fs.readFileSync(path.join(tmp,'data/transcripts',replay.id+'.log'),'utf8');expect((replayText.match(/"type":"openade.generated_image"/g)||[])).toHaveLength(1);expect(replayText).toContain('Generated image unavailable');expect(replayText).not.toContain('outside-generated.png');
+ await ready(page);await open(page,'Generated image rejection failure');await expect(page.getByLabel('Generated images')).toHaveCount(0);await expect(page.locator('.activity-group')).toContainText('Generated image unavailable');
+});
+
+test('large non-image provider notifications retain the original transport bound',async({request})=>{
+ const session=await create(request,'Bounded non-image frame',{prompt:'huge-nonimage'});await expect.poll(()=>status(request,session.id)).toBe('failed');const transcript=fs.readFileSync(path.join(tmp,'data/transcripts',session.id+'.log'),'utf8');expect(transcript).not.toContain('UNRETAINED_NONIMAGE_SENTINEL');
+});
 test('side chat fork starts an independent app-server thread with copied context',async({request})=>{
  const source=await create(request,'RPC fork source');await expect.poll(()=>status(request,source.id)).toBe('completed');
  const response=await request.post(`${daemon}/api/sessions/${source.id}/fork`,{data:{mode:'fork'}});expect(response.status(),await response.text()).toBe(201);const child=await response.json();

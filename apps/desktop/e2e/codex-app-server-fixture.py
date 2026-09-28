@@ -30,6 +30,43 @@ def work(turn,prompt):
  if 'flood' in prompt:
   for _ in range(40):notify('item/agentMessage/delta',{'threadId':thread,'turnId':turn,'delta':'x'*300000})
   return
+ if 'huge-nonimage' in prompt:
+  notify('item/completed',{'threadId':thread,'turnId':turn,'item':{'id':'huge-tool','type':'mcpToolCall','result':'UNRETAINED_NONIMAGE_SENTINEL'*400000}})
+  return
+ if 'generated-image' in prompt:
+  root=os.path.join(os.environ['CODEX_HOME'],'generated_images',sid);os.makedirs(root,exist_ok=True)
+  fixture=os.environ.get('OPENADE_TEST_IMAGE_FIXTURE') or os.path.abspath(os.path.join(os.path.dirname(__file__),'..','..','fixtures','preview-grid.png'))
+  source=os.path.join(root,'created.png')
+  if 'external' in prompt:
+   source=os.path.join(os.environ['OPENADE_PROVIDER_HOME'],'outside-generated.png')
+   with open(source,'wb') as out,open(fixture,'rb') as inp:out.write(inp.read())
+  if 'symlink' in prompt:
+   source=os.path.join(root,'linked.png')
+   if os.path.lexists(source):os.unlink(source)
+   outside=os.path.join(os.environ['OPENADE_PROVIDER_HOME'],'outside-generated.png')
+   with open(outside,'wb') as out,open(fixture,'rb') as inp:out.write(inp.read())
+   os.symlink(outside,source)
+  elif 'invalid' in prompt:
+   with open(source,'wb') as out:out.write(b'not an image')
+  elif 'oversized' in prompt:
+   with open(source,'wb') as out:out.truncate(24*1024*1024+1)
+  elif 'external' not in prompt and 'missing' not in prompt:
+   with open(source,'wb') as out,open(fixture,'rb') as inp:out.write(inp.read())
+  kind='image_generation' if 'snake' in prompt else 'imageGeneration'
+  notify('item/started',{'threadId':thread,'turnId':turn,'item':{'id':'fixture-image','type':kind,'status':'inProgress'}})
+  item={'id':'fixture-image','type':kind,'status':'failed' if 'failure' in prompt else 'completed',
+        'saved_path' if 'snake' in prompt else 'savedPath':source,
+        'revisedPrompt':'PRIVATE_REVISED_PROMPT_SENTINEL'}
+  if 'large-inline' in prompt:item['result']='INLINE_IMAGE_SENTINEL'*550000
+  if 'failure' in prompt:item['failure']={'type':'usageLimitExceeded','message':'private provider detail'}
+  notify('item/completed',{'threadId':thread,'turnId':turn,'item':item})
+  if 'duplicate' in prompt:notify('item/completed',{'threadId':thread,'turnId':turn,'item':item})
+  if 'replay-spoof' in prompt:
+   outside=os.path.join(os.environ['OPENADE_PROVIDER_HOME'],'outside-generated.png')
+   with open(outside,'wb') as out,open(fixture,'rb') as inp:out.write(inp.read())
+   changed=dict(item);changed['savedPath']=outside;notify('item/completed',{'threadId':thread,'turnId':turn,'item':changed})
+  complete(turn,'Generated image fixture reply')
+  return
  if 'unknown' in prompt:emit({'id':700,'method':'unknown/method','params':{'threadId':thread,'turnId':turn}})
  if 'child' in prompt:notify('turn/completed',{'threadId':'child-thread','turn':{'id':turn,'status':'completed'}})
  if 'question' in prompt or 'obsolete' in prompt:

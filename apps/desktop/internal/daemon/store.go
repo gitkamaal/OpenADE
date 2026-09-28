@@ -719,6 +719,9 @@ func (s *Store) DeleteSession(id string, dataDir string) error {
 	if removeErr := os.Remove(filepath.Join(dataDir, "transcripts", id+".log")); removeErr != nil && !os.IsNotExist(removeErr) {
 		cleanup = append(cleanup, removeErr)
 	}
+	if removeErr := os.RemoveAll(filepath.Join(dataDir, "generated-images", id)); removeErr != nil {
+		cleanup = append(cleanup, removeErr)
+	}
 	for _, terminalID := range terminalIDs {
 		if removeErr := os.Remove(filepath.Join(dataDir, "terminal-transcripts", terminalID+".log")); removeErr != nil && !os.IsNotExist(removeErr) {
 			cleanup = append(cleanup, removeErr)

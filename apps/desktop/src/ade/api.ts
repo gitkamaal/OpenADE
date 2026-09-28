@@ -417,12 +417,13 @@ export const deleteSession=(id:string)=>request<{cleanup_warning?:string}|undefi
 export interface Attachment {id:string;name:string;path:string;mime:string;size:number}
 export const uploadAttachment=(file:File)=>request<Attachment>(`/api/attachments?name=${encodeURIComponent(file.name)}`,{method:"POST",headers:{"Content-Type":file.type||"application/octet-stream"},body:file});
 export const attachmentMediaURL=(id:string)=>`/api/attachments/${encodeURIComponent(id)}/media`;
+export const generatedImageMediaURL=(sessionId:string,id:string)=>`/api/sessions/${encodeURIComponent(sessionId)}/generated-images/${encodeURIComponent(id)}/media`;
 
 export const fileMediaURL=(sessionId:string,path:string)=>`/api/sessions/${encodeURIComponent(sessionId)}/file-media?path=${encodeURIComponent(path)}`;
 
 // Media bytes use the same private header as JSON requests. Bearer tokens must
 // not appear in image URLs, accessibility trees, captures or the browser cache.
-export async function fetchMedia(source:string,signal:AbortSignal){await engineConnection();const path=new URL(source,DAEMON_URL);if(!/^\/api\/(?:attachments\/[^/]+\/media|sessions\/[^/]+\/file-media|new-thread-artwork\/media)$/.test(path.pathname))throw Error("Unsupported image source.");path.searchParams.delete("token");const mutableWorkspaceImage=path.pathname.endsWith('/file-media');const response=await fetch(DAEMON_URL+path.pathname+path.search,{signal,cache:mutableWorkspaceImage?'no-store':'default',headers:{Authorization:`Bearer ${authToken}`}});if(!response.ok)throw Error("Image unavailable.");return response.blob();}
+export async function fetchMedia(source:string,signal:AbortSignal){await engineConnection();const path=new URL(source,DAEMON_URL);if(!/^\/api\/(?:attachments\/[^/]+\/media|sessions\/[^/]+\/file-media|sessions\/[^/]+\/generated-images\/[0-9a-f]{64}\/media|new-thread-artwork\/media)$/.test(path.pathname))throw Error("Unsupported image source.");path.searchParams.delete("token");const mutableWorkspaceImage=path.pathname.endsWith('/file-media');const response=await fetch(DAEMON_URL+path.pathname+path.search,{signal,cache:mutableWorkspaceImage?'no-store':'default',headers:{Authorization:`Bearer ${authToken}`}});if(!response.ok)throw Error("Image unavailable.");return response.blob();}
 
 export interface ProviderQuestion {id:string;header:string;question:string;isOther:boolean;isSecret:boolean;options:{label:string;description:string}[]|null}
 export interface ProviderRequest {id:string;generation:number;kind:"question"|"approval";title:string;detail:string;questions:ProviderQuestion[];decisions:string[]}

@@ -7,11 +7,14 @@ export interface ChatActivity {
   detail?: string;
 }
 
+export interface GeneratedImage {id:string;name:string;mime:"image/png";size:number}
+
 export interface ChatTurn {
   id: string;
   role: "user" | "assistant" | "system";
   markdown: string;
   activities: ChatActivity[];
+  generatedImages: GeneratedImage[];
   streaming?: boolean;
   timestamp?: number;
 }
@@ -21,7 +24,7 @@ type JsonRecord = Record<string, unknown>;
 export function createTranscriptParser(initialPrompt:string,initialCreatedAt?:string){
   const turns: ChatTurn[] = [];
   if (initialPrompt.trim()) {
-    turns.push({ id: "user-0", role: "user", markdown: initialPrompt.trim(), activities: [],timestamp:parseTimestamp(initialCreatedAt) });
+    turns.push({ id: "user-0", role: "user", markdown: initialPrompt.trim(), activities: [],generatedImages:[],timestamp:parseTimestamp(initialCreatedAt) });
   }
 
   let assistant = newAssistant(0);
@@ -48,7 +51,7 @@ export function createTranscriptParser(initialPrompt:string,initialCreatedAt?:st
 
     if (event.type === "openade.fork_source") {
       commitAssistant(turns, assistant, finalMessage || partial);
-      turns.push({id:`fork-${turns.length}`,role:"system",markdown:String(event.title??"Previous chat"),activities:[]});
+      turns.push({id:`fork-${turns.length}`,role:"system",markdown:String(event.title??"Previous chat"),activities:[],generatedImages:[]});
       assistant=newAssistant(turns.length);partial="";finalMessage="";providerMessages=new Map();
       return;
     }
@@ -64,6 +67,7 @@ export function createTranscriptParser(initialPrompt:string,initialCreatedAt?:st
         role: "user",
         markdown: String(event.text ?? "").trim(),
         activities: [],
+        generatedImages: [],
         timestamp: parseTimestamp(event.created_at),
       });
       assistant = newAssistant(turns.length);
@@ -91,6 +95,10 @@ export function createTranscriptParser(initialPrompt:string,initialCreatedAt?:st
         if(existing){existing.title=title;existing.detail=detail;}
         else assistant.activities.push({id,kind:"tool",title,detail});
       }else addActivity(assistant,"tool",title,detail);
+    }
+    if(type==="openade.generated_image"){
+      const id=String(event.id??""),name=String(event.name??"Generated image"),mime=String(event.mime??""),size=Number(event.size??0);
+      if(/^[0-9a-f]{64}$/.test(id)&&mime==="image/png"&&name.length<=256&&Number.isFinite(size)&&size>0&&size<=24*1024*1024&&!assistant.generatedImages.some(image=>image.id===id))assistant.generatedImages.push({id,name,mime,size});
     }
     if (type === "thread.started" || type === "turn.started") {
       addActivity(assistant, "thinking", "Thinking");
@@ -135,8 +143,8 @@ export function createTranscriptParser(initialPrompt:string,initialCreatedAt?:st
   return {
     append(chunk:string){const lines=(carry+chunk.replace(/\r/g,"")).split("\n");carry=lines.pop()??"";for(const line of lines)consume(line);},
     snapshot(running:boolean):ChatTurn[]{
-      const current={...assistant,activities:assistant.activities.map(activity=>({...activity})),markdown:(finalMessage||partial).trim(),streaming:running};
-      return current.markdown||current.activities.length||running?[...turns,current]:[...turns];
+      const current={...assistant,activities:assistant.activities.map(activity=>({...activity})),generatedImages:assistant.generatedImages.map(image=>({...image})),markdown:(finalMessage||partial).trim(),streaming:running};
+      return current.markdown||current.activities.length||current.generatedImages.length||running?[...turns,current]:[...turns];
     },
   };
 }
@@ -145,7 +153,7 @@ export function parseChatTranscript(value:string,initialPrompt:string,running:bo
 function parseTimestamp(value:unknown):number|undefined{if(typeof value!=="string")return undefined;const ms=Date.parse(value);return Number.isFinite(ms)?ms:undefined;}
 
 function newAssistant(index: number): ChatTurn {
-  return { id: `assistant-${index}`, role: "assistant", markdown: "", activities: [] };
+  return { id: `assistant-${index}`, role: "assistant", markdown: "", activities: [],generatedImages:[] };
 }
 
 function commitAssistant(
@@ -155,7 +163,7 @@ function commitAssistant(
   force = false,
 ) {
   assistant.markdown = markdown.trim();
-  if (force || assistant.markdown || assistant.activities.length) turns.push(assistant);
+  if (force || assistant.markdown || assistant.activities.length || assistant.generatedImages.length) turns.push(assistant);
 }
 
 function addActivity(

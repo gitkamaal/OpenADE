@@ -18,7 +18,8 @@ import (
 // Codex and ACP both use newline-framed JSON-RPC over a private child pipe.
 // Responses bypass the event consumer so a server request can be answered
 // while a client request is awaiting its response.
-const maxProviderFrameBytes = 8 * 1024 * 1024
+const maxProviderFrameBytes = 40 * 1024 * 1024
+const maxRetainedProviderEventBytes = 8 * 1024 * 1024
 
 type providerRPCFrame struct {
 	JSONRPC  string            `json:"jsonrpc,omitempty"`
@@ -112,10 +113,17 @@ func (r *providerRPC) read(stdout io.ReadCloser) {
 	defer close(r.readDone)
 	defer close(r.events)
 	defer stdout.Close()
-	scanner := bufio.NewScanner(stdout)
-	scanner.Buffer(make([]byte, 32*1024), maxProviderFrameBytes)
-	for scanner.Scan() {
-		line := scanner.Bytes()
+	reader := bufio.NewReaderSize(stdout, 32*1024)
+	for {
+		line, readErr := readProviderFrame(reader)
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			r.fail(readErr)
+			r.stop()
+			return
+		}
 		var frame providerRPCFrame
 		if err := json.Unmarshal(line, &frame); err != nil {
 			r.fail(fmt.Errorf("provider emitted an invalid protocol frame"))
@@ -123,6 +131,11 @@ func (r *providerRPC) read(stdout io.ReadCloser) {
 			return
 		}
 		if frame.Method == "" {
+			if len(frame.Result) > maxRetainedProviderEventBytes || (frame.Error != nil && len(frame.Error.Message) > maxRetainedProviderEventBytes) {
+				r.fail(fmt.Errorf("provider response exceeded its limit"))
+				r.stop()
+				return
+			}
 			key := string(frame.ID)
 			r.mu.Lock()
 			ch := r.pending[key]
@@ -137,12 +150,18 @@ func (r *providerRPC) read(stdout io.ReadCloser) {
 			}
 			continue
 		}
+		compacted := compactGeneratedNotification(&frame)
+		if !compacted && len(frame.Params) > maxRetainedProviderEventBytes {
+			r.fail(fmt.Errorf("provider frame exceeded its limit"))
+			r.stop()
+			return
+		}
 		r.eventSequence++
 		frame.sequence = r.eventSequence
 		// Bound both count and retained bytes; 256 maximum-size frames must
 		// not reserve gigabytes. Overflow fails visibly instead of losing events.
 		bytes := int64(len(frame.Params) + len(frame.ID) + len(frame.Method))
-		if r.eventBytes.Add(bytes) > maxProviderFrameBytes {
+		if r.eventBytes.Add(bytes) > maxRetainedProviderEventBytes {
 			r.eventBytes.Add(-bytes)
 			r.fail(errors.New("provider event buffer exceeded its limit"))
 			r.stop()
@@ -157,11 +176,72 @@ func (r *providerRPC) read(stdout io.ReadCloser) {
 			return
 		}
 	}
-	err := scanner.Err()
-	if err == nil {
-		err = io.EOF
+	r.fail(io.EOF)
+}
+
+func readProviderFrame(reader *bufio.Reader) ([]byte, error) {
+	var line []byte
+	for {
+		fragment, err := reader.ReadSlice('\n')
+		if len(line)+len(fragment) > maxProviderFrameBytes {
+			return nil, fmt.Errorf("provider protocol frame exceeded its limit")
+		}
+		line = append(line, fragment...)
+		switch err {
+		case nil:
+			return line, nil
+		case bufio.ErrBufferFull:
+			continue
+		case io.EOF:
+			if len(line) == 0 {
+				return nil, io.EOF
+			}
+			return line, nil
+		default:
+			return nil, err
+		}
 	}
-	r.fail(err)
+}
+
+// The provider may include megabytes of inline result data in an image item.
+// SavedPath is the only supported source; no inline result or revised prompt
+// reaches the event queue, transcript, or renderer.
+func compactGeneratedNotification(frame *providerRPCFrame) bool {
+	if frame.Method != "item/started" && frame.Method != "item/completed" {
+		return false
+	}
+	var value struct {
+		ThreadID string `json:"threadId"`
+		TurnID   string `json:"turnId"`
+		Item     struct {
+			ID             string          `json:"id"`
+			Type           string          `json:"type"`
+			Status         string          `json:"status"`
+			SavedPath      string          `json:"savedPath"`
+			SavedPathSnake string          `json:"saved_path"`
+			Failure        json.RawMessage `json:"failure"`
+		} `json:"item"`
+	}
+	if json.Unmarshal(frame.Params, &value) != nil || (value.Item.Type != "imageGeneration" && value.Item.Type != "image_generation") {
+		return false
+	}
+	if len(value.Item.ID) > 256 {
+		value.Item.ID = ""
+	}
+	if len(value.Item.SavedPath) > 4096 {
+		value.Item.SavedPath = ""
+	}
+	if len(value.Item.SavedPathSnake) > 4096 {
+		value.Item.SavedPathSnake = ""
+	}
+	item := map[string]any{"id": value.Item.ID, "type": value.Item.Type, "status": value.Item.Status,
+		"savedPath": value.Item.SavedPath, "saved_path": value.Item.SavedPathSnake}
+	if len(value.Item.Failure) > 0 && string(value.Item.Failure) != "null" {
+		item["failure"] = true
+	}
+	data, _ := json.Marshal(map[string]any{"threadId": value.ThreadID, "turnId": value.TurnID, "item": item})
+	frame.Params = data
+	return true
 }
 
 func (r *providerRPC) consume(frame providerRPCFrame) {

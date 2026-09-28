@@ -579,13 +579,18 @@ func (c *codexConversation) events() {
 }
 func (c *codexConversation) handle(frame providerRPCFrame) {
 	var p struct {
-		ItemID     string                                                             `json:"itemId"`
-		ThreadID   string                                                             `json:"threadId"`
-		TurnID     string                                                             `json:"turnId"`
-		RequestID  json.RawMessage                                                    `json:"requestId"`
-		Turn       struct{ ID, Status string }                                        `json:"turn"`
-		Delta      string                                                             `json:"delta"`
-		Item       struct{ Type, ID, Text, Command, AggregatedOutput, Status string } `json:"item"`
+		ItemID    string                      `json:"itemId"`
+		ThreadID  string                      `json:"threadId"`
+		TurnID    string                      `json:"turnId"`
+		RequestID json.RawMessage             `json:"requestId"`
+		Turn      struct{ ID, Status string } `json:"turn"`
+		Delta     string                      `json:"delta"`
+		Item      struct {
+			Type, ID, Text, Command, AggregatedOutput, Status string
+			SavedPath                                         string          `json:"savedPath"`
+			SavedPathSnake                                    string          `json:"saved_path"`
+			Failure                                           json.RawMessage `json:"failure"`
+		} `json:"item"`
 		TokenUsage struct {
 			Last               struct{ TotalTokens, InputTokens, OutputTokens *uint64 }
 			ModelContextWindow *uint64
@@ -768,6 +773,32 @@ func (c *codexConversation) handle(frame providerRPCFrame) {
 			phase = "item.completed"
 		}
 		switch p.Item.Type {
+		case "imageGeneration", "image_generation":
+			if p.TurnID == "" || p.TurnID != c.providerTurn || p.Item.ID == "" || len(p.Item.ID) > 256 {
+				return
+			}
+			if phase == "item.started" {
+				c.emit(map[string]any{"type": "openade.tool", "id": p.Item.ID, "title": "Generate image", "detail": "Generating image…"})
+				return
+			}
+			failed := p.Item.Status == "failed" || p.Item.Status == "cancelled" || p.Item.Status == "canceled" || (len(p.Item.Failure) > 0 && string(p.Item.Failure) != "null")
+			path := p.Item.SavedPath
+			if path == "" {
+				path = p.Item.SavedPathSnake
+			}
+			if failed || path == "" {
+				c.emit(map[string]any{"type": "openade.tool", "id": p.Item.ID, "title": "Generate image", "detail": "Image unavailable"})
+				c.emit(map[string]any{"type": "error", "message": "Generated image unavailable"})
+				return
+			}
+			image, imageErr := c.manager.importGeneratedImage(c.sessionID, p.Item.ID, path)
+			if imageErr != nil {
+				c.emit(map[string]any{"type": "openade.tool", "id": p.Item.ID, "title": "Generate image", "detail": "Image unavailable"})
+				c.emit(map[string]any{"type": "error", "message": "Generated image unavailable"})
+				return
+			}
+			c.emit(map[string]any{"type": "openade.tool", "id": p.Item.ID, "title": "Generate image", "detail": "Image ready"})
+			c.emit(map[string]any{"type": "openade.generated_image", "id": image.ID, "name": image.Name, "mime": image.MIME, "size": image.Size})
 		case "agentMessage":
 			if phase == "item.completed" {
 				c.emit(map[string]any{"type": "openade.agent_message", "id": p.Item.ID, "text": p.Item.Text})
