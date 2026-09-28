@@ -1,4 +1,4 @@
-export type ChatActivityKind = "thinking" | "command" | "tool" | "notice" | "question";
+export type ChatActivityKind = "thinking" | "command" | "tool" | "notice" | "question" | "subagent";
 
 export interface ChatActivity {
   id: string;
@@ -6,6 +6,7 @@ export interface ChatActivity {
   title: string;
   detail?: string;
   status?: "pending" | "answered" | "dismissed";
+  docId?: string;
 }
 
 export interface GeneratedImage {id:string;name:string;mime:"image/png";size:number}
@@ -104,6 +105,12 @@ export function createTranscriptParser(initialPrompt:string,initialCreatedAt?:st
         const existing=assistant.activities.find(activity=>activity.id===id);
         if(existing){existing.status=status;}
         else assistant.activities.push({id,kind:"question",title:header||"Question",status});
+      }
+    }
+    if(type==="openade.subagent"){
+      const docId=String(event.doc_id??""),title=String(event.title??"Subagent").trim().slice(0,100),wireID=String(event.id??"");
+      if(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(docId)&&wireID&&wireID.length<=256&&!assistant.activities.some(activity=>activity.docId===docId)){
+        assistant.activities.push({id:`${assistant.id}-subagent-${docId}`,kind:"subagent",title:title||"Subagent",docId});
       }
     }
     if(type==="openade.generated_image"){

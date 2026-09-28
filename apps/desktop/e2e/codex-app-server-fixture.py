@@ -68,6 +68,49 @@ def work(turn,prompt):
   complete(turn,'Generated image fixture reply')
   return
  if 'unknown' in prompt:emit({'id':700,'method':'unknown/method','params':{'threadId':thread,'turnId':turn}})
+ if 'subagent' in prompt:
+  if 'siblings' in prompt:
+   for name in ('alpha','beta'):
+    child='child-'+name+'-'+turn;spawn={'type':'collabAgentToolCall','id':'spawn-'+name,'tool':'spawnAgent','status':'inProgress','receiverThreadIds':[],'prompt':'Inspect '+name}
+    notify('item/started',{'threadId':thread,'turnId':turn,'item':spawn})
+    notify('item/completed',{'threadId':child,'item':{'type':'userMessage','id':name+'-prompt','text':'Inspect '+name}})
+    notify('item/agentMessage/delta',{'threadId':child,'itemId':name+'-message','delta':name+' report'})
+    if name=='alpha':notify('turn/completed',{'threadId':child,'turn':{'id':name+'-turn','status':'completed'}})
+    notify('item/completed',{'threadId':thread,'turnId':turn,'item':{**spawn,'status':'completed','receiverThreadIds':[child]}})
+   complete(turn,'Parent saw both agents')
+   time.sleep(.25);notify('turn/completed',{'threadId':'child-beta-'+turn,'turn':{'id':'beta-turn','status':'completed'}})
+   return
+  child='child-'+turn
+  if 'v2' in prompt:
+   activity={'type':'subAgentActivity','id':'spawn-fixture','kind':'started','agentThreadId':child,'agentPath':'/root/fixture-audit'}
+   notify('item/started',{'threadId':thread,'turnId':turn,'item':activity})
+  else:
+   spawn={'type':'collabAgentToolCall','id':'spawn-fixture','tool':'spawnAgent','status':'inProgress','receiverThreadIds':[],'prompt':'Inspect the fixture child'}
+   notify('item/started',{'threadId':thread,'turnId':turn,'item':spawn})
+  notify('turn/started',{'threadId':child,'turn':{'id':'child-turn','status':'inProgress'}})
+  notify('item/completed',{'threadId':child,'item':{'type':'userMessage','id':'child-prompt','text':'Inspect the fixture child'}})
+  notify('item/agentMessage/delta',{'threadId':child,'itemId':'child-message','delta':'Child is working. '})
+  if 'early' in prompt:
+   notify('item/agentMessage/delta',{'threadId':child,'itemId':'child-message','delta':'Finished early.'})
+   notify('turn/completed',{'threadId':child,'turn':{'id':'child-turn','status':'completed'}})
+  if 'failed-spawn' in prompt:
+   notify('item/completed',{'threadId':thread,'turnId':turn,'item':{**spawn,'status':'failed'}})
+  elif 'v2' in prompt:
+   notify('item/completed',{'threadId':thread,'turnId':turn,'item':activity})
+  else:
+   notify('item/completed',{'threadId':thread,'turnId':turn,'item':{**spawn,'status':'completed','receiverThreadIds':[child]}})
+  notify('item/completed',{'threadId':thread,'turnId':turn,'item':{'type':'collabAgentToolCall','id':'wait-fixture','tool':'wait','status':'completed','receiverThreadIds':[child]}})
+  complete(turn,'Parent completed independently')
+  if 'early' not in prompt and 'failed-spawn' not in prompt:
+   if 'bounded' in prompt:
+    for _ in range(70):notify('item/agentMessage/delta',{'threadId':child,'itemId':'child-message','delta':'x'*64000})
+   if 'held' in prompt:
+    release=os.path.join(folder,sid+'.release-child')
+    while not os.path.exists(release):time.sleep(.02)
+   else:time.sleep(.4)
+   notify('item/agentMessage/delta',{'threadId':child,'itemId':'child-message','delta':'Finished after parent.'})
+   notify('turn/completed',{'threadId':child,'turn':{'id':'child-turn','status':'completed'}})
+  return
  if 'child' in prompt:notify('turn/completed',{'threadId':'child-thread','turn':{'id':turn,'status':'completed'}})
  if 'question' in prompt or 'obsolete' in prompt:
   state[turn]['request']=501

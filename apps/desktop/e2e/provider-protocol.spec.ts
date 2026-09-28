@@ -81,6 +81,72 @@ test('child completion cannot settle parent, real steering binds one turn and in
  const queued=await(await request.post(`${daemon}/api/sessions/${s.id}/message-queue`,{data:{text:'send into active turn'}})).json();expect((await request.post(`${daemon}/api/sessions/${s.id}/message-queue/${queued.id}/steer`)).status()).toBe(204);await expect.poll(()=>status(request,s.id)).toBe('completed');expect((await(await request.get(`${daemon}/api/sessions/${s.id}/message-queue`)).json()).messages).toEqual([]);expect((await(await request.get(`${daemon}/api/sessions/${s.id}`)).json()).generation).toBe(generation);expect(logs(s.id).filter(row=>row.method==='turn/steer')[0].expectedTurnId).toBe('turn-1');
  await request.post(`${daemon}/api/sessions/${s.id}/messages`,{data:{text:'wait next'}});await request.post(`${daemon}/api/sessions/${s.id}/stop`);await expect.poll(()=>status(request,s.id)).toBe('stopped');expect((await state(request,s.id)).connected).toBe(true);expect(logs(s.id).filter(row=>row.method==='initialize')).toHaveLength(1);expect(logs(s.id).filter(row=>row.method==='turn/interrupt')).toHaveLength(1);
 });
+test('Codex child documents retain early and late output without settling the parent or linking agent controls',async({request,page})=>{
+ for(const variant of ['early','live','v2']){
+  const s=await create(request,`Linked agent ${variant}`,{prompt:`subagent ${variant}`});
+  await expect.poll(()=>status(request,s.id)).toBe('completed');
+  const transcript=fs.readFileSync(path.join(tmp,'data/transcripts',s.id+'.log'),'utf8');
+  const spawns=transcript.split('\n').filter(Boolean).map(line=>JSON.parse(line)).filter(event=>event.type==='openade.subagent');
+  expect(spawns).toHaveLength(1);expect(transcript).toContain('Parent completed independently');expect(transcript).not.toContain('Child is working');
+  const docId=spawns[0].doc_id;expect(docId).toMatch(/^[0-9a-f-]{36}$/);
+  await expect.poll(async()=>(await(await request.get(`${daemon}/api/sessions/${s.id}/subagents/${docId}`)).json()).status).toBe('done');
+  const doc=await(await request.get(`${daemon}/api/sessions/${s.id}/subagents/${docId}`)).json();
+  expect(doc.child_thread_id).toBe('child-turn-'+String(s.generation));expect(doc.output).toContain('Inspect the fixture child');expect(doc.output).toContain(variant==='early'?'Finished early.':'Finished after parent.');
+  const other=await create(request,`Other owner ${variant}`);expect((await request.get(`${daemon}/api/sessions/${other.id}/subagents/${docId}`)).status()).toBe(404);
+  await ready(page);await open(page,`Linked agent ${variant}`);
+  const chip=page.getByRole('button',{name:/Open agent/});await expect(chip).toHaveCount(1);await expect(chip).toContainText('Done');await chip.click();
+  const panel=page.getByLabel('Agent panel');await expect(panel.getByLabel(/Agent transcript/)).toContainText('Finished');await expect(panel).toContainText('Inspect the fixture child');
+  await page.reload();await expect(page.getByRole('button',{name:/Open agent/})).toHaveCount(1);
+  expect((await request.delete(`${daemon}/api/sessions/${s.id}`)).status()).toBe(204);expect((await request.get(`${daemon}/api/sessions/${s.id}/subagents/${docId}`)).status()).toBe(404);
+ }
+});
+test('a failed spawn stays a non-link card and never claims a child document',async({request,page})=>{
+ const s=await create(request,'Failed agent spawn',{prompt:'subagent failed-spawn'});await expect.poll(()=>status(request,s.id)).toBe('completed');
+ await ready(page);await open(page,'Failed agent spawn');await expect(page.getByRole('button',{name:/Open agent/})).toHaveCount(0);await expect(page.getByRole('note',{name:/Agent Inspect the fixture child/})).toContainText('Failed');
+});
+test('a child remains live after its parent completes and updates the open agent panel',async({request,page})=>{
+ const s=await create(request,'Live linked agent',{prompt:'subagent held'});await expect.poll(()=>status(request,s.id)).toBe('completed');
+ const parent=fs.readFileSync(path.join(tmp,'data/transcripts',s.id+'.log'),'utf8');const spawn=parent.split('\n').filter(Boolean).map(line=>JSON.parse(line)).find(event=>event.type==='openade.subagent');const endpoint=`${daemon}/api/sessions/${s.id}/subagents/${spawn.doc_id}`;
+ const before=await(await request.get(endpoint)).json();expect(before.status).toBe('running');expect(before.output).toContain('Child is working.');expect(before.cursor).toBeGreaterThan(0);
+ await ready(page);await open(page,'Live linked agent');const chip=page.getByRole('button',{name:/Open agent/});await expect(chip).toContainText('Working');await chip.click();
+ const panel=page.getByLabel('Agent panel');await expect(panel).toContainText('Child is working.');await expect(panel).not.toContainText('Finished after parent.');
+ fs.writeFileSync(path.join(tmp,'provider-home/rpc-log',s.id+'.release-child'),'go');
+ await expect(chip).toContainText('Done');await expect(panel).toContainText('Finished after parent.');await expect(page.locator('.conversation .activity-group')).toContainText('Wait for agents');await panel.getByRole('button',{name:'Close Agent tab'}).click();await expect(page.getByLabel('Session message',{exact:true})).toBeFocused();
+ const delta=await(await request.get(`${endpoint}?after=${before.cursor}`)).json();expect(delta.output).toContain('Finished after parent.');expect(delta.output).not.toContain('Inspect the fixture child');expect(delta.cursor).toBeGreaterThan(before.cursor);
+ const childLog=path.join(tmp,'data/subagents',s.id,spawn.doc_id+'.log');fs.appendFileSync(childLog,'{"type":"openade.agent_message","id":"partial","text":"π');const partial=await(await request.get(`${endpoint}?after=${delta.cursor}`)).json();expect(partial.output).toBe('');expect(partial.cursor).toBe(delta.cursor);fs.appendFileSync(childLog,'"}\n');const whole=await(await request.get(`${endpoint}?after=${delta.cursor}`)).json();expect(whole.output).toContain('"text":"π"');expect(whole.cursor).toBeGreaterThan(delta.cursor);
+});
+test('child output is bounded independently of the parent transcript',async({request})=>{
+ const s=await create(request,'Bounded child output',{prompt:'subagent bounded'});await expect.poll(()=>status(request,s.id)).toBe('completed');
+ const parent=fs.readFileSync(path.join(tmp,'data/transcripts',s.id+'.log'),'utf8');const spawn=parent.split('\n').filter(Boolean).map(line=>JSON.parse(line)).find(event=>event.type==='openade.subagent');expect(spawn?.doc_id).toBeTruthy();expect(parent).not.toContain('xxxxxxxxxxxxxxxxxxxxxxxx');
+ await expect.poll(async()=>(await(await request.get(`${daemon}/api/sessions/${s.id}/subagents/${spawn.doc_id}`)).json()).status).toBe('done');
+ const child=await(await request.get(`${daemon}/api/sessions/${s.id}/subagents/${spawn.doc_id}`)).json();expect(Buffer.byteLength(child.output)).toBeLessThanOrEqual(2*1024*1024);expect(child.output).toContain('Subagent transcript is truncated after 2 MiB.');
+});
+test('a daemon restart keeps the child document and clears its stale running state',async()=>{
+ const port=await freePort(),base=`http://127.0.0.1:${port}`,data=path.join(tmp,'subagent-recovery');const headers={'Authorization':'Bearer '+token,'Content-Type':'application/json'};
+ const launch=()=>spawn(path.join(tmp,'openade-e2e'),['--daemon','--addr',`127.0.0.1:${port}`,'--data-dir',data],{env:{...process.env,PATH:path.join(tmp,'bin')+':'+process.env.PATH,OPENADE_PROVIDER_HOME:path.join(tmp,'provider-home'),OPENADE_AUTH_TOKEN:token},stdio:'ignore'});
+ const wait=()=>expect.poll(async()=>{try{return(await fetch(base+'/api/health')).status;}catch{return 0;}}).toBe(200);
+ const send=(url:string,method='GET',body?:unknown)=>fetch(base+url,{method,headers,body:body===undefined?undefined:JSON.stringify(body)});
+ const stop=async(child:ReturnType<typeof launch>)=>{if(child.exitCode!==null)return;const ended=new Promise<void>(resolve=>child.once('exit',()=>resolve()));child.kill('SIGTERM');await ended;};
+ let child=launch();try{await wait();const response=await send('/api/sessions','POST',{title:'Recover linked agent',prompt:'subagent held',agent:'codex',repo_root:path.join(tmp,'fixture-repo'),base_branch:'main'});expect(response.status).toBe(201);const s=await response.json();await expect.poll(async()=>(await(await send(`/api/sessions/${s.id}`)).json()).status).toBe('completed');
+ const parent=fs.readFileSync(path.join(data,'transcripts',s.id+'.log'),'utf8');const spawn=parent.split('\n').filter(Boolean).map(line=>JSON.parse(line)).find(event=>event.type==='openade.subagent');expect(spawn).toBeTruthy();const endpoint=`/api/sessions/${s.id}/subagents/${spawn.doc_id}`;await expect.poll(async()=>(await(await send(endpoint)).json()).status).toBe('running');
+ await stop(child);child=launch();await wait();const doc=await(await send(endpoint)).json();expect(doc.status).toBe('interrupted');expect(doc.output).toContain('Child is working.');expect(doc.child_thread_id).toBe('child-turn-1');
+ }finally{await stop(child);}
+});
+test('reused provider item IDs in later turns still create independent child documents',async({request})=>{
+ const s=await create(request,'Two linked turns',{prompt:'subagent early'});await expect.poll(()=>status(request,s.id)).toBe('completed');
+ expect((await request.post(`${daemon}/api/sessions/${s.id}/messages`,{data:{text:'subagent early again'}})).status()).toBe(202);await expect.poll(()=>status(request,s.id)).toBe('completed');
+ const events=fs.readFileSync(path.join(tmp,'data/transcripts',s.id+'.log'),'utf8').split('\n').filter(Boolean).map(line=>JSON.parse(line)).filter(event=>event.type==='openade.subagent');expect(events).toHaveLength(2);expect(events[0].doc_id).not.toBe(events[1].doc_id);
+ for(const [index,event] of events.entries()){const doc=await(await request.get(`${daemon}/api/sessions/${s.id}/subagents/${event.doc_id}`)).json();expect(doc.child_thread_id).toBe(`child-turn-${index+1}`);expect(doc.status).toBe('done');}
+});
+test('sibling child streams stay bound to their own spawn cards',async({request,page})=>{
+ const s=await create(request,'Sibling linked agents',{prompt:'subagent siblings'});await expect.poll(()=>status(request,s.id)).toBe('completed');
+ const events=fs.readFileSync(path.join(tmp,'data/transcripts',s.id+'.log'),'utf8').split('\n').filter(Boolean).map(line=>JSON.parse(line)).filter(event=>event.type==='openade.subagent');expect(events).toHaveLength(2);expect(events.map(event=>event.title)).toEqual(['Inspect alpha','Inspect beta']);
+ const docs=[];for(const event of events){const endpoint=`${daemon}/api/sessions/${s.id}/subagents/${event.doc_id}`;await expect.poll(async()=>(await(await request.get(endpoint)).json()).status).toBe('done');docs.push(await(await request.get(endpoint)).json());}
+ expect(docs[0].output).toContain('alpha report');expect(docs[0].output).not.toContain('beta report');expect(docs[1].output).toContain('beta report');expect(docs[1].output).not.toContain('alpha report');
+ await ready(page);await open(page,'Sibling linked agents');await expect(page.getByRole('button',{name:/Open agent/})).toHaveCount(2);await page.getByRole('button',{name:'Open agent Inspect beta'}).click();const panel=page.getByLabel('Agent panel');await expect(panel).toContainText('beta report');await expect(panel).not.toContainText('alpha report');
+ await page.getByRole('button',{name:'Open agent Inspect alpha'}).click();await expect(panel.getByRole('tab')).toHaveCount(2);await expect(panel).toContainText('alpha report');await panel.getByRole('tab',{name:'Inspect beta'}).click();await expect(panel).toContainText('beta report');
+ const other=await create(request,'Different chat for agent tabs');await expect.poll(()=>status(request,other.id)).toBe('completed');await open(page,'Different chat for agent tabs');await open(page,'Sibling linked agents');await expect(page.getByRole('tab',{name:'Inspect alpha'})).toBeVisible();await expect(page.getByRole('tab',{name:'Inspect beta'})).toHaveAttribute('aria-selected','true');
+});
 test('known steering rejection stays queued, unknown delivery is quarantined and never retried',async({request})=>{
  const s=await create(request,'Steering failure',{prompt:'wait parent'});const a=await(await request.post(`${daemon}/api/sessions/${s.id}/message-queue`,{data:{text:'reject-steer'}})).json();expect((await request.post(`${daemon}/api/sessions/${s.id}/message-queue/${a.id}/steer`)).status()).toBe(409);expect((await(await request.get(`${daemon}/api/sessions/${s.id}/message-queue`)).json()).messages[0].status).toBe('queued');await request.delete(`${daemon}/api/sessions/${s.id}/message-queue/${a.id}`);
  const b=await(await request.post(`${daemon}/api/sessions/${s.id}/message-queue`,{data:{text:'uncertain-steer'}})).json();expect((await request.post(`${daemon}/api/sessions/${s.id}/message-queue/${b.id}/steer`)).status()).toBe(409);await expect.poll(()=>status(request,s.id)).toBe('failed');expect((await(await request.get(`${daemon}/api/sessions/${s.id}/message-queue`)).json()).messages[0].status).toBe('uncertain');expect(logs(s.id).filter(row=>row.method==='turn/start')).toHaveLength(1);expect((await request.delete(`${daemon}/api/sessions/${s.id}/message-queue/${b.id}`)).status()).toBe(204);

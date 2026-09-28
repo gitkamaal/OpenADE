@@ -253,6 +253,13 @@ export const sendMessage = (id: string, text: string) =>
   });
 
 export interface SessionTurnTime {generation:number;prompt:string;started_at:string;finished_at:string|null}
+export interface SubagentDoc {id:string;spawn_item_id:string;child_thread_id:string;title:string;status:"running"|"done"|"failed"|"interrupted";output:string;cursor:number;reset:boolean}
+export type SubagentSummary=Omit<SubagentDoc,"output"|"cursor"|"reset">;
+export const fetchSubagent=(sessionId:string,docId:string,after=0)=>request<SubagentDoc>(`/api/sessions/${encodeURIComponent(sessionId)}/subagents/${encodeURIComponent(docId)}?after=${after}`,{cache:"no-store"});
+export const fetchSubagentSummaries=async(sessionId:string,ids:string[])=>{
+ const payload=await request<{subagents:SubagentSummary[]}>(`/api/sessions/${encodeURIComponent(sessionId)}/subagents?ids=${encodeURIComponent(ids.join(","))}`,{cache:"no-store"});
+ return payload.subagents;
+};
 export async function listSessionTurnTimes(id:string):Promise<SessionTurnTime[]>{
   const payload=await request<{turns:SessionTurnTime[]}>(`/api/sessions/${id}/turns`);
   return Array.isArray(payload.turns)?payload.turns:[];

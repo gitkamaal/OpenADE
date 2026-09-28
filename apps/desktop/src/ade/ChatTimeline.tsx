@@ -13,7 +13,7 @@ import {
   Wrench,
 } from "@phosphor-icons/react";
 import { memo, useLayoutEffect, useEffect, useRef, useState } from "react";
-import { generatedImageMediaURL, listSessionTurnTimes, Session, SessionTurnTime } from "./api";
+import { fetchSubagentSummaries, generatedImageMediaURL, listSessionTurnTimes, Session, SessionTurnTime, SubagentSummary } from "./api";
 import { ChatActivity, GeneratedImage, createTranscriptParser, withDurableTurnTimestamps } from "./chat-model";
 import { MarkdownMessage } from "./MarkdownMessage";
 import { parseReviewComments } from "./ReviewComments";
@@ -25,17 +25,21 @@ function formatHoverTimestamp(timestamp:number){
  return `${value("month")} ${value("day")}, ${value("hour")}:${value("minute")} ${value("dayPeriod")}`;
 }
 
-export function ChatTimeline({ session, output, activityExpanded = false }: { session: Session; output: string; activityExpanded?: boolean }) {
+export function ChatTimeline({ session, output, activityExpanded = false, onOpenSubagent, initialPromptOverride, disableDurableTimestamps = false }: { session: Session; output: string; activityExpanded?: boolean; onOpenSubagent?:(id:string,title:string)=>void; initialPromptOverride?:string; disableDurableTimestamps?:boolean }) {
   const running = ["starting", "running", "waiting"].includes(session.status);
-  const initialPrompt=session.parent_session_id?"":session.prompt;
+  const initialPrompt=initialPromptOverride??(session.parent_session_id?"":session.prompt);
   const [durable,setDurable]=useState<{sessionId:string;records:SessionTurnTime[]}|null>(null);
-  useEffect(()=>{let stale=false;void listSessionTurnTimes(session.id).then(records=>{if(!stale)setDurable({sessionId:session.id,records});}).catch(()=>{});return()=>{stale=true;};},[session.id,session.generation,session.status]);
+  useEffect(()=>{if(disableDurableTimestamps){setDurable(null);return;}let stale=false;void listSessionTurnTimes(session.id).then(records=>{if(!stale)setDurable({sessionId:session.id,records});}).catch(()=>{});return()=>{stale=true;};},[session.id,session.generation,session.status,disableDurableTimestamps]);
   const parser=useRef(createTranscriptParser(initialPrompt,session.created_at));const previous=useRef("");const prompt=useRef(initialPrompt);
   if(prompt.current!==initialPrompt||!output.startsWith(previous.current)){parser.current=createTranscriptParser(initialPrompt,session.created_at);previous.current="";prompt.current=initialPrompt;}
   parser.current.append(output.slice(previous.current.length));previous.current=output;
   const parsed=parser.current.snapshot(running);
-  const turns=durable?.sessionId===session.id?withDurableTurnTimestamps(parsed,durable.records,session.generation):parsed;
+  const turns=!disableDurableTimestamps&&durable?.sessionId===session.id?withDurableTurnTimestamps(parsed,durable.records,session.generation):parsed;
   const [visibleCount,setVisibleCount]=useState(80);const timeline=useRef<HTMLDivElement>(null);const jump=useRef<string|null>(null);
+  const visibleSubagentIDs=[...new Set(turns.slice(-visibleCount).flatMap(turn=>turn.activities.filter(activity=>activity.kind==="subagent").map(activity=>activity.docId).filter((id):id is string=>Boolean(id))))].slice(-128);
+  const visibleSubagentKey=visibleSubagentIDs.join(",");
+  const [subagentSummaries,setSubagentSummaries]=useState<Record<string,SubagentSummary>>({});
+  useEffect(()=>{if(!visibleSubagentKey){setSubagentSummaries({});return;}let active=true,busy=false,allTerminal=false,tick=0;const ids=visibleSubagentKey.split(",");const read=()=>{if(busy)return;busy=true;void fetchSubagentSummaries(session.id,ids).then(items=>{if(!active)return;allTerminal=items.length===ids.length&&items.every(item=>item.status!=="running");const next=Object.fromEntries(items.map(item=>[item.id,item]));setSubagentSummaries(current=>Object.keys(current).length===items.length&&items.every(item=>current[item.id]?.status===item.status&&current[item.id]?.child_thread_id===item.child_thread_id&&current[item.id]?.title===item.title)?current:next);}).catch(()=>{}).finally(()=>{busy=false;});};read();const timer=window.setInterval(()=>{if(!document.hidden&&(!allTerminal||++tick%5===0))read();},1000);return()=>{active=false;window.clearInterval(timer);};},[session.id,visibleSubagentKey]);
   useLayoutEffect(()=>{if(!jump.current)return;const target=timeline.current?.querySelector<HTMLElement>(`[data-message-id="${jump.current}"]`),scroll=timeline.current?.closest<HTMLElement>(".messages");if(target&&scroll){scroll.scrollTo({top:scroll.scrollTop+target.getBoundingClientRect().top-scroll.getBoundingClientRect().top-24,behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth"});jump.current=null;}},[visibleCount]);
 
   return (
@@ -55,6 +59,8 @@ export function ChatTimeline({ session, output, activityExpanded = false }: { se
             streaming={Boolean(turn.streaming)}
             agent={session.agent}
             activityExpanded={activityExpanded}
+            onOpenSubagent={onOpenSubagent}
+            subagentSummaries={subagentSummaries}
             timestamp={turn.timestamp}
           />
         ),
@@ -85,6 +91,8 @@ const AssistantTurn=memo(function AssistantTurn({
   streaming,
   agent,
   activityExpanded,
+  onOpenSubagent,
+  subagentSummaries,
   timestamp,
 }: {
   session: Session;
@@ -94,15 +102,19 @@ const AssistantTurn=memo(function AssistantTurn({
   streaming: boolean;
   agent: string;
   activityExpanded: boolean;
+  onOpenSubagent?:(id:string,title:string)=>void;
+  subagentSummaries:Record<string,SubagentSummary>;
   timestamp?:number;
 }) {
   const visibleMarkdown = useProgressiveMarkdown(markdown, streaming);
   const questions=activities.filter(activity=>activity.kind==="question");
-  const grouped=activities.filter(activity=>activity.kind!=="question");
+  const subagents=activities.filter(activity=>activity.kind==="subagent");
+  const grouped=activities.filter(activity=>activity.kind!=="question"&&activity.kind!=="subagent");
   return (
     <article className="chat-assistant-turn">
       <header><span className="agent-avatar"><ProviderIcon provider={agent}/></span><strong>{agentLabel(agent)}</strong></header>
       {questions.map(question=><div className="transcript-question" role="note" aria-label={`Question: ${question.title}`} key={question.id}><span className="transcript-question-icon"><ChatCircleDots/></span><strong>Question</strong><span>{question.status==="pending"?"Awaiting your answer…":question.title}</span></div>)}
+      {subagents.map(activity=><SubagentCard key={activity.id} activity={activity} summary={activity.docId?subagentSummaries[activity.docId]:undefined} onOpen={onOpenSubagent}/>)}
       {grouped.length > 0 && <ActivityGroup activities={grouped} streaming={streaming} expanded={activityExpanded} />}
       {visibleMarkdown ? <MarkdownMessage session={session}>{visibleMarkdown}</MarkdownMessage> : streaming ? (
         <div className="native-thinking"><SpinnerGap className="spin" /> Working through the task…</div>
@@ -113,6 +125,12 @@ const AssistantTurn=memo(function AssistantTurn({
     </article>
   );
 });
+
+function SubagentCard({activity,summary,onOpen}:{activity:ChatActivity;summary?:SubagentSummary;onOpen?:(id:string,title:string)=>void}){
+ const status=summary?.status??"running",linked=Boolean(summary?.child_thread_id&&onOpen);
+ const content=<><span className="subagent-chip-icon"><ChatCircleDots/></span><strong>Agent</strong><span className="subagent-chip-title">{activity.title}</span><span className="subagent-chip-status">{status==="running"?"Working":status==="done"?"Done":status==="failed"?"Failed":"Interrupted"}</span></>;
+ return linked?<button type="button" className="subagent-chip" aria-label={`Open agent ${activity.title}`} onClick={()=>onOpen?.(activity.docId!,activity.title)}>{content}</button>:<div className="subagent-chip" role="note" aria-label={`Agent ${activity.title}`}>{content}</div>;
+}
 
 function TurnMetadata({timestamp,text,side}:{timestamp?:number;text:string;side:"user"|"assistant"}){
  const [copied,setCopied]=useState(false),[failed,setFailed]=useState(false),timer=useRef<number|undefined>(undefined),mounted=useRef(false);

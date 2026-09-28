@@ -201,6 +201,8 @@ func (d *Daemon) routes() http.Handler {
 	mux.HandleFunc("GET /api/sessions/{id}/provider-state", d.handleProviderState)
 	mux.HandleFunc("POST /api/sessions/{id}/provider-requests/{requestID}", d.handleProviderReply)
 	mux.HandleFunc("GET /api/sessions/{id}/stream", d.handleStream)
+	mux.HandleFunc("GET /api/sessions/{id}/subagents", d.handleListSubagents)
+	mux.HandleFunc("GET /api/sessions/{id}/subagents/{docID}", d.handleGetSubagent)
 	mux.HandleFunc("POST /api/sessions/{id}/input", d.handleInput)
 	mux.HandleFunc("POST /api/sessions/{id}/messages", d.handleMessage)
 	mux.HandleFunc("POST /api/sessions/{id}/surface", d.handleSessionSurface)

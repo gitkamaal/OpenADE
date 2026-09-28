@@ -124,6 +124,18 @@ CREATE TABLE IF NOT EXISTS sessions (
   finished_at TEXT
 );
 CREATE TABLE IF NOT EXISTS provider_context(session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,state TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS subagent_docs (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  generation INTEGER NOT NULL,
+  spawn_item_id TEXT NOT NULL,
+  child_thread_id TEXT NOT NULL DEFAULT '',
+  title TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'running',
+  updated_at TEXT NOT NULL,
+  UNIQUE(session_id,generation,spawn_item_id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS subagent_thread_idx ON subagent_docs(session_id,child_thread_id) WHERE child_thread_id<>'';
 CREATE INDEX IF NOT EXISTS sessions_updated_idx ON sessions(updated_at DESC);
 CREATE INDEX IF NOT EXISTS sessions_repo_idx ON sessions(repo_root, updated_at DESC);
 CREATE INDEX IF NOT EXISTS sessions_ticket_idx ON sessions(ticket_key) WHERE ticket_key <> '';
@@ -179,6 +191,11 @@ CREATE INDEX IF NOT EXISTS message_queue_session_idx ON message_queue(session_id
 		}
 	}
 	if _, err := s.db.Exec(`UPDATE message_queue SET status='uncertain' WHERE status IN ('steering','provider-starting')`); err != nil {
+		return err
+	}
+	// App-server child threads cannot survive a daemon restart. Keep their
+	// documents, but never leave a stale "running" chip indefinitely.
+	if _, err := s.db.Exec(`UPDATE subagent_docs SET status='interrupted',updated_at=? WHERE status='running'`, encodeTime(time.Now().UTC())); err != nil {
 		return err
 	}
 	s.recoverProcesses()
@@ -720,6 +737,9 @@ func (s *Store) DeleteSession(id string, dataDir string) error {
 		cleanup = append(cleanup, removeErr)
 	}
 	if removeErr := os.RemoveAll(filepath.Join(dataDir, "generated-images", id)); removeErr != nil {
+		cleanup = append(cleanup, removeErr)
+	}
+	if removeErr := os.RemoveAll(filepath.Join(dataDir, "subagents", id)); removeErr != nil {
 		cleanup = append(cleanup, removeErr)
 	}
 	for _, terminalID := range terminalIDs {

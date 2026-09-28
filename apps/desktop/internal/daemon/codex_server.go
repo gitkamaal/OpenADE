@@ -121,6 +121,7 @@ type codexConversation struct {
 	providerTurn        string
 	transcript          *os.File
 	requests            map[string]*ProviderRequest
+	subagents           *codexSubagents
 	context             ProviderContext
 	idle                *time.Timer
 	closed              bool
@@ -149,6 +150,7 @@ func (c *codexConversation) close() {
 		if c.idle != nil {
 			c.idle.Stop()
 		}
+		c.subagents.shutdown()
 		c.rpc.stop()
 	}
 	c.mu.Unlock()
@@ -284,7 +286,7 @@ func (m *SessionManager) startCodexTurn(session Session, program string) error {
 			rpc.stop()
 			return err
 		}
-		c = &codexConversation{manager: m, sessionID: session.ID, threadID: result.Thread.ID, rpc: rpc, requests: map[string]*ProviderRequest{}, progress: make(chan struct{})}
+		c = &codexConversation{manager: m, sessionID: session.ID, threadID: result.Thread.ID, rpc: rpc, requests: map[string]*ProviderRequest{}, subagents: newCodexSubagents(m.store, m.dataDir, session.ID, result.Thread.ID), progress: make(chan struct{})}
 		m.providerMu.Lock()
 		m.codex[session.ID] = c
 		c.idle = time.AfterFunc(codexIdleTimeout, c.close)
@@ -321,6 +323,7 @@ func (m *SessionManager) startCodexTurn(session Session, program string) error {
 	}
 	if c.idle != nil {
 		c.idle.Stop()
+		c.idle = nil
 	}
 	c.live = live
 	startDone := make(chan struct{})
@@ -515,6 +518,7 @@ func (c *codexConversation) finish(status string) {
 		c.transcript = nil
 	}
 	c.requests = map[string]*ProviderRequest{}
+	c.subagents.finishParent()
 	c.live = nil
 	c.providerTurn = ""
 	live.mu.Lock()
@@ -525,7 +529,7 @@ func (c *codexConversation) finish(status string) {
 	live.mu.Unlock()
 	close(live.readDone)
 	close(live.done)
-	if !c.closed {
+	if !c.closed && !c.subagents.running() {
 		c.idle = time.AfterFunc(codexIdleTimeout, c.close)
 	}
 	if status == "completed" {
@@ -580,6 +584,7 @@ func (c *codexConversation) events() {
 	}
 	c.mu.Lock()
 	c.closed = true
+	c.subagents.shutdown()
 	if c.idle != nil {
 		c.idle.Stop()
 	}
@@ -603,10 +608,10 @@ func (c *codexConversation) handle(frame providerRPCFrame) {
 		Turn      struct{ ID, Status string } `json:"turn"`
 		Delta     string                      `json:"delta"`
 		Item      struct {
-			Type, ID, Text, Command, AggregatedOutput, Status string
-			SavedPath                                         string          `json:"savedPath"`
-			SavedPathSnake                                    string          `json:"saved_path"`
-			Failure                                           json.RawMessage `json:"failure"`
+			Type, ID, Text, Command, AggregatedOutput, Status, Tool string
+			SavedPath                                               string          `json:"savedPath"`
+			SavedPathSnake                                          string          `json:"saved_path"`
+			Failure                                                 json.RawMessage `json:"failure"`
 		} `json:"item"`
 		TokenUsage struct {
 			Last               struct{ TotalTokens, InputTokens, OutputTokens *uint64 }
@@ -629,8 +634,19 @@ func (c *codexConversation) handle(frame providerRPCFrame) {
 	}
 	// Child completion/request ownership can never settle/approve the parent.
 	if p.ThreadID != "" && p.ThreadID != c.threadID {
+		if c.closed {
+			return
+		}
 		if len(frame.ID) > 0 {
 			_ = c.rpc.reject(ctx, frame.ID, -32601, "Child-thread requests are not supported")
+		} else if c.subagents != nil {
+			c.subagents.child(frame, p.ThreadID)
+			if c.live == nil && c.subagents.running() && c.idle != nil {
+				c.idle.Stop()
+				c.idle = nil
+			} else if c.live == nil && !c.subagents.running() && c.idle == nil {
+				c.idle = time.AfterFunc(codexIdleTimeout, c.close)
+			}
 		}
 		return
 	}
@@ -787,6 +803,9 @@ func (c *codexConversation) handle(frame providerRPCFrame) {
 	case "item/reasoning/textDelta", "item/reasoning/summaryTextDelta":
 		c.emit(map[string]any{"type": "stream_event", "event": map[string]any{"delta": map[string]string{"type": "thinking_delta"}}})
 	case "item/started", "item/completed":
+		if c.subagents != nil && c.subagents.parentItem(frame, c.live.generation, c.emit) {
+			return
+		}
 		phase := "item.started"
 		if frame.Method == "item/completed" {
 			phase = "item.completed"
@@ -826,8 +845,18 @@ func (c *codexConversation) handle(frame providerRPCFrame) {
 			c.emit(map[string]any{"type": phase, "item": map[string]string{"type": "command_execution", "command": p.Item.Command, "aggregated_output": p.Item.AggregatedOutput}})
 		case "fileChange":
 			c.emit(map[string]any{"type": "openade.tool", "title": "Changed files", "detail": p.Item.Status})
-		case "mcpToolCall", "webSearch", "collabAgentToolCall":
-			c.emit(map[string]any{"type": "openade.tool", "title": p.Item.Type, "detail": p.Item.Status})
+		case "mcpToolCall", "webSearch":
+			title := "MCP tool"
+			if p.Item.Type == "webSearch" {
+				title = "Web search"
+			}
+			c.emit(map[string]any{"type": "openade.tool", "id": p.Item.ID, "title": title, "detail": p.Item.Status})
+		case "collabAgentToolCall", "collab_agent_tool_call":
+			title := map[string]string{"sendInput": "Send agent message", "send_input": "Send agent message", "wait": "Wait for agents", "closeAgent": "Close agent", "close_agent": "Close agent", "resumeAgent": "Resume agent", "resume_agent": "Resume agent"}[p.Item.Tool]
+			if title == "" {
+				title = "Agent control: " + clipSubagentText(p.Item.Tool, 80)
+			}
+			c.emit(map[string]any{"type": "openade.tool", "id": p.Item.ID, "title": title, "detail": p.Item.Status})
 		}
 	case "thread/tokenUsage/updated":
 		tokens := p.TokenUsage.Last.TotalTokens
