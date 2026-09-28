@@ -6,6 +6,7 @@ package main
 #cgo CFLAGS: -x objective-c
 #cgo LDFLAGS: -framework Cocoa -framework WebKit -framework QuartzCore
 #include <stdlib.h>
+void openadeBrowserSetShortcuts(const char *json);
 void openadeBrowserOpen(const char *tab,const char *url,double x,double y,double width,double height);
 void openadeBrowserNavigate(const char *tab,const char *url);
 void openadeBrowserBounds(const char *tab,double x,double y,double width,double height);
@@ -14,6 +15,7 @@ int openadeAppearance(int appearance,int material);
 */
 import "C"
 import (
+	"encoding/json"
 	"fmt"
 	"github.com/google/uuid"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -25,6 +27,81 @@ import (
 
 var browserAppMu sync.RWMutex
 var browserApp *App
+
+func nativeBrowserShortcut(binding string) string {
+	parts := strings.Split(strings.ToLower(binding), "+")
+	if len(parts) < 2 || len(parts) > 5 {
+		return ""
+	}
+	key := parts[len(parts)-1]
+	if key == "" || len(key) > 20 || strings.ContainsAny(key, " \n\r\t") {
+		return ""
+	}
+	var mod, ctrl, alt, shift bool
+	for _, part := range parts[:len(parts)-1] {
+		switch part {
+		case "mod", "meta":
+			if mod {
+				return ""
+			}
+			mod = true
+		case "ctrl":
+			if ctrl {
+				return ""
+			}
+			ctrl = true
+		case "alt":
+			if alt {
+				return ""
+			}
+			alt = true
+		case "shift":
+			if shift {
+				return ""
+			}
+			shift = true
+		default:
+			return ""
+		}
+	}
+	var result strings.Builder
+	if mod {
+		result.WriteString("mod+")
+	}
+	if ctrl {
+		result.WriteString("ctrl+")
+	}
+	if alt {
+		result.WriteString("alt+")
+	}
+	if shift {
+		result.WriteString("shift+")
+	}
+	result.WriteString(key)
+	return result.String()
+}
+
+func (a *App) BrowserSetShortcuts(bindings []string) {
+	if len(bindings) > 128 {
+		bindings = bindings[:128]
+	}
+	shortcuts := make([]string, 0, len(bindings))
+	for _, binding := range bindings {
+		if combo := nativeBrowserShortcut(binding); combo != "" {
+			shortcuts = append(shortcuts, combo)
+		}
+	}
+	data, err := json.Marshal(shortcuts)
+	if err != nil {
+		return
+	}
+	browserAppMu.Lock()
+	browserApp = a
+	browserAppMu.Unlock()
+	value := C.CString(string(data))
+	defer C.free(unsafe.Pointer(value))
+	C.openadeBrowserSetShortcuts(value)
+}
 
 func browserAddress(address string) (string, error) {
 	parsed, err := url.Parse(address)
@@ -129,6 +206,20 @@ func openadeBrowserNewTab(tab, value *C.char) {
 	browserAppMu.RUnlock()
 	if app != nil && app.ctx != nil {
 		go runtime.EventsEmit(app.ctx, "browser:new-tab", C.GoString(tab), C.GoString(value))
+	}
+}
+
+//export openadeBrowserKey
+func openadeBrowserKey(tab, combo *C.char) {
+	id, key := C.GoString(tab), C.GoString(combo)
+	if browserTabID(id) != nil {
+		return
+	}
+	browserAppMu.RLock()
+	app := browserApp
+	browserAppMu.RUnlock()
+	if app != nil && app.ctx != nil {
+		go runtime.EventsEmit(app.ctx, "browser:key", id, key)
 	}
 }
 

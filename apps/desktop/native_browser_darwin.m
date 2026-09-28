@@ -7,6 +7,7 @@
 extern void openadeBrowserChanged(char *tab,char *url,char *title,int back,int forward);
 extern void openadeBrowserNewTab(char *tab,char *url);
 extern void openadeBrowserFavicon(char *tab,char *page,char *url);
+extern void openadeBrowserKey(char *tab,char *combo);
 extern NSView *openadeContentHost(NSWindow *window);
 
 // Image I/O validates and downsizes a fetched raster favicon before its PNG
@@ -72,6 +73,62 @@ cleanup:
 static NSMutableDictionary<NSString *, WKWebView *> *browserViews;
 static NSMutableDictionary<NSString *, id> *browserDelegates;
 static WKWebsiteDataStore *browserDataStore;
+static NSSet<NSString *> *browserShortcuts;
+static id browserKeyMonitor;
+
+static NSString *browserKeyCombo(NSEvent *event) {
+ NSEventModifierFlags mods=event.modifierFlags;
+ NSString *key=nil;
+ switch(event.keyCode) {
+  case 48:key=@"tab";break;
+  case 123:key=@"arrowleft";break;
+  case 124:key=@"arrowright";break;
+  case 125:key=@"arrowdown";break;
+  case 126:key=@"arrowup";break;
+  default:key=event.charactersIgnoringModifiers.lowercaseString;break;
+ }
+ if(!key.length||key.length>20)return nil;
+ NSMutableString *combo=[NSMutableString string];
+ if(mods&NSEventModifierFlagCommand)[combo appendString:@"mod+"];
+ if(mods&NSEventModifierFlagControl)[combo appendString:@"ctrl+"];
+ if(mods&NSEventModifierFlagOption)[combo appendString:@"alt+"];
+ if(mods&NSEventModifierFlagShift)[combo appendString:@"shift+"];
+ [combo appendString:key];
+ return combo;
+}
+
+void openadeBrowserSetShortcuts(const char *json) {
+ NSString *value=json?[NSString stringWithUTF8String:json]:nil;
+ dispatch_async(dispatch_get_main_queue(),^{
+  NSData *data=[value dataUsingEncoding:NSUTF8StringEncoding];
+  NSArray *items=data?[NSJSONSerialization JSONObjectWithData:data options:0 error:NULL]:nil;
+  if(![items isKindOfClass:[NSArray class]])return;
+  NSMutableSet *next=[NSMutableSet set];
+  for(id item in items)if([item isKindOfClass:[NSString class]]&&[item length]<=64)[next addObject:item];
+  [browserShortcuts release];browserShortcuts=[next copy];
+ });
+}
+
+static void browserInstallKeyMonitor(void) {
+ if(browserKeyMonitor)return;
+ browserKeyMonitor=[[NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown handler:^NSEvent *(NSEvent *event){
+  NSWindow *window=event.window;
+  NSResponder *responder=window.firstResponder;
+  if(![responder isKindOfClass:[NSView class]])return event;
+  NSString *tab=nil;
+  for(NSString *identifier in browserViews) {
+   WKWebView *view=browserViews[identifier];
+   if(!view.hidden&&view.window==window&&[(NSView *)responder isDescendantOf:view]){tab=identifier;break;}
+  }
+  if(!tab)return event;
+  NSString *combo=browserKeyCombo(event);
+  static NSSet<NSString *> *browserKeys;
+  if(!browserKeys)browserKeys=[[NSSet alloc]initWithArray:@[@"mod+l",@"mod+t",@"mod+w",@"mod+[",@"mod+]",@"mod+shift+r",@"mod+k",@"mod+,"]];
+  if(!combo||(![browserKeys containsObject:combo]&&![browserShortcuts containsObject:combo]))return event;
+  openadeBrowserKey((char *)tab.UTF8String,(char *)combo.UTF8String);
+  return nil;
+ }] retain];
+}
 
 static BOOL browserAllowed(NSURL *url) {
  NSString *scheme=url.scheme.lowercaseString;
@@ -151,6 +208,7 @@ static void browserEnsureStore(void) {
  if(!browserViews)browserViews=[[NSMutableDictionary alloc]init];
  if(!browserDelegates)browserDelegates=[[NSMutableDictionary alloc]init];
  if(!browserDataStore)browserDataStore=[[WKWebsiteDataStore nonPersistentDataStore] retain];
+ browserInstallKeyMonitor();
 }
 
 static void browserPlace(NSString *tab, WKWebView *view, double x, double y, double width, double height) {
@@ -220,6 +278,7 @@ void openadeBrowserAction(const char *tab,int action) {
     [(OpenADEBrowserDelegate *)browserDelegates[identifier] stopObservingWebView:view];
     [view stopLoading];view.navigationDelegate=nil;view.UIDelegate=nil;
     [view removeFromSuperview];[browserViews removeObjectForKey:identifier];[browserDelegates removeObjectForKey:identifier];
+    if(browserViews.count==0&&browserKeyMonitor){[NSEvent removeMonitor:browserKeyMonitor];[browserKeyMonitor release];browserKeyMonitor=nil;}
    } else if(action==1)[view goBack];
    else if(action==2)[view goForward];
    else if(action==3)[view reload];

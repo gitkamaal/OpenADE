@@ -12,5 +12,6 @@ func (a *App) BrowserNavigateTab(tab, address string) error {
 }
 func (a *App) BrowserBoundsTab(tab string, x, y, width, height float64) {}
 func (a *App) BrowserActionTab(tab, action string)                      {}
+func (a *App) BrowserSetShortcuts(bindings []string)                    {}
 
 func (a *App) SetAppearance(scheme, material string) string { return "unsupported" }

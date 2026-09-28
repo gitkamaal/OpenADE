@@ -50,6 +50,32 @@ test("workspace tabs swap their leading icon for Close and support middle-click 
  const keyboardClose=chips.first().getByLabel('Close Browser tab');await keyboardClose.focus();await expect(keyboardClose).toHaveCSS('opacity','1');await keyboardClose.press('Enter');await expect(chips).toHaveCount(1);await expect(chips.getByRole('tab',{selected:true})).toBeFocused();
 });
 
+test("native browser key events honor app shortcuts before browser actions and ignore stale tabs",async({page,request})=>{
+ await page.addInitScript(()=>{
+  localStorage.setItem("openade.preferences",JSON.stringify({shortcuts:{commandPalette:"Mod+Alt+L"}}));
+  const state=window as typeof window&{go:{main:{App:Record<string,unknown>}};runtime:{EventsOn:(name:string,callback:(...args:unknown[])=>void)=>()=>void};browserCalls:{op:string;id?:string;bindings?:string[]}[];browserEvents:Record<string,((...args:unknown[])=>void)[]>};
+  state.browserCalls=[];state.browserEvents={};
+  state.go={main:{App:{SetAppearance:async()=>"opaque",BrowserSetShortcuts:async(bindings:string[])=>{state.browserCalls.push({op:"shortcuts",bindings});},BrowserOpenTab:async(id:string)=>{state.browserCalls.push({op:"open",id});},BrowserNavigateTab:async()=>{},BrowserBoundsTab:async()=>{},BrowserActionTab:async(id:string,op:string)=>{state.browserCalls.push({op,id});}}}};
+  state.runtime={EventsOn:(name,callback)=>{const listeners=state.browserEvents[name]??=[];listeners.push(callback);state.browserEvents[name]=listeners;return()=>{state.browserEvents[name]=listeners.filter(item=>item!==callback);};}};
+ });
+ const session=await create(request,"Native browser key context",{agent:"shell",repo_root:"",prompt:"printf browser-key-context"});await expect.poll(()=>status(request,session.id)).toBe("completed");
+ await ready(page);await open(page,"Native browser key context");await page.getByLabel("Add panel").click();await page.getByRole("menuitem",{name:"Browser",exact:true}).click();
+ await expect.poll(()=>page.evaluate(()=>((window as typeof window&{browserCalls:{op:string;bindings?:string[]}[]}).browserCalls).some(call=>call.op==="shortcuts"&&call.bindings?.includes("Mod+Alt+L")))).toBe(true);
+ await page.locator(".browser-panel:visible").getByLabel("Website address").fill("http://localhost:7311/first");await page.locator(".browser-panel:visible").getByRole("button",{name:"Go",exact:true}).click();
+ const first=await page.evaluate(()=>((window as typeof window&{browserCalls:{op:string;id?:string}[]}).browserCalls).find(call=>call.op==="open")!.id!);
+ const key=async(id:string,combo:string)=>page.evaluate(({id,combo})=>{const state=window as typeof window&{browserEvents:Record<string,((...args:unknown[])=>void)[]>};state.browserEvents["browser:key"].forEach(listener=>listener(id,combo));},{id,combo});
+ await page.evaluate(id=>{const state=window as typeof window&{browserEvents:Record<string,((...args:unknown[])=>void)[]>};state.browserEvents["browser:state"].forEach(listener=>listener(id,"http://localhost:7311/first","First page",true,true));},first);
+ await expect(page.locator(".browser-panel:visible").getByLabel("Back in preview")).toBeEnabled();
+ await key(first,"mod+shift+r");await key(first,"mod+[");await key(first,"mod+]");
+ await expect.poll(()=>page.evaluate(()=>((window as typeof window&{browserCalls:{op:string}[]}).browserCalls).filter(call=>["reload","back","forward"].includes(call.op)).map(call=>call.op))).toEqual(["reload","back","forward"]);
+ await key(first,"mod+l");await expect(page.locator(".browser-panel:visible").getByLabel("Website address")).toBeFocused();
+ await key(first,"mod+alt+l");await expect(page.getByRole("dialog",{name:"Commands and chats"})).toBeVisible();await page.keyboard.press("Escape");
+ await key(first,"mod+t");await expect(page.locator('.panel-tabs [role="tab"]')).toHaveCount(3);
+ await key(first,"mod+w");await expect(page.locator('.panel-tabs [role="tab"]')).toHaveCount(3);
+ const second=page.locator('.panel-tabs [role="tab"]').last();await expect(second).toHaveAttribute("aria-selected","true");
+ const secondId=await page.locator(".browser-panel:visible").getAttribute("data-browser-tab-id");await key(secondId!,"mod+w");await expect(page.locator('.panel-tabs [role="tab"]')).toHaveCount(2);await expect(page.locator('.panel-tabs [role="tab"][aria-selected="true"]')).toBeFocused();
+});
+
 test("native browser bridge opens each tab once and navigates existing WebViews without closing them",async({page,request})=>{
  await page.addInitScript(()=>{
   const state=window as typeof window&{go:{main:{App:Record<string,unknown>}};runtime:{EventsOn:(name:string,callback:(...args:unknown[])=>void)=>()=>void};browserCalls:{op:string;id:string;url?:string}[];browserEvents:Record<string,((...args:unknown[])=>void)[]>};

@@ -286,6 +286,22 @@ function AppShell() {
   };
   const toggleSidebar = () => { window.dispatchEvent(new Event("openade-dismiss-menus"));setSidebarOpen(value=>!value); };
   useEffect(() => {if(preferences.sidebar_open!==sidebarOpen)updatePreferences({...preferences,sidebar_open:sidebarOpen});}, [sidebarOpen]);
+  useEffect(()=>{
+    const native=window as typeof window&{go?:{main?:{App?:{BrowserSetShortcuts?:(bindings:string[])=>Promise<void>}}}};
+    void native.go?.main?.App?.BrowserSetShortcuts?.(Object.values(preferences.shortcuts));
+  },[preferences.shortcuts]);
+  useEffect(()=>{
+    const native=window as typeof window&{go?:{main?:{App?:{BrowserOpenTab?:unknown}}};runtime?:{EventsOn?:(name:string,callback:(id:string,combo:string)=>void)=>()=>void}};
+    if(!native.go?.main?.App?.BrowserOpenTab)return;
+    return native.runtime?.EventsOn?.("browser:key",(id,combo)=>{
+      if(document.querySelector<HTMLElement>('.browser-panel[aria-hidden="false"]')?.dataset.browserTabId!==id)return;
+      const parts=combo.split("+"),key=parts.pop();
+      if(!key||!parts.length)return;
+      const event=new KeyboardEvent("keydown",{key:key.startsWith("arrow")?`Arrow${key.slice(5,6).toUpperCase()}${key.slice(6)}`:key==="tab"?"Tab":key,metaKey:parts.includes("mod"),ctrlKey:parts.includes("ctrl"),altKey:parts.includes("alt"),shiftKey:parts.includes("shift"),bubbles:true,cancelable:true});
+      window.dispatchEvent(event);
+      if(!event.defaultPrevented)window.dispatchEvent(new CustomEvent("openade-browser-key",{detail:{id,combo}}));
+    });
+  },[]);
   useEffect(() => {
     const navigationSessions=()=>{
       const eligible=sessions.filter(session=>!session.archived&&!session.parent_session_id&&(!preferences.sidebar_project_filter||session.repo_root===preferences.sidebar_project_filter));
