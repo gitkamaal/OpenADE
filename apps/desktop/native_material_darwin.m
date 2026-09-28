@@ -2,6 +2,7 @@
 // Copyright 2022-2025 Zed Industries, Inc. Modified for OpenADE/Wails in 2026.
 // Private layer/filter manipulation has been replaced with public AppKit APIs.
 #import <Cocoa/Cocoa.h>
+#import <WebKit/WebKit.h>
 #import <objc/runtime.h>
 
 extern void openadeAppearanceChanged(int status);
@@ -14,10 +15,30 @@ extern void openadeAppearanceChanged(int status);
 @property(nonatomic) int scheme;
 @property(nonatomic) int requested;
 @property(nonatomic) int status;
+@property(nonatomic, copy) NSAppearanceName effectiveAppearanceName;
+@property(nonatomic) BOOL webRedrawPending;
 - (void)apply;
+- (void)refreshWebViewAfterAppearanceChange;
 @end
 
 static const char materialKey;
+
+static WKWebView *openadeWebViewIn(NSView *view) {
+ if ([view isKindOfClass:WKWebView.class]) return (WKWebView *)view;
+ for (NSView *child in view.subviews) {
+  WKWebView *webView = openadeWebViewIn(child);
+  if (webView) return webView;
+ }
+ return nil;
+}
+
+static NSAppearanceName openadeResolvedAppearanceName(NSWindow *window) {
+ if (@available(macOS 10.14, *)) {
+  return [window.effectiveAppearance bestMatchFromAppearancesWithNames:@[NSAppearanceNameAqua, NSAppearanceNameDarkAqua]];
+ }
+ return NSAppearanceNameAqua;
+}
+
 static NSVisualEffectMaterial desktopMaterial(void) {
  if (@available(macOS 10.14, *)) return NSVisualEffectMaterialUnderWindowBackground;
  return NSVisualEffectMaterialSidebar;
@@ -36,11 +57,29 @@ NSView *openadeContentHost(NSWindow *window) {
 }
 - (void)dealloc {
  [[[NSWorkspace sharedWorkspace] notificationCenter] removeObserver:self];
- [_host release]; [_effect release]; [_backdrop release]; [super dealloc];
+ [_host release]; [_effect release]; [_backdrop release]; [_effectiveAppearanceName release]; [super dealloc];
 }
 - (void)accessibilityChanged:(NSNotification *)notification {
  if (!NSThread.isMainThread) {dispatch_async(dispatch_get_main_queue(), ^{[self accessibilityChanged:notification];}); return;}
  [self apply]; openadeAppearanceChanged(self.status);
+}
+- (void)refreshWebViewAfterAppearanceChange {
+ if (self.webRedrawPending) return;
+ self.webRedrawPending = YES;
+ OpenADEMaterial *material = [self retain];
+ dispatch_async(dispatch_get_main_queue(), ^{
+  material.webRedrawPending = NO;
+  WKWebView *webView = openadeWebViewIn(material.window.contentView);
+  if (webView && !webView.hidden) {
+   // WKWebView is retained in place. Public AppKit layout/display invalidation
+   // gives WebKit a new compositing pass after its inherited appearance flips.
+   [webView setNeedsLayout:YES];
+   [webView layoutSubtreeIfNeeded];
+   [webView setNeedsDisplay:YES];
+   [webView displayIfNeeded];
+  }
+  [material release];
+ });
 }
 - (void)apply {
  NSWindow *window = self.window;
@@ -49,7 +88,11 @@ NSView *openadeContentHost(NSWindow *window) {
  if (@available(macOS 10.14, *)) {
   if (self.scheme == 2) appearance = [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
  }
+ NSAppearanceName previousAppearance = self.effectiveAppearanceName;
  window.appearance = appearance;
+ NSAppearanceName resolvedAppearance = openadeResolvedAppearanceName(window);
+ BOOL appearanceChanged = previousAppearance && ![previousAppearance isEqualToString:resolvedAppearance];
+ self.effectiveAppearanceName = resolvedAppearance;
  NSWorkspace *workspace = [NSWorkspace sharedWorkspace];
  self.status = self.requested;
  if (workspace.accessibilityDisplayShouldIncreaseContrast) self.status = 4;
@@ -122,6 +165,7 @@ NSView *openadeContentHost(NSWindow *window) {
  self.host.frame = root.bounds;
  self.host.hidden = NO;
  self.host.needsDisplay = YES;
+ if (appearanceChanged) [self refreshWebViewAfterAppearanceChange];
 }
 @end
 

@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -162,7 +163,9 @@ func (d *Daemon) handleProviderSetup(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	command := "exec '" + strings.ReplaceAll(program, "'", "'\"'\"'") + "' " + suffix
+	d.projectMu.Lock()
 	session, err := d.sessions.Create(r.Context(), CreateSessionRequest{Title: "Sign in to " + provider, Agent: "shell", Mode: "tui", Prompt: command, RepoRoot: root, BaseBranch: "main"})
+	d.projectMu.Unlock()
 	if err != nil {
 		writeError(w, 500, err)
 		return
@@ -179,7 +182,14 @@ func (d *Daemon) handleSessionDetails(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, err)
 		return
 	}
-	session, err := d.store.GetSession(r.PathValue("id"))
+	id := r.PathValue("id")
+	release, err := d.deletions.admit(id)
+	if err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	defer release()
+	session, err := d.store.GetSession(id)
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -199,10 +209,74 @@ func (d *Daemon) handleSessionDetails(w http.ResponseWriter, r *http.Request) {
 		}
 		session.Instructions = *input.Instructions
 	}
-	_, err = d.store.db.Exec(`UPDATE sessions SET title=?,instructions=?,updated_at=? WHERE id=?`, session.Title, session.Instructions, encodeTime(time.Now().UTC()), session.ID)
+	result, err := d.store.db.Exec(`UPDATE sessions SET title=?,instructions=?,updated_at=? WHERE id=?`, session.Title, session.Instructions, encodeTime(time.Now().UTC()), session.ID)
 	if err != nil {
 		writeError(w, 500, err)
 		return
 	}
+	if affected, affectedErr := result.RowsAffected(); affectedErr != nil || affected != 1 {
+		writeError(w, http.StatusNotFound, fmt.Errorf("chat was removed"))
+		return
+	}
 	w.WriteHeader(204)
+}
+
+func (d *Daemon) handleSessionArchive(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Archived *bool `json:"archived"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&input); err != nil || input.Archived == nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("archived state is required"))
+		return
+	}
+	id := r.PathValue("id")
+	release, err := d.deletions.admit(id)
+	if err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	defer release()
+	if _, err = d.store.GetSession(id); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if err = d.store.SetSessionArchived(id, *input.Archived); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (d *Daemon) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, err := d.store.GetSession(id); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	release, err := d.deletions.begin(ctx, []string{id})
+	if err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	defer release()
+	if err := d.terminals.StopSession(id, 3*time.Second); err != nil {
+		writeError(w, http.StatusConflict, fmt.Errorf("could not safely stop terminal: %w", err))
+		return
+	}
+	if err := d.sessions.StopAndRelease(id, 3*time.Second); err != nil {
+		writeError(w, http.StatusConflict, fmt.Errorf("could not safely stop chat: %w", err))
+		return
+	}
+	if err := d.store.DeleteSession(id, d.config.DataDir); err != nil {
+		var warning *CleanupWarning
+		if errors.As(err, &warning) {
+			writeJSON(w, http.StatusOK, map[string]any{"cleanup_warning": warning.Error()})
+			return
+		}
+		writeStoreError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

@@ -314,7 +314,10 @@ function observeTerminalTheme(host:HTMLElement, terminal:Terminal){
   const solid=["opaque","reduced-transparency","increased-contrast","unsupported"].includes(root.getAttribute("data-native-material")??"");
   const glass=!solid&&(root.classList.contains("material-frosted")||root.classList.contains("material-default")&&root.classList.contains("default-frosted"));
   const palette={...Object.fromEntries(ansiSlots.map(slot=>[slot,value(`--ansi-${slot.replace(/[A-Z]/g,letter=>`-${letter.toLowerCase()}`)}`,"#e8e8ea")])),background:glass?"#00000000":value("--terminal-bg","#090909"),foreground:value("--terminal-fg","#e8e8ea"),cursor:value("--terminal-fg","#e8e8ea"),selectionBackground:value("--terminal-selection","#ffffff38")};
-  if(Object.entries(palette).some(([key,color])=>(terminal.options.theme as Record<string,string>|undefined)?.[key]!==color))terminal.options.theme={...terminal.options.theme,...palette};
+  if(Object.entries(palette).some(([key,color])=>(terminal.options.theme as Record<string,string>|undefined)?.[key]!==color)){
+   terminal.options.theme={...terminal.options.theme,...palette};
+   if(terminal.rows>0)terminal.refresh(0,terminal.rows-1);
+  }
   const font=value("--terminal-font",'"Geist Mono", monospace'),size=parseFloat(value("--terminal-size","13"));
   if(terminal.options.fontFamily!==font)terminal.options.fontFamily=font;
   if(terminal.options.fontSize!==size)terminal.options.fontSize=size;

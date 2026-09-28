@@ -4,6 +4,7 @@ export type SessionSurface = "chat" | "terminal";
 export type ActivityDetail = "compact" | "expanded";
 export type ProjectOrganization = "project" | "device" | "list";
 export type ProjectSort = "priority" | "updated" | "created" | "manual";
+export interface SidebarSection { id:string; name:string; collapsed:boolean; }
 export const MAX_BACKGROUND_TRANSPARENCY = 90;
 export const settingsSections = ["General","Appearance","Notifications","Shortcuts","Providers","Devices","Files","Archived sessions"] as const;
 export type SettingsSection = typeof settingsSections[number];
@@ -17,7 +18,7 @@ export interface Preferences {
  notifications:boolean; background_only:boolean; sounds:boolean; sound_completed:boolean; sound_input:boolean; sound_errors:boolean;
  diff_split:boolean;diff_wrap:boolean;code_fences_fit_content:boolean;open_web_links_in_app:boolean;autosave_delay_ms:number;
  word_wrap:boolean; show_hidden:boolean; show_ignored:boolean; autosave:boolean;
- sidebar_sections:string[]; session_sections:Record<string,string>; session_order:string[]; disabled_providers:string[]; archived_sessions:string[]; pinned_sessions:string[]; shortcuts:Record<string,string>;
+ sidebar_sections:SidebarSection[]; session_sections:Record<string,string>; session_order:string[]; disabled_providers:string[]; archived_sessions:string[]; pinned_sessions:string[]; shortcuts:Record<string,string>;
 }
 export const defaultPreferences: Preferences = {
  settings_section:"General", theme:"graphite", color_scheme:"dark", dark_theme:"zeron-dark", light_theme:"zeron-light", transparency:50, default_agent:"claude", session_surface:"chat", activity_detail:"compact", sidebar_project_filter:"", project_root:"", project_organization:"project", project_sort:"updated",
@@ -34,12 +35,14 @@ export function loadPreferences(): Preferences {
   const result = {...defaultPreferences}; const raw = stored as Record<string,unknown>;
   for (const key of Object.keys(defaultPreferences) as (keyof Preferences)[]) {
    const value = raw[key]; const fallback = defaultPreferences[key];
-   if (Array.isArray(fallback)) { if (Array.isArray(value) && value.every(v=>typeof v === "string")) Object.assign(result,{[key]:value}); }
+   if(key==="sidebar_sections"&&Array.isArray(value)){const seen=new Set<string>();const legacy=value.every(item=>typeof item==="string");result.sidebar_sections=value.flatMap((item,index):SidebarSection[]=>{const source=typeof item==="string"?{id:`legacy-${index}-${item.replace(/[^a-z0-9]+/gi,"-").slice(0,48)}`,name:item,collapsed:false}:item;if(!source||typeof source!=="object"||Array.isArray(source)||typeof (source as SidebarSection).id!=="string"||typeof (source as SidebarSection).name!=="string")return [];let id=(source as SidebarSection).id.trim().slice(0,160);const name=(source as SidebarSection).name.trim().slice(0,120);if(!id||!name)return [];if(seen.has(id))id=`legacy-repaired-${index}-${id.slice(0,120)}`;seen.add(id);return [{id,name,collapsed:Boolean((source as SidebarSection).collapsed)}];});if(legacy){const ids=Object.fromEntries(result.sidebar_sections.map(section=>[section.name,section.id]));result.session_sections=Object.fromEntries(Object.entries(raw.session_sections??{}).filter((entry):entry is [string,string]=>typeof entry[1]==="string").map(([id,name])=>[id,ids[name]??name]));}}
+   else if (Array.isArray(fallback)) { if (Array.isArray(value) && value.every(v=>typeof v === "string")) Object.assign(result,{[key]:value}); }
    else if (key === "session_sections") {if(value&&typeof value==="object"&&!Array.isArray(value))result.session_sections=Object.fromEntries(Object.entries(value).filter(([,v])=>typeof v==="string")) as Record<string,string>;}
    else if (key === "shortcuts") { if (value && typeof value === "object") result.shortcuts = {...defaultShortcuts,...Object.fromEntries(Object.entries(value).filter(([,v])=>typeof v === "string"))}; }
    else if (typeof value === typeof fallback && (typeof value !== "number" || Number.isFinite(value))) Object.assign(result,{[key]:value});
   }
   if (!settingsSections.includes(result.settings_section)) result.settings_section="General";
+  if(Array.isArray(raw.sidebar_sections)){const firstByName=new Map<string,string>();const knownIds=new Set<string>();for(const section of result.sidebar_sections){knownIds.add(section.id);if(!firstByName.has(section.name))firstByName.set(section.name,section.id);}result.session_sections=Object.fromEntries(Object.entries(result.session_sections).flatMap(([id,membership])=>{const resolved=knownIds.has(membership)?membership:firstByName.get(membership);return resolved?[[id,resolved]]:[];}));if(raw.sidebar_sections.some(item=>typeof item!=="object"||item===null||Array.isArray(item)))localStorage.setItem("openade.preferences",JSON.stringify(result));}
   if (!["graphite","dusk","paper","glass","system"].includes(result.theme)) result.theme="graphite";
   // Preserve the appearance of older profiles while separating palette and material.
   if (!("color_scheme" in raw)) result.color_scheme = result.theme === "system" ? "system" : result.theme === "paper" ? "light" : "dark";

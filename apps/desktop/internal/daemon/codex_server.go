@@ -199,16 +199,29 @@ func (m *SessionManager) startCodexTurn(session Session, program string) error {
 				candidate.mu.Unlock()
 				if idle {
 					evict = candidate
-					delete(m.codex, candidate.sessionID)
 					break
 				}
 			}
 		}
-		full := len(m.codex) >= maxCodexClients
 		m.providerMu.Unlock()
 		if evict != nil {
 			evict.close()
+			// Keep the client discoverable by deletion until its subprocess has
+			// actually exited, including when capacity eviction chooses it.
+			select {
+			case <-evict.rpc.processDone:
+				m.providerMu.Lock()
+				if m.codex[evict.sessionID] == evict {
+					delete(m.codex, evict.sessionID)
+				}
+				m.providerMu.Unlock()
+			case <-time.After(4 * time.Second):
+				return fmt.Errorf("Codex client did not stop in time")
+			}
 		}
+		m.providerMu.Lock()
+		full := len(m.codex) >= maxCodexClients
+		m.providerMu.Unlock()
 		if full {
 			return fmt.Errorf("eight Codex chats are active; stop one before starting another")
 		}
@@ -899,6 +912,14 @@ func (c *codexConversation) interrupt(reason string) error {
 	return nil
 }
 func (m *SessionManager) steerCodex(id, messageID string) (bool, error) {
+	release, err := m.deletions.admit(id)
+	if err != nil {
+		return true, err
+	}
+	defer release()
+	if _, err := m.store.GetSession(id); err != nil {
+		return true, err
+	}
 	c := m.codexClient(id)
 	if c == nil {
 		return false, nil

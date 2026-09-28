@@ -114,7 +114,7 @@ func (s *Store) beginTurn(sessionID, prompt, messageID, startTree string, pendin
 	return id, generation, tx.Commit()
 }
 
-const sessionColumns = `id,title,prompt,agent,mode,repo_root,worktree_path,branch,base_branch,ticket_key,ticket_url,status,pid,exit_code,pr_url,created_at,updated_at,finished_at,current_turn_id,generation,model,effort,service_tier,instructions`
+const sessionColumns = `id,title,prompt,agent,mode,repo_root,worktree_path,branch,base_branch,ticket_key,ticket_url,status,pid,exit_code,pr_url,created_at,updated_at,finished_at,current_turn_id,generation,model,effort,service_tier,instructions,provider_session_id,archived`
 
 func (s *Store) Snapshot(ctx context.Context) (map[string]any, error) {
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
@@ -132,6 +132,8 @@ func (s *Store) Snapshot(ctx context.Context) (map[string]any, error) {
 	}
 	sessions := []Session{}
 	projects := []string{}
+	projectNames := map[string]string{}
+	removedProjects := []string{}
 	seen := map[string]bool{}
 	for rows.Next() {
 		session, scanErr := scanSession(rows)
@@ -150,13 +152,13 @@ func (s *Store) Snapshot(ctx context.Context) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	registered, err := tx.QueryContext(ctx, `SELECT path FROM registered_projects ORDER BY created_at DESC`)
+	registered, err := tx.QueryContext(ctx, `SELECT registered_projects.path,registered_projects.display_name FROM registered_projects LEFT JOIN removed_projects ON removed_projects.path=registered_projects.path WHERE removed_projects.path IS NULL ORDER BY registered_projects.created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
 	for registered.Next() {
-		var path string
-		if err = registered.Scan(&path); err != nil {
+		var path, displayName string
+		if err = registered.Scan(&path, &displayName); err != nil {
 			registered.Close()
 			return nil, err
 		}
@@ -164,9 +166,29 @@ func (s *Store) Snapshot(ctx context.Context) (map[string]any, error) {
 			projects = append(projects, path)
 			seen[path] = true
 		}
+		if displayName != "" {
+			projectNames[path] = displayName
+		}
 	}
 	err = registered.Err()
 	registered.Close()
+	if err != nil {
+		return nil, err
+	}
+	removed, err := tx.QueryContext(ctx, `SELECT path FROM removed_projects ORDER BY path`)
+	if err != nil {
+		return nil, err
+	}
+	for removed.Next() {
+		var path string
+		if err = removed.Scan(&path); err != nil {
+			removed.Close()
+			return nil, err
+		}
+		removedProjects = append(removedProjects, path)
+	}
+	err = removed.Err()
+	removed.Close()
 	if err != nil {
 		return nil, err
 	}
@@ -191,7 +213,7 @@ func (s *Store) Snapshot(ctx context.Context) (map[string]any, error) {
 	if err = tx.Commit(); err != nil {
 		return nil, err
 	}
-	return map[string]any{"sequence": sequence, "sessions": sessions, "projects": projects, "queues": queues}, nil
+	return map[string]any{"sequence": sequence, "sessions": sessions, "projects": projects, "project_names": projectNames, "removed_projects": removedProjects, "queues": queues}, nil
 }
 
 func (s *Store) Activities(ctx context.Context, after int64) ([]Activity, error) {

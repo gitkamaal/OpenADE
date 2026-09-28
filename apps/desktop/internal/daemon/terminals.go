@@ -17,11 +17,12 @@ import (
 )
 
 type TerminalManager struct {
-	store    *Store
-	dataDir  string
-	mu       sync.RWMutex
-	live     map[string]*liveSession
-	stopping map[string]bool
+	store     *Store
+	dataDir   string
+	mu        sync.RWMutex
+	live      map[string]*liveSession
+	stopping  map[string]bool
+	deletions *deletionFence
 }
 
 type TerminalLaunch struct {
@@ -30,14 +31,24 @@ type TerminalLaunch struct {
 	Resume bool   `json:"resume"`
 }
 
-func NewTerminalManager(store *Store, dataDir string) *TerminalManager {
+func NewTerminalManager(store *Store, dataDir string, deletions *deletionFence) *TerminalManager {
 	return &TerminalManager{
 		store: store, dataDir: dataDir,
-		live: make(map[string]*liveSession), stopping: make(map[string]bool),
+		live: make(map[string]*liveSession), stopping: make(map[string]bool), deletions: deletions,
 	}
 }
 
 func (m *TerminalManager) Create(session Session, title string, launches ...TerminalLaunch) (TerminalSession, error) {
+	release, err := m.deletions.admit(session.ID)
+	if err != nil {
+		return TerminalSession{}, err
+	}
+	defer release()
+	fresh, err := m.store.GetSession(session.ID)
+	if err != nil {
+		return TerminalSession{}, err
+	}
+	session = fresh
 	terminals, err := m.store.ListTerminals(session.ID)
 	if err != nil {
 		return TerminalSession{}, err
@@ -193,7 +204,6 @@ func (m *TerminalManager) wait(id string, live *liveSession, transcript *os.File
 	} else if err != nil {
 		status = "failed"
 	}
-	delete(m.live, id)
 	m.mu.Unlock()
 	if exitErr, ok := err.(*exec.ExitError); ok {
 		code = exitErr.ExitCode()
@@ -210,6 +220,12 @@ func (m *TerminalManager) wait(id string, live *liveSession, transcript *os.File
 	}
 	live.subscribers = make(map[chan []byte]struct{})
 	live.mu.Unlock()
+	// Keep the live entry until its persisted status is terminal. StopSession
+	// must never observe neither a process to wait for nor a completed row.
+	m.mu.Lock()
+	delete(m.live, id)
+	delete(m.stopping, id)
+	m.mu.Unlock()
 	close(live.done)
 }
 
@@ -250,6 +266,30 @@ func (m *TerminalManager) Stop(id string) error {
 		delete(m.stopping, id)
 		m.mu.Unlock()
 		return err
+	}
+	return nil
+}
+
+// StopSession releases every owned terminal before its parent session is
+// removed. Terminal rows cascade with the session, but processes must finish
+// first so they cannot continue against a deleted conversation.
+func (m *TerminalManager) StopSession(sessionID string, timeout time.Duration) error {
+	terminals, err := m.store.ListTerminals(sessionID)
+	if err != nil {
+		return err
+	}
+	for _, terminal := range terminals {
+		if err := m.Stop(terminal.ID); err != nil {
+			return err
+		}
+		live, liveErr := m.getLive(terminal.ID)
+		if liveErr == nil {
+			select {
+			case <-live.done:
+			case <-time.After(timeout):
+				return fmt.Errorf("terminal did not stop in time")
+			}
+		}
 	}
 	return nil
 }

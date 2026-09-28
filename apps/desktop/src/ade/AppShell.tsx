@@ -35,6 +35,7 @@ import {
   PullRequest,
   relativeTime,
   Session,
+  setSessionArchived,
   switchSessionSurface,
 } from "./api";
 import { SessionWorkspace, recoverRejectedDraft } from "./SessionWorkspace";
@@ -72,6 +73,8 @@ function AppShell() {
   const [page, setPage] = useState<Page>("home");
   const [sessions, setSessions] = useState<Session[]>([]);
   const [projects, setProjects] = useState<string[]>([]);
+  const [projectNames, setProjectNames] = useState<Record<string,string>>({});
+  const [removedProjects, setRemovedProjects] = useState<string[]>([]);
   const [scannedProjects, setScannedProjects] = useState<string[]>([]);
   const [externalConversations, setExternalConversations] = useState<ExternalConversation[]>([]);
   const engine=useEngine();
@@ -79,6 +82,9 @@ function AppShell() {
   const previousEngineError=useRef<string|null>(null);
   const meta=engine.meta;
   const [selectedId, setSelectedId] = useState<string | null>(()=>localStorage.getItem("openade.selected-session"));
+  const [retainedSelected, setRetainedSelected] = useState<Session | null>(null);
+  const [pendingSelectionID, setPendingSelectionID] = useState<string | null>(null);
+  const [editorDirtyRevision, setEditorDirtyRevision] = useState(0);
   useEffect(()=>{if(selectedId)localStorage.setItem("openade.selected-session",selectedId);else localStorage.removeItem("openade.selected-session");},[selectedId]);
   const [sidebarOpen, setSidebarOpen] = useState(() => loadPreferences().sidebar_open);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>(()=>loadPreferences().settings_section);
@@ -95,10 +101,11 @@ function AppShell() {
   const [switchingSessionId, setSwitchingSessionId] = useState<string | null>(null);
   const mountedRef = useRef(false);
   const focusTimerRef = useRef<number | undefined>(undefined);
+  const legacyArchiveMigration = useRef(false);
 
   useEffect(() => {
     mountedRef.current = true;
-    const dirty=(event:Event)=>{editorDirty.current=(event as CustomEvent<boolean>).detail;};
+    const dirty=(event:Event)=>{editorDirty.current=(event as CustomEvent<boolean>).detail;setEditorDirtyRevision(value=>value+1);};
     window.addEventListener("openade-editor-dirty",dirty);
     const focus=(event:FocusEvent)=>{const target=event.target;if(target instanceof HTMLElement&&target.closest(".session-workspace"))contentFocus.current=target;};
     document.addEventListener("focusin",focus);
@@ -114,7 +121,16 @@ function AppShell() {
   }, []);
 
   const refresh=refreshEngine;
-  useEffect(()=>{setSessions(engine.sessions);setProjects(engine.projects);setConnected(engine.connected);if(engine.error)setError(engine.error);else if(previousEngineError.current){const previous=previousEngineError.current;setError(current=>current===previous?null:current);}previousEngineError.current=engine.error;},[engine]);
+  useEffect(()=>{setSessions(engine.sessions);setProjects(engine.projects);setProjectNames(engine.project_names);setRemovedProjects(engine.removed_projects);setConnected(engine.connected);if(engine.error)setError(engine.error);else if(previousEngineError.current){const previous=previousEngineError.current;setError(current=>current===previous?null:current);}previousEngineError.current=engine.error;},[engine]);
+  useEffect(() => {
+    if (!pendingSelectionID || !engine.connected) return;
+    const session = engine.sessions.find(item => item.id === pendingSelectionID);
+    if (!session) return;
+    setRetainedSelected(session);
+    setSelectedId(session.id);
+    setPage("sessions");
+    setPendingSelectionID(null);
+  }, [engine.connected, engine.sessions, pendingSelectionID]);
   useEffect(()=>{if(engine.connected&&!performance.getEntriesByName("openade-ready").length)performance.mark("openade-ready");},[engine.connected]);
   useEffect(() => {
     let stale = false;
@@ -135,9 +151,38 @@ function AppShell() {
     return () => { stale = true; };
   }, [preferences.project_root]);
 
-  const selected = sessions.find((session) => session.id === selectedId) ?? null;
-  const visibleSessions = sessions.filter(item=>!preferences.archived_sessions.includes(item.id));
-  const visibleProjects = [...new Set([...scannedProjects, ...projects])].filter(Boolean);
+  const authoritativeSessions = engine.connected ? engine.sessions : sessions;
+  const liveSelected = authoritativeSessions.find((session) => session.id === selectedId) ?? null;
+  const selected = liveSelected ?? (retainedSelected?.id === selectedId ? retainedSelected : null);
+  useEffect(() => {
+    if (!selectedId) {
+      if (retainedSelected) setRetainedSelected(null);
+      return;
+    }
+    if (liveSelected) {
+      if (retainedSelected !== liveSelected) setRetainedSelected(liveSelected);
+      if (page !== "settings" && page !== "sessions") setPage("sessions");
+      return;
+    }
+    // Do not discard a mounted editor merely because another client removed its
+    // session. The session-scoped save API is gone, but the user can still copy
+    // the retained buffer before discarding it.
+    if (!connected) return;
+    if (retainedSelected?.id === selectedId && editorDirty.current) {
+      setError(
+        "This conversation was removed in another window. Its unsaved editor buffer is still open; copy it before you discard or close it.",
+      );
+      return;
+    }
+    setRetainedSelected(null);
+    setSelectedId(null);
+    if (page === "settings") previousPage.current = { page: "home", id: null };
+    else setPage("home");
+  }, [connected, editorDirtyRevision, liveSelected, page, retainedSelected, selectedId]);
+  const visibleSessions = sessions.filter(item=>!item.archived);
+  const removedProjectSet = new Set(removedProjects);
+  const visibleProjects = [...new Set([...scannedProjects, ...projects])].filter(project=>Boolean(project)&&!removedProjectSet.has(project));
+  const visibleExternalConversations = externalConversations.filter(conversation=>!removedProjectSet.has(conversation.project_root));
   const openSession = async (id: string) => {
     if (switchingSessionId) return;
     if(editorDirty.current&&id!==selectedId){setError("Save or discard file changes before opening another session.");return;}
@@ -171,6 +216,26 @@ function AppShell() {
     setPreferences(adjusted);
     if(persist) savePreferences(adjusted);
   };
+  const setArchived = async (id:string, archived:boolean) => {
+    try {
+      await setSessionArchived(id, archived);
+      await refreshEngine();
+      return true;
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+      return false;
+    }
+  };
+  useEffect(() => {
+    if (!engine.connected || legacyArchiveMigration.current || !preferences.archived_sessions.length) return;
+    legacyArchiveMigration.current = true;
+    const ids = [...new Set(preferences.archived_sessions)];
+    const present = ids.filter(id => engine.sessions.some(session => session.id === id));
+    void Promise.all(present.map(id => setSessionArchived(id, true)))
+      .then(() => refreshEngine())
+      .then(() => updatePreferences({ ...preferences, archived_sessions: [] }))
+      .catch(reason => setError(reason instanceof Error ? reason.message : String(reason)));
+  }, [engine.connected, engine.sessions, preferences.archived_sessions]);
   useEffect(()=>{const dark_theme=themeId(preferences.dark_theme,"dark",true),light_theme=themeId(preferences.light_theme,"light",true);if(dark_theme!==preferences.dark_theme||light_theme!==preferences.light_theme)updatePreferences({...preferences,dark_theme,light_theme});},[themeRegistryVersion,preferences.dark_theme,preferences.light_theme]);
   useEffect(() => {
     const bridge = window as typeof window & {
@@ -216,7 +281,7 @@ function AppShell() {
   useEffect(() => {if(preferences.sidebar_open!==sidebarOpen)updatePreferences({...preferences,sidebar_open:sidebarOpen});}, [sidebarOpen]);
   useEffect(() => {
     const navigationSessions=()=>{
-      const eligible=visibleSessions.filter(session=>!preferences.sidebar_project_filter||session.repo_root===preferences.sidebar_project_filter);
+      const eligible=sessions.filter(session=>!preferences.sidebar_project_filter||session.repo_root===preferences.sidebar_project_filter);
       const ids=visibleSidebarSessionIds(eligible);
       return ids.length?ids.map(id=>eligible.find(session=>session.id===id)!):eligible;
     };
@@ -264,8 +329,8 @@ function AppShell() {
         repo_root: conversation.project_root,
         base_branch: "HEAD",
       });
+      setPendingSelectionID(session.id);
       await refresh();
-      openSession(session.id);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -278,14 +343,15 @@ function AppShell() {
   return (
     <div data-theme-id={activeTheme.id} data-theme-appearance={activeTheme.appearance} data-connected={connected} data-native-material={nativeMaterial}
       className={`ade ${preferences.code_fences_fit_content?"fit-code-fences":""} ${themeClass(preferences,systemLight)} material-${preferences.glass === "liquid" ? "frosted material-liquid" : preferences.glass} ${activeMaterial === "frosted" ? "default-frosted" : "default-opaque"} ${("go" in window) ? "native-window" : "browser-window"} ${sidebarOpen ? "" : "sidebar-collapsed"}`}
-      style={{...themeCssVariables(activeTheme),"--theme-accent":activeTheme.accent.primary,"--glass-coverage":`${100-preferences.transparency}%`,"--glass-wash":`${(100-preferences.transparency)*.22}%`,"--glass-card":`${(100-preferences.transparency)*.55}%`,"--glass-composer":`${(100-preferences.transparency)*.8}%`,"--sidebar-width":`${preferences.sidebar_width}px`,"--conversation-width":`${preferences.conversation_width}px`,"--code-font":fontFamily(preferences.code_font),"--terminal-font":fontFamily(preferences.terminal_font),"--code-size":`${preferences.code_size}px`,"--terminal-size":`${preferences.terminal_size}px`,"--interface-scale":preferences.interface_size/16,...(preferences.accent!=="default"?{"--accent":accentFor(preferences.accent,activeTheme.appearance)}:{}),fontFamily:fontFamily(preferences.interface_font,"sans-serif")} as CSSProperties}
+      style={{...themeCssVariables(activeTheme),"--theme-accent":activeTheme.accent.primary,"--glass-coverage":`${100-preferences.transparency}%`,"--glass-wash":`${(100-preferences.transparency)*.22}%`,"--glass-card":`${(100-preferences.transparency)*.55}%`,"--glass-composer":`${(100-preferences.transparency)*.8}%`,"--popup-dark-coverage":`${(100-preferences.transparency)*.3}%`,"--popup-light-coverage":`${(100-preferences.transparency)*.9}%`,"--sidebar-width":`${preferences.sidebar_width}px`,"--conversation-width":`${preferences.conversation_width}px`,"--code-font":fontFamily(preferences.code_font),"--terminal-font":fontFamily(preferences.terminal_font),"--code-size":`${preferences.code_size}px`,"--terminal-size":`${preferences.terminal_size}px`,"--interface-scale":preferences.interface_size/16,...(preferences.accent!=="default"?{"--accent":accentFor(preferences.accent,activeTheme.appearance)}:{}),fontFamily:fontFamily(preferences.interface_font,"sans-serif")} as CSSProperties}
     >
       {<div className="sidebar-clip" inert={!sidebarOpen}>{page === "settings" && <SettingsNavigation section={settingsSection} onSection={section=>{setSettingsSection(section);updatePreferences({...preferences,settings_section:section});}} onBack={closeSettings}/>}<Sidebar
-        preferences={preferences} onPreferences={next=>{if(editorDirty.current&&selectedId&&next.archived_sessions.includes(selectedId)){setError("Save or discard file changes before archiving.");return;}updatePreferences(next);if(selectedId&&next.archived_sessions.includes(selectedId))setSelectedId(null);}}
+        preferences={preferences} onPreferences={updatePreferences}
         page={page}
-        sessions={visibleSessions}
+        sessions={visibleSessions} allSessions={sessions}
         projects={visibleProjects}
-        externalConversations={externalConversations}
+        projectNames={projectNames}
+        externalConversations={visibleExternalConversations}
         projectOrganization={preferences.project_organization}
         projectSort={preferences.project_sort}
         resumingConversationId={resumingConversationId}
@@ -300,34 +366,37 @@ function AppShell() {
         onSearch={()=>{window.dispatchEvent(new Event("openade-dismiss-menus"));setPaletteOpen(true);}}
         onNewSession={openComposer}
         onToggle={toggleSidebar}
+        onArchive={setArchived}
+        onBeforeDelete={ids=>selectedId&&ids.includes(selectedId)&&editorDirty.current?"Save or discard your editor changes before deleting this chat.":null}
+        onDeleted={id=>{if(selectedId===id&&connected)void refresh();}}
       /></div>}
       {sidebarOpen && page !== "settings" && <ResizeBoundary className="sidebar-resizer" label="Resize sidebar" width={preferences.sidebar_width} min={224} max={400} defaultWidth={256} onResize={width=>updatePreferences({...preferences,sidebar_width:width},false)} onCommit={width=>updatePreferences({...preferences,sidebar_width:width})}/> }
 
-      {paletteOpen&&<CommandPalette sessions={sessions} preferences={preferences} isDark={activeTheme.appearance==="dark"} onClose={()=>setPaletteOpen(false)} onOpen={id=>{void openSession(id);}} onAction={action=>{if(action==="new")openComposer();else if(action==="theme")updatePreferences({...preferences,color_scheme:activeTheme.appearance==="dark"?"light":"dark"});else if(action==="project")setProjectPaletteOpen(true);else openPage("settings");}}/>}
+      {paletteOpen&&<CommandPalette sessions={sessions} projectNames={projectNames} preferences={preferences} isDark={activeTheme.appearance==="dark"} onClose={()=>setPaletteOpen(false)} onOpen={id=>{void openSession(id);}} onAction={action=>{if(action==="new")openComposer();else if(action==="theme")updatePreferences({...preferences,color_scheme:activeTheme.appearance==="dark"?"light":"dark"});else if(action==="project")setProjectPaletteOpen(true);else openPage("settings");}}/>}
       {projectPaletteOpen&&<ProjectPalette onClose={()=>setProjectPaletteOpen(false)} onCommands={()=>setPaletteOpen(true)} onAdded={path=>{void refresh();try{const draft=JSON.parse(sessionStorage.getItem("openade.home-draft")||"{}");sessionStorage.setItem("openade.home-draft",JSON.stringify({...draft,repo:path}));}catch{sessionStorage.setItem("openade.home-draft",JSON.stringify({repo:path}));}window.dispatchEvent(new CustomEvent("openade-select-project",{detail:path}));openComposer();}}/>}
       <main className="main-shell">
         {!sidebarOpen && <button className="sidebar-toggle icon-button" onClick={() => setSidebarOpen(true)} aria-label="Toggle sidebar"><SidebarSimple size={18} /></button>}
         {!connected && <div className="connection-banner"><SpinnerGap className="spin" /> {error || "Connecting to the local daemon…"}<button onClick={()=>{const bridge=window as typeof window & {go?:{main?:{App?:{Reconnect?:()=>Promise<void>}}}};void (bridge.go?.main?.App?.Reconnect?.()||Promise.resolve()).then(refresh).catch(reason=>setError(String(reason)));}}>Reconnect</button></div>}
-        {connected && error && <button className="error-toast" onClick={() => setError(null)}><span>{error}</span><X /></button>}
-        {selected&&<div className="retained-workspace" hidden={page==="settings"} inert={page==="settings"}><Suspense fallback={<div className="opening-session" role="status">Opening session…</div>}><SessionWorkspace activeView={page!=="settings"} key={selected.id} session={selected} preferences={preferences} onPreferences={updatePreferences} onArchive={()=>{if(editorDirty.current){setError("Save or discard file changes before archiving.");return;}updatePreferences({...preferences,archived_sessions:[...preferences.archived_sessions,selected.id]});setSelectedId(null);}} onBack={() => {if(editorDirty.current){setError("Save or discard file changes before leaving this session.");return;}setSelectedId(null);}} onRefresh={refresh} /></Suspense></div>}
-        <div className="retained-home" hidden={Boolean(selected)||page!=="home"} inert={Boolean(selected)||page!=="home"}><Home activeView={!selected&&page==="home"} sessions={sessions} projects={visibleProjects} meta={meta} preferences={preferences} onCreated={(session) => { void refresh(); openSession(session.id); }} onOpen={openSession} onError={setError} /></div>
+        {connected && error && <button aria-label="Dismiss error" className="error-toast" onClick={() => setError(null)}><span role="alert">{error}</span><X /></button>}
+        {selected&&<div className="retained-workspace" hidden={page==="settings"} inert={page==="settings"}><Suspense fallback={<div className="opening-session" role="status">Opening session…</div>}><SessionWorkspace activeView={page!=="settings"} key={selected.id} session={selected} projectLabel={projectNames[selected.repo_root]} preferences={preferences} onPreferences={updatePreferences} onArchive={()=>{if(editorDirty.current){setError("Save or discard file changes before archiving.");return;}void setArchived(selected.id,!selected.archived).then(done=>{if(done&&!selected.archived)setSelectedId(null);});}} onBack={() => {if(editorDirty.current){setError("Save or discard file changes before leaving this session.");return;}setSelectedId(null);}} onRefresh={refresh} /></Suspense></div>}
+        <div className="retained-home" hidden={Boolean(selected)||page!=="home"} inert={Boolean(selected)||page!=="home"}><Home activeView={!selected&&page==="home"} sessions={sessions} projects={visibleProjects} projectNames={projectNames} removedProjects={removedProjects} meta={meta} preferences={preferences} onCreated={(session) => { setPendingSelectionID(session.id); void refresh(); }} onOpen={openSession} onError={setError} /></div>
         {selected&&page!=="settings" || page === "home" ? null : page === "sites" ? (
           <SitesPage />
         ) : page === "sessions" ? (
-          <SessionsPage sessions={visibleSessions} onOpen={openSession} />
+          <SessionsPage sessions={visibleSessions} projectNames={projectNames} onOpen={openSession} />
         ) : page === "agents" ? (
           <AgentsPage onUse={(prompt) => { sessionStorage.setItem("openade-template", prompt); setPage("home"); }} />
         ) : page === "review" ? (
-          <ReviewPage projects={visibleProjects} sessions={sessions} />
+          <ReviewPage projects={visibleProjects} projectNames={projectNames} sessions={sessions} />
         ) : (
-          <SettingsPage activeAppearance={activeTheme.appearance} resolvedMaterial={activeMaterial} nativeMaterial={nativeMaterial} preferences={preferences} onChange={updatePreferences} section={settingsSection} meta={meta} sessions={sessions} onSetup={session=>{void refresh();if(editorDirty.current){setError("Save or discard file changes before opening provider setup.");return;}setSelectedId(session.id);setPage("sessions");}} onRestore={id=>updatePreferences({...preferences,archived_sessions:preferences.archived_sessions.filter(value=>value!==id)})} />
+          <SettingsPage activeAppearance={activeTheme.appearance} resolvedMaterial={activeMaterial} nativeMaterial={nativeMaterial} preferences={preferences} onChange={updatePreferences} section={settingsSection} meta={meta} sessions={sessions} onSetup={session=>{if(editorDirty.current){setError("Save or discard file changes before opening provider setup.");return;}setPendingSelectionID(session.id);void refresh();}} onRestore={id=>{void setArchived(id,false);}} />
         )}
       </main>
     </div>
   );
 }
 
-function Home({ activeView, projects, meta, preferences, onCreated, onError }: { activeView:boolean; sessions: Session[]; projects: string[]; meta: Meta | null; preferences: Preferences; onCreated: (session: Session) => void; onOpen: (id: string) => void; onError: (error: string | null) => void }) {
+function Home({ activeView, projects, projectNames, removedProjects, meta, preferences, onCreated, onError }: { activeView:boolean; sessions: Session[]; projects: string[]; projectNames:Record<string,string>; removedProjects:string[]; meta: Meta | null; preferences: Preferences; onCreated: (session: Session) => void; onOpen: (id: string) => void; onError: (error: string | null) => void }) {
   const draft=useRef<{prompt?:string;repo?:string;agent?:string;model?:string;effort?:string;serviceTier?:string;checkout?:"current"|"worktree";base?:string}>((()=>{try{const value=JSON.parse(sessionStorage.getItem("openade.home-draft")||"{}");return value&&typeof value==="object"?value:{};}catch{return {};}})());
   const [prompt, setPrompt] = useState(() => sessionStorage.getItem("openade-template") ?? draft.current.prompt ?? "");
   const attachments=useAttachments("home");
@@ -345,6 +414,7 @@ function Home({ activeView, projects, meta, preferences, onCreated, onError }: {
 
   const repositoryEdited=useRef(draft.current.repo!==undefined);
   const updateRepository=(value:string)=>{repositoryEdited.current=true;setProjectless(!value);setRepo(value);};
+  useEffect(()=>{if(repo&&removedProjects.includes(repo)){repositoryEdited.current=true;setProjectless(true);setRepo("");}},[repo,removedProjects]);
   useEffect(()=>{const select=(event:Event)=>updateRepository((event as CustomEvent<string>).detail);window.addEventListener("openade-select-project",select);return()=>window.removeEventListener("openade-select-project",select);},[]);
   useEffect(() => { if (!repositoryEdited.current && !repo && projects[0]) setRepo(projects[0]); }, [projects, repo]);
   const previousDefault=useRef(preferences.default_agent);
@@ -399,7 +469,7 @@ function Home({ activeView, projects, meta, preferences, onCreated, onError }: {
   if(!activeView)return null;
   return <div className="home-page">
     <section className="home-hero">
-      <div className="home-context"><Select aria-label="Choose device" icon={<Desktop size={14}/>} value="local"><option value="local">Local workspace</option></Select><Select aria-label="Choose project" searchable icon={<Folder size={14}/>} value={repo} placeholder="Choose project" onChange={event=>updateRepository(event.target.value)} footer={<><input aria-label="Repository" placeholder="Or enter a repository path…" value={repo} onChange={event=>updateRepository(event.target.value)}/><button type="button" onClick={()=>void browse()}>Browse folders…</button></>}><option value="">No project</option>{[...new Set([...projects,...(repo?[repo]:[])])].filter(Boolean).map(project=><option value={project} key={project}>{projectName(project)}</option>)}</Select></div>
+      <div className="home-context"><Select aria-label="Choose device" icon={<Desktop size={14}/>} value="local"><option value="local">Local workspace</option></Select><Select aria-label="Choose project" searchable icon={<Folder size={14}/>} value={repo} placeholder="Choose project" onChange={event=>updateRepository(event.target.value)} footer={<><input aria-label="Repository" placeholder="Or enter a repository path…" value={repo} onChange={event=>updateRepository(event.target.value)}/><button type="button" onClick={()=>void browse()}>Browse folders…</button></>}><option value="">No project</option>{[...new Set([...projects,...(repo?[repo]:[])])].filter(Boolean).map(project=><option value={project} key={project}>{projectNames[project]??projectName(project)}</option>)}</Select></div>
       <form ref={homeComposer.form} className="composer source-new-composer" onSubmit={submit} onPaste={attachments.paste} onDragOver={event=>{if(event.dataTransfer.types.includes("Files"))event.preventDefault();}} onDrop={attachments.drop}>
         <AttachmentStrip draft={attachments}/>
         <textarea ref={homeComposer.textarea} aria-label="New session prompt" data-main-composer value={prompt} onChange={event=>setPrompt(event.target.value)} placeholder="Do anything…" rows={3} onKeyDown={event=>{if(shouldSend(event,preferences.send_behavior)){event.preventDefault();event.currentTarget.form?.requestSubmit();}}}/>
@@ -418,13 +488,13 @@ function preferredSessionMode(preferences: Preferences, agent: string): "chat" |
     : "chat";
 }
 
-function SessionsPage({ sessions, onOpen }: { sessions: Session[]; onOpen: (id: string) => void }) {
+function SessionsPage({ sessions, projectNames, onOpen }: { sessions: Session[]; projectNames:Record<string,string>; onOpen: (id: string) => void }) {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("all");
-  const filtered = sessions.filter((session) => (status === "all" || session.status === status) && `${session.title} ${session.repo_root} ${session.branch} ${session.ticket_key}`.toLowerCase().includes(query.toLowerCase()));
+  const filtered = sessions.filter((session) => (status === "all" || session.status === status) && `${session.title} ${projectNames[session.repo_root]??""} ${session.repo_root} ${session.branch} ${session.ticket_key}`.toLowerCase().includes(query.toLowerCase()));
   return <div className="list-page"><PageHeader eyebrow="Workspace" title="Sessions" subtitle={`${sessions.length} indexed across ${new Set(sessions.map((item) => item.repo_root)).size} repositories`} />
     <div className="list-toolbar"><label className="search-box"><ListMagnifyingGlass /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search sessions" /></label><Select aria-label="Session status" value={status} onChange={(event) => setStatus(event.target.value)}><option value="all">All statuses</option><option value="running">Running</option><option value="waiting">Waiting</option><option value="completed">Completed</option><option value="failed">Failed</option></Select></div>
-    <div className="session-table"><div className="table-head"><span>Task</span><span>Project</span><span>Linked work</span><span>Status</span><span>Updated</span></div>{filtered.map((session) => <button className="table-row" key={session.id} onClick={() => onOpen(session.id)} title={`Branch: ${session.branch}`}><span className="task-cell"><span className={`status-dot ${session.status}`} /><strong>{session.title}</strong><small>{agentLabel(session.agent)}</small></span><span>{projectName(session.repo_root)}</span><span className="linked-work-cell">{session.ticket_key ? <span className="ticket-chip"><TicketIcon />{session.ticket_key}</span> : <small>No linked ticket</small>}</span><span><StatusPill status={session.status} /></span><span>{relativeTime(session.updated_at)}</span></button>)}{filtered.length === 0 && <div className="table-empty">No sessions match these filters.</div>}</div>
+    <div className="session-table"><div className="table-head"><span>Task</span><span>Project</span><span>Linked work</span><span>Status</span><span>Updated</span></div>{filtered.map((session) => <button className="table-row" key={session.id} onClick={() => onOpen(session.id)} title={`Branch: ${session.branch}`}><span className="task-cell"><span className={`status-dot ${session.status}`} /><strong>{session.title}</strong><small>{agentLabel(session.agent)}</small></span><span>{projectNames[session.repo_root]??projectName(session.repo_root)}</span><span className="linked-work-cell">{session.ticket_key ? <span className="ticket-chip"><TicketIcon />{session.ticket_key}</span> : <small>No linked ticket</small>}</span><span><StatusPill status={session.status} /></span><span>{relativeTime(session.updated_at)}</span></button>)}{filtered.length === 0 && <div className="table-empty">No sessions match these filters.</div>}</div>
   </div>;
 }
 
@@ -440,7 +510,7 @@ function agentLabel(agent: string): string {
   return ({ claude: "Claude Code", codex: "Codex CLI", copilot: "Copilot", opencode: "OpenCode", shell: "Local shell" } as Record<string, string>)[agent] ?? agent;
 }
 
-function ReviewPage({ projects, sessions }: { projects: string[]; sessions: Session[] }) {
+function ReviewPage({ projects, projectNames, sessions }: { projects: string[]; projectNames:Record<string,string>; sessions: Session[] }) {
   const [repo, setRepo] = useState(projects[0] ?? "");
   const [prs, setPRs] = useState<PullRequest[]>([]);
   const [query, setQuery] = useState("");
@@ -460,7 +530,7 @@ function ReviewPage({ projects, sessions }: { projects: string[]; sessions: Sess
   const draft = prs.filter((pr) => pr.isDraft).length;
   const needsReview = prs.filter((pr) => pr.reviewDecision === "REVIEW_REQUIRED").length;
   const filtered = prs.filter((pr) => `${pr.title} ${pr.author.login} ${pr.headRefName}`.toLowerCase().includes(query.toLowerCase()));
-  return <div className="review-page"><div className="review-top"><PageHeader eyebrow="GitHub" title="Pull requests" subtitle="Review and deliver changes across local projects" /><label className="repo-picker"><GithubLogo /><Select aria-label="Review repository" value={repo} onChange={(event) => setRepo(event.target.value)}>{projects.map((project) => <option key={project} value={project}>{projectName(project)}</option>)}</Select></label></div><div className="review-metrics"><Metric label="Open" value={prs.length} tone="green" /><Metric label="Needs review" value={needsReview} tone="orange" /><Metric label="Draft" value={draft} tone="neutral" /></div><div className="list-toolbar"><label className="search-box"><ListMagnifyingGlass /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search pull requests" /></label></div>{loading ? <div className="loading-state"><SpinnerGap className="spin" /> Loading pull requests…</div> : error ? <div className="inline-error">{error}</div> : <div className="pr-list">{filtered.map((pr) => { const linked = sessions.find((session) => session.branch === pr.headRefName); return <button key={pr.number} className="pr-row" onClick={() => window.open(pr.url, "_blank")}><span className="pr-number">#{pr.number}</span><span className="pr-main"><strong>{pr.title}</strong><small>{pr.headRefName} → {pr.baseRefName} · @{pr.author.login}</small></span>{linked?.ticket_key && <span className="ticket-chip"><TicketIcon />{linked.ticket_key}</span>}<StatusPill status={pr.isDraft ? "interrupted" : "running"} label={pr.isDraft ? "Draft" : "Open"} /></button>; })}{filtered.length === 0 && <div className="table-empty">No open pull requests found for this repository.</div>}</div>}</div>;
+  return <div className="review-page"><div className="review-top"><PageHeader eyebrow="GitHub" title="Pull requests" subtitle="Review and deliver changes across local projects" /><label className="repo-picker"><GithubLogo /><Select aria-label="Review repository" value={repo} onChange={(event) => setRepo(event.target.value)}>{projects.map((project) => <option key={project} value={project}>{projectNames[project]??projectName(project)}</option>)}</Select></label></div><div className="review-metrics"><Metric label="Open" value={prs.length} tone="green" /><Metric label="Needs review" value={needsReview} tone="orange" /><Metric label="Draft" value={draft} tone="neutral" /></div><div className="list-toolbar"><label className="search-box"><ListMagnifyingGlass /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search pull requests" /></label></div>{loading ? <div className="loading-state"><SpinnerGap className="spin" /> Loading pull requests…</div> : error ? <div className="inline-error">{error}</div> : <div className="pr-list">{filtered.map((pr) => { const linked = sessions.find((session) => session.branch === pr.headRefName); return <button key={pr.number} className="pr-row" onClick={() => window.open(pr.url, "_blank")}><span className="pr-number">#{pr.number}</span><span className="pr-main"><strong>{pr.title}</strong><small>{pr.headRefName} → {pr.baseRefName} · @{pr.author.login}</small></span>{linked?.ticket_key && <span className="ticket-chip"><TicketIcon />{linked.ticket_key}</span>}<StatusPill status={pr.isDraft ? "interrupted" : "running"} label={pr.isDraft ? "Draft" : "Open"} /></button>; })}{filtered.length === 0 && <div className="table-empty">No open pull requests found for this repository.</div>}</div>}</div>;
 }
 
 function Metric({ label, value, tone }: { label: string; value: number; tone: string }) { return <div className={`metric ${tone}`}><span>{label}</span><strong>{value}</strong></div>; }

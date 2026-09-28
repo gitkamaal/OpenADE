@@ -2,7 +2,7 @@ import {useLayoutEffect,useRef,useState} from "react";
 
 // Zeron's established-thread geometry: 49px pill, 200px minimum text slot,
 // 32px collapse hysteresis and a 150ms wait after an interactive resize.
-export function useComposerLayout(value:string,fontSize:number,alwaysExpanded=false,minHeight=alwaysExpanded?76:60,active=true){
+export function useComposerLayout(value:string,fontSize:number,alwaysExpanded=false,minHeight=76,active=true){
  const form=useRef<HTMLFormElement>(null),textarea=useRef<HTMLTextAreaElement>(null);
  const [expanded,setExpanded]=useState(alwaysExpanded||value.includes("\n")),[textHeight,setTextHeight]=useState(60),[formWidth,setFormWidth]=useState(0),[clusterWidth,setClusterWidth]=useState(150),[morphing,setMorphing]=useState(false);
  const current=useRef({value,expanded,force:alwaysExpanded});current.current.force=alwaysExpanded;current.current.value=value;
@@ -15,7 +15,7 @@ export function useComposerLayout(value:string,fontSize:number,alwaysExpanded=fa
    frame=0;if(!alive||host.clientWidth<=0)return;
    const nextWidth=host.clientWidth;
    const model=host.querySelector<HTMLElement>(".model-picker");
-   const nextControls=(model?.getBoundingClientRect().width??110)+32+8+8+8;
+   const nextControls=(model?.getBoundingClientRect().width??110)+28+8+8+8;
    const hadLayout=width>0;
    if(hadLayout&&(Math.abs(nextWidth-width)>.5||Math.abs(nextControls-controls)>.5)){
     resizeUntil=performance.now()+150;clearTimeout(settle);settle=window.setTimeout(calculate,150);

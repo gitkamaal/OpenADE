@@ -300,7 +300,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .markdown-code-block { margin:13px 0; overflow:hidden; border:1px solid var(--line); border-radius:10px; background:#111315; }
 .markdown-code-head { height:32px; display:flex; align-items:center; justify-content:space-between; padding:0 9px 0 12px; border-bottom:1px solid #292d31; color:#7f8991; font:9px "JetBrains Mono",monospace; text-transform:lowercase; }
 .markdown-code-head button { height:24px; border:0; border-radius:5px; background:transparent; color:#9ba2a8; display:flex; align-items:center; gap:4px; font-size:9px; cursor:pointer; }.markdown-code-head button:hover { background:#24282b; color:#eef0f1; }.markdown-code-head svg { width:11px; }
-.markdown-code-block pre { margin:0; padding:13px 14px; overflow:auto; color:#d7dcdf; background:#111315; font:10.5px/1.6 "JetBrains Mono",monospace; tab-size:2; }
+.markdown-code-block pre { margin:0; padding:13px 14px; overflow:auto; color:#d7dcdf; background:#111315; font:var(--code-size)/1.6 var(--code-font); tab-size:2; }
 .markdown-table-wrap { margin:13px 0; overflow:auto; border:1px solid var(--line); border-radius:9px; }
 .markdown-table-wrap table { width:100%; border-collapse:collapse; font-size:11px; }.markdown-table-wrap th { color:var(--muted); font-weight:600; background:var(--surface-2); }.markdown-table-wrap th,.markdown-table-wrap td { padding:8px 10px; border-bottom:1px solid var(--line); text-align:left; }.markdown-table-wrap tr:last-child td { border-bottom:0; }
 .response-actions { display:flex; margin-top:10px; opacity:0; transition:opacity .15s; }.chat-assistant-turn:hover .response-actions,.response-actions:focus-within { opacity:1; }
@@ -731,6 +731,9 @@ img.provider-claude{filter:brightness(0) saturate(100%) invert(58%) sepia(44%) s
 .ade.material-opaque{--shell-fill:var(--sidebar);--sidebar-fill:var(--bg);--panel-fill:var(--bg);--popup-fill:var(--surface)}
 .select-footer{border-top:1px solid var(--line);margin-top:5px;padding:7px 5px 3px;display:grid;gap:6px}.select-footer input{width:100%;min-width:0;border:1px solid var(--line);border-radius:5px;background:transparent;color:var(--muted);font:inherit;font-size:11px;padding:6px}.select-footer button{border:0;background:transparent;color:var(--muted);text-align:left;font:inherit;font-size:12px;cursor:pointer;padding:6px 3px}.select-footer button:hover{color:var(--text)}
 .ade.material-default.default-frosted .model-menu,.ade.material-default.default-frosted .panel-menu,.ade.material-default.default-frosted .project-menu-wrap,.ade.material-default.default-frosted .sidebar-session-menu{background:var(--popup-fill);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px)}
+.ade .sidebar-session-menu.project-context-menu{width:170px}.ade .sidebar-session-menu.section-context-menu{width:180px}
+.ade .sidebar-session-menu{width:216px}
+.ade .sidebar-session-menu{padding:4px;border-radius:12px;display:flex;flex-direction:column;gap:2px}.ade .sidebar-session-menu button{padding:6px 8px;gap:10px;font-size:calc(13px * var(--interface-scale,1));border-radius:7px}.ade .sidebar-session-menu button svg{width:16px;height:16px}.ade .sidebar-session-menu button svg:last-child{margin-left:auto;width:14px;height:14px}.ade .sidebar-dialog{width:min(360px,calc(100vw - 32px));padding:20px;border-radius:16px}.ade .sidebar-dialog h2{font-size:15px}.ade .sidebar-dialog-helper{font-size:13px;line-height:19px;color:var(--muted)}.sidebar-dialog-title{display:flex;align-items:center;justify-content:space-between}.sidebar-dialog-title button{width:24px;height:24px;padding:0;display:grid;place-items:center}
 .ade.material-frosted .preference-card,.ade.material-default.default-frosted .preference-card{background:var(--card-fill);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px)}
 .editor-tabs button{appearance:none;background:transparent;border:0;color:var(--muted);cursor:pointer}.editor-tabs button:hover{background:var(--surface-2);color:var(--text)}
 .file-editor-outlet{height:100%;min-height:0;display:flex;flex-direction:column}.file-editor-outlet[hidden]{display:none}.file-editor-outlet>.file-editor{height:100%;border-top:0;min-width:0}.files-panel>.files-index{height:100%;flex:1;min-height:0}
@@ -772,19 +775,21 @@ img.provider-claude{filter:brightness(0) saturate(100%) invert(58%) sepia(44%) s
 .ade :is(.composer,.session-composer) textarea:focus-visible{outline:none;box-shadow:none}
 
 /* One native backdrop, light palette washes above it. Foregrounds stay opaque. */
-.ade.native-window[data-native-material]:where(.material-frosted,.material-default.default-frosted){
+.ade.native-window[data-native-material]:not([data-native-material="opaque"]):not([data-native-material="reduced-transparency"]):not([data-native-material="increased-contrast"]):not([data-native-material="unsupported"]):where(.material-frosted,.material-default.default-frosted){
  --shell-fill:color-mix(in srgb,var(--sidebar) var(--glass-coverage,55%),transparent);
  --sidebar-fill:color-mix(in srgb,var(--bg) var(--glass-wash,12%),transparent);
  --panel-fill:color-mix(in srgb,var(--bg) var(--glass-wash,12%),transparent);
  --card-fill:color-mix(in srgb,var(--surface) var(--glass-card,14%),transparent);
  --composer-fill:color-mix(in srgb,var(--bg) var(--glass-composer,24%),transparent);
- --popup-fill:color-mix(in srgb,var(--surface) 68%,transparent);
+ --popup-fill:color-mix(in srgb,var(--surface) var(--popup-dark-coverage,15%),transparent);
  --muted:var(--text);
  --muted-2:var(--text);
  --faint:var(--muted-2);
  --line:color-mix(in srgb,var(--text) 16%,transparent);
  --line-soft:color-mix(in srgb,var(--text) 8%,transparent);
 }
+.ade.native-window[data-native-material]:not([data-native-material="opaque"]):not([data-native-material="reduced-transparency"]):not([data-native-material="increased-contrast"]):not([data-native-material="unsupported"]):where(.material-frosted,.material-default.default-frosted):where(.theme-light){--popup-fill:color-mix(in srgb,var(--surface) var(--popup-light-coverage,45%),transparent)}
+@media(prefers-color-scheme:light){.ade.native-window[data-native-material]:not([data-native-material="opaque"]):not([data-native-material="reduced-transparency"]):not([data-native-material="increased-contrast"]):not([data-native-material="unsupported"]):where(.material-frosted,.material-default.default-frosted):where(.theme-system){--popup-fill:color-mix(in srgb,var(--surface) var(--popup-light-coverage,45%),transparent)}}
 .ade.native-window:is(.material-frosted,.material-default.default-frosted) :is(.composer,.session-composer){border-color:var(--line);box-shadow:inset 0 1px 0 color-mix(in srgb,var(--text) 7%,transparent),0 5px 18px #00000012}
 /* All solid fallbacks share the selected palette, including xterm. */
 .ade.native-window:is([data-native-material="opaque"],[data-native-material="reduced-transparency"],[data-native-material="increased-contrast"],[data-native-material="unsupported"]){
@@ -932,6 +937,42 @@ img.provider-claude{filter:brightness(0) saturate(100%) invert(58%) sepia(44%) s
 
 .sidebar[hidden]{display:none!important;}
 
+/* Local project and section mutations use the same floating material as source dialogs. */
+.ade .sidebar-session-menu{z-index:1010}
+.ade .sidebar-dialog-backdrop{position:fixed;inset:0;z-index:1100;display:flex;align-items:center;justify-content:center;box-sizing:border-box;padding:16px;background:color-mix(in srgb,#000 24%,transparent);--wails-draggable:no-drag}
+.ade .sidebar-dialog{box-sizing:border-box;display:flex;flex-direction:column;gap:12px;width:min(360px,calc(100vw - 32px));max-height:calc(100dvh - 32px);margin:0;overflow:auto;padding:20px;border:1px solid var(--line);border-radius:16px;background:var(--popup-fill,var(--surface));color:var(--text);box-shadow:0 18px 54px #0006;font-size:13px;line-height:19px;--wails-draggable:no-drag}
+.ade .sidebar-dialog h2{margin:0;font-size:15px;line-height:20px}.ade .sidebar-dialog p{margin:0;color:var(--muted)}.ade .sidebar-dialog .inline-error{color:var(--red)}
+.ade .sidebar-dialog-title{min-height:24px}.ade .sidebar-dialog-title button{flex:none;border:0;border-radius:7px;background:transparent;color:var(--muted);cursor:pointer}.ade .sidebar-dialog-title button:hover{background:var(--surface-2);color:var(--text)}
+.ade .sidebar-dialog input{box-sizing:border-box;width:100%;min-width:0;border:1px solid var(--line);border-radius:7px;background:color-mix(in srgb,var(--sidebar) 72%,transparent);color:var(--text);padding:8px 10px;font:inherit;font-size:13px;line-height:19px}
+.ade .sidebar-dialog>div:last-child{display:flex;justify-content:flex-end;gap:8px;margin-top:4px}.ade .sidebar-dialog>div:last-child button{min-height:30px;border:0;border-radius:7px;background:transparent;color:var(--muted);padding:6px 10px;font:inherit;font-size:13px;cursor:pointer}.ade .sidebar-dialog>div:last-child button:hover{background:var(--surface-2);color:var(--text)}.ade .sidebar-dialog>div:last-child button[type=submit]{background:var(--text);color:var(--surface)}.ade .sidebar-dialog>div:last-child button[type=submit]:hover{background:color-mix(in srgb,var(--text) 88%,var(--surface))}.ade .sidebar-dialog.danger-dialog>div:last-child button[type=submit]{background:var(--red);color:#fff}.ade .sidebar-dialog.danger-dialog>div:last-child button[type=submit]:hover{background:color-mix(in srgb,var(--red) 88%,var(--text))}.ade .sidebar-dialog button:disabled{opacity:.48;cursor:default}
+.ade:is(.material-frosted,.material-default.default-frosted) .sidebar-dialog{background:var(--popup-fill);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)}
+.ade.material-opaque .sidebar-dialog,.ade.default-opaque .sidebar-dialog{background:var(--surface);backdrop-filter:none;-webkit-backdrop-filter:none}
+
+/* WKWebView otherwise gives menu rows native bevels and right-aligned content. */
+.ade .sidebar-session-menu button{appearance:none;-webkit-appearance:none;display:flex;align-items:center;justify-content:flex-start;width:100%;border:0;background:transparent;color:var(--text);padding:6px 8px;gap:10px;border-radius:7px;font:inherit;font-size:calc(13px * var(--interface-scale,1));text-align:left;cursor:pointer}
+.ade .sidebar-session-menu button:hover{background:var(--surface-2)}.ade .sidebar-session-menu button:focus-visible{background:var(--surface-2)}.ade .sidebar-session-menu button.menu-danger{color:var(--red)}
+.ade .sidebar-session-menu button>svg:first-child{flex:none;width:16px;height:16px;margin:0}.ade .sidebar-session-menu button>svg:not(:first-child){flex:none;width:14px;height:14px;margin-left:auto}
+.ade .sidebar-session-menu{overflow:hidden}.ade .sidebar-session-menu hr{align-self:stretch;flex:none;width:auto;min-height:1px;height:1px;margin:2px -4px;border:0;background:rgb(255 255 255 / .07)}
+.ade:is(.material-frosted,.material-default.default-frosted):not(.native-window:is([data-native-material="opaque"],[data-native-material="reduced-transparency"],[data-native-material="increased-contrast"],[data-native-material="unsupported"])) :is(.sidebar-session-menu,.sidebar-dialog,.select-popover,.model-menu,.session-actions,.panel-tab-menu,.agent-command-menu,.project-menu-wrap){box-shadow:none}
+.ade .sidebar :is(.primary-nav button,.sidebar-chat-row,.project-row,.section-collapse,.projects-toggle,.sidebar-section-title){user-select:none;-webkit-user-select:none}
+.ade .select-popover [role="option"]{user-select:none;-webkit-user-select:none}
+.ade .sidebar-chat-row>span:not(.status-dot){font-size:calc(13px * var(--interface-scale,1))}
+.ade .archived-disclosure{padding-top:8px}.ade .archived-toggle{display:flex;align-items:center;width:100%;min-height:29px;padding:0 8px;border:0;background:transparent;color:var(--muted);font-size:calc(13px * var(--interface-scale,1));text-align:left;cursor:pointer}.ade .archived-toggle>span{flex:1}.ade .archived-toggle>svg{width:14px;height:14px;transition:transform 140ms ease}.ade .archived-toggle>svg.open{transform:rotate(180deg)}.ade .archived-sessions{padding-top:2px}.ade .archived-session-row{position:relative}.ade .archived-restore{appearance:none;-webkit-appearance:none;position:absolute;z-index:1;top:50%;right:8px;transform:translateY(-50%);border:0;border-radius:5px;background:var(--surface-2);color:var(--text);padding:3px 6px;font-size:10px;line-height:14px;opacity:0;pointer-events:none;cursor:pointer}.ade .archived-session-row:hover .archived-restore,.ade .archived-session-row:focus-within .archived-restore{opacity:1;pointer-events:auto}.ade .archived-more{display:flex;align-items:center;gap:10px;width:100%;min-height:36px;padding:5px 12px;border:0;border-radius:6px;background:transparent;color:var(--muted);font-size:calc(13px * var(--interface-scale,1));text-align:left;cursor:pointer}.ade .archived-more:hover,.ade .archived-more:focus-visible{background:var(--surface-2);color:var(--text)}.ade .archived-more svg{width:14px;height:14px;flex:none}
+
 .retained-home{display:flex;flex:1;min-width:0;min-height:0;height:100%}
 .retained-home[hidden]{display:none}
 .retained-home>.home-page{width:100%;min-width:0;flex:1}
+
+/* Source established-chat composer: 49px compact pill; expanded drafts retain a
+   76px text box above the fixed 42px actions row. */
+.ade .session-composer.expanded textarea{padding:16px 16px 4px}
+.ade .session-composer.expanded>.composer-footer{align-items:center;padding:2px 12px 8px;gap:8px}
+.ade .session-composer .composer-utilities{display:flex;align-items:center;gap:2px;min-width:0;flex:1}
+.ade .session-composer.expanded .model-picker{max-width:45%}
+.ade .session-composer.compact .composer-utilities{display:contents}
+.ade .session-composer .send-button{width:28px;height:28px;flex-basis:28px}
+.ade .session-composer.compact textarea{padding-right:var(--composer-cluster-width)}
+.ade .session-composer:focus-within{outline:2px solid color-mix(in srgb,var(--text) 60%,transparent);outline-offset:2px}
+@media(prefers-reduced-motion:no-preference){.ade .session-composer textarea{transition:height 180ms cubic-bezier(.33,1,.68,1),padding 180ms cubic-bezier(.33,1,.68,1)}}
+@media(prefers-reduced-motion:reduce){.ade .session-composer textarea{transition:none}}
+.ade .session-composer .composer-utilities .command-trigger{pointer-events:auto}

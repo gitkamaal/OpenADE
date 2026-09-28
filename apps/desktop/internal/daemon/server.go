@@ -36,6 +36,8 @@ type Daemon struct {
 	attachmentMu    sync.Mutex
 	themeLibrary    *ThemeLibrary
 	projectReads    chan struct{}
+	projectMu       sync.Mutex
+	deletions       *deletionFence
 }
 
 func DefaultConfig() Config {
@@ -100,9 +102,10 @@ func New(config Config) (*Daemon, error) {
 	d := &Daemon{
 		config: config, store: store, themeLibrary: themeLibrary, releaseProfile: release, authToken: token, listener: listener,
 		projectReads: make(chan struct{}, 4),
-		sessions:     NewSessionManager(store, config.DataDir),
-		terminals:    NewTerminalManager(store, config.DataDir),
+		deletions:    newDeletionFence(),
 	}
+	d.sessions = NewSessionManager(store, config.DataDir, d.deletions)
+	d.terminals = NewTerminalManager(store, config.DataDir, d.deletions)
 	d.server = &http.Server{Addr: config.Addr, Handler: d.routes(), ReadHeaderTimeout: 5 * time.Second}
 	return d, nil
 }
@@ -159,9 +162,13 @@ func (d *Daemon) routes() http.Handler {
 	mux.HandleFunc("GET /api/projects", d.handleProjects)
 	mux.HandleFunc("GET /api/projects/directories", d.handleProjectDirectories)
 	mux.HandleFunc("POST /api/projects", d.handleRegisterProject)
+	mux.HandleFunc("POST /api/projects/rename", d.handleRenameProject)
+	mux.HandleFunc("POST /api/projects/remove", d.handleRemoveProject)
 	mux.HandleFunc("POST /api/projects/scan", d.handleScanProjects)
 	mux.HandleFunc("GET /api/sessions/{id}", d.handleGetSession)
 	mux.HandleFunc("PATCH /api/sessions/{id}", d.handleSessionDetails)
+	mux.HandleFunc("PATCH /api/sessions/{id}/archive", d.handleSessionArchive)
+	mux.HandleFunc("DELETE /api/sessions/{id}", d.handleDeleteSession)
 	mux.HandleFunc("GET /api/sessions/{id}/provider-state", d.handleProviderState)
 	mux.HandleFunc("POST /api/sessions/{id}/provider-requests/{requestID}", d.handleProviderReply)
 	mux.HandleFunc("GET /api/sessions/{id}/stream", d.handleStream)
@@ -205,12 +212,20 @@ func (d *Daemon) routes() http.Handler {
 }
 
 func (d *Daemon) handleProjects(w http.ResponseWriter, _ *http.Request) {
-	projects, err := d.store.ListProjects()
+	metadata, err := d.store.ListProjectMetadata()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"projects": projects})
+	projects := make([]string, 0, len(metadata))
+	names := map[string]string{}
+	for _, project := range metadata {
+		projects = append(projects, project.Path)
+		if project.DisplayName != "" {
+			names[project.Path] = project.DisplayName
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"projects": projects, "project_names": names})
 }
 
 func (d *Daemon) handleScanProjects(w http.ResponseWriter, r *http.Request) {
@@ -226,7 +241,22 @@ func (d *Daemon) handleScanProjects(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"root": body.Root, "projects": projects, "conversations": discoverExternalConversations(body.Root, projects)})
+	for i, path := range projects {
+		if canonical, resolveErr := filepath.EvalSymlinks(path); resolveErr == nil {
+			projects[i] = canonical
+		}
+	}
+	projects, err = d.store.FilterRemovedProjects(projects)
+	if err != nil {
+		writeError(w, 500, err)
+		return
+	}
+	if err = d.store.RecordProjectCatalog(projects); err != nil {
+		writeError(w, 500, err)
+		return
+	}
+	conversations := discoverExternalConversations(body.Root, projects)
+	writeJSON(w, http.StatusOK, map[string]any{"root": body.Root, "projects": projects, "conversations": conversations})
 }
 
 func cors(next http.Handler) http.Handler {
@@ -286,7 +316,9 @@ func (d *Daemon) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	d.projectMu.Lock()
 	session, err := d.sessions.Create(r.Context(), request)
+	d.projectMu.Unlock()
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
@@ -295,7 +327,14 @@ func (d *Daemon) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *Daemon) handleGetSession(w http.ResponseWriter, r *http.Request) {
-	session, err := d.store.GetSession(r.PathValue("id"))
+	id := r.PathValue("id")
+	release, err := d.deletions.admit(id)
+	if err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	defer release()
+	session, err := d.store.GetSession(id)
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -431,7 +470,14 @@ func (d *Daemon) handleEnqueueMessage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("message is required"))
 		return
 	}
-	session, err := d.store.GetSession(r.PathValue("id"))
+	id := r.PathValue("id")
+	release, err := d.deletions.admit(id)
+	if err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	defer release()
+	session, err := d.store.GetSession(id)
 	if err != nil {
 		writeStoreError(w, err)
 		return

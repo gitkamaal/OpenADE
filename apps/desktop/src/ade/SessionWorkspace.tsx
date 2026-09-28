@@ -67,7 +67,7 @@ export function recoverRejectedDraft(original:string,current:string){
 
 type WorkTab = "review" | "terminal" | "pull-request" | "ticket" | "browser" | "history" | "editor";
 
-export function SessionWorkspace({ activeView=true, session, preferences, onBack, onRefresh, onPreferences, onArchive }: { activeView?:boolean; session: Session; preferences: Preferences; onPreferences:(next:Preferences,persist?:boolean)=>void; onArchive:()=>void; onBack: () => void; onRefresh: () => Promise<void> }) {
+export function SessionWorkspace({ activeView=true, session, projectLabel, preferences, onBack, onRefresh, onPreferences, onArchive }: { activeView?:boolean; session: Session; projectLabel?:string; preferences: Preferences; onPreferences:(next:Preferences,persist?:boolean)=>void; onArchive:()=>void; onBack: () => void; onRefresh: () => Promise<void> }) {
   const tuiMode = session.mode === "tui";
  const provider=useProviderState(session.id,["starting","running","waiting"].includes(session.status),activeView&&!tuiMode&&(session.agent==="codex"||session.agent==="codex-cli"));const providerRequest=provider.state.requests[0];
   const defaultTab: WorkTab = session.agent === "shell" || (preferences.session_surface === "terminal" && !tuiMode) ? "terminal" : "review";
@@ -91,7 +91,7 @@ export function SessionWorkspace({ activeView=true, session, preferences, onBack
   const attachments=useAttachments(session.id);
   const submitting=useRef(false);const [sending,setSending]=useState(()=>pendingSessionSends.has(session.id));
   useEffect(()=>{const changed=(event:Event)=>{if((event as CustomEvent<string>).detail===session.id)setSending(pendingSessionSends.has(session.id));};window.addEventListener("openade-pending-send",changed);return()=>window.removeEventListener("openade-pending-send",changed);},[session.id]);
-  const composerLayout=useComposerLayout(input,preferences.interface_size,attachments.images.length>0,60);
+  const composerLayout=useComposerLayout(input,preferences.interface_size,attachments.images.length>0);
   useEffect(()=>{sessionDrafts.delete(session.id);if(input){sessionDrafts.set(session.id,input);if(sessionDrafts.size>32)sessionDrafts.delete(sessionDrafts.keys().next().value!);}},[session.id,input]);
   useEffect(()=>{if(!activeView){setTabMenu(false);setActionsOpen(false);setCommandOpen(false);}},[activeView]);
   const [editingMessageId,setEditingMessageId]=useState<string|null>(null);
@@ -336,10 +336,10 @@ export function SessionWorkspace({ activeView=true, session, preferences, onBack
       <header className="session-header">
         <button className="icon-button" onClick={onBack} aria-label="Back"><ArrowLeft /></button>
         <span className={`status-dot ${session.status}`} />
-        <div className="session-title"><h1>{session.title}</h1><p>{projectName(session.repo_root)} <span>·</span> <code title={session.branch}>{session.branch||"Folder workspace"}</code></p></div>
+        <div className="session-title"><h1>{session.title}</h1><p>{projectLabel??projectName(session.repo_root)} <span>·</span> <code title={session.branch}>{session.branch||"Folder workspace"}</code></p></div>
         <span className="session-header-spacer"/>
         {active && <button className="header-stop" onClick={() => void stopSession(session.id).then(onRefresh)}><Square weight="fill" /> Stop</button>}
-        <div className="session-actions-anchor"><button className="icon-button session-actions-trigger" aria-label="Session actions" aria-expanded={actionsOpen} onClick={()=>setActionsOpen(value=>!value)}><DotsThree/></button>{actionsOpen&&<div className="session-actions" role="menu" onKeyDown={event=>menuKeys(event,()=>setActionsOpen(false),()=>document.querySelector<HTMLElement>(".session-actions-trigger")?.focus())}><button role="menuitem" onClick={()=>{setDetailsEditor("title");setDetailsValue(session.title);setActionsOpen(false);}}>Rename chat</button><button role="menuitem" onClick={()=>{setDetailsEditor("instructions");setDetailsValue(session.instructions||"");setActionsOpen(false);}}>Chat instructions</button><button role="menuitem" onClick={()=>{void copyText(session.worktree_path).catch(()=>setPanelError("Unable to copy workspace path."));setActionsOpen(false);}}>Copy workspace path</button><button role="menuitem" onClick={onArchive}><Archive/>Archive session</button></div>}</div>
+        <div className="session-actions-anchor"><button className="icon-button session-actions-trigger" aria-label="Session actions" aria-expanded={actionsOpen} onClick={()=>setActionsOpen(value=>!value)}><DotsThree/></button>{actionsOpen&&<div className="session-actions" role="menu" onKeyDown={event=>menuKeys(event,()=>setActionsOpen(false),()=>document.querySelector<HTMLElement>(".session-actions-trigger")?.focus())}><button role="menuitem" onClick={()=>{setDetailsEditor("title");setDetailsValue(session.title);setActionsOpen(false);}}>Rename chat</button><button role="menuitem" onClick={()=>{setDetailsEditor("instructions");setDetailsValue(session.instructions||"");setActionsOpen(false);}}>Chat instructions</button><button role="menuitem" onClick={()=>{void copyText(session.worktree_path).catch(()=>setPanelError("Unable to copy workspace path."));setActionsOpen(false);}}>Copy workspace path</button><button role="menuitem" onClick={()=>{setActionsOpen(false);onArchive();}}><Archive/>{session.archived?"Unarchive session":"Archive session"}</button></div>}</div>
         <button className="icon-button" aria-label="Toggle files panel" aria-pressed={filesOpen} onClick={toggleFiles}><Folder/></button>
         <button className="icon-button" aria-label="Toggle right sidebar" aria-pressed={rightOpen} onClick={()=>setRightOpen(value=>!value)}><SidebarSimple/></button>
       </header>
@@ -385,8 +385,10 @@ export function SessionWorkspace({ activeView=true, session, preferences, onBack
             }}
           />
           <div className="composer-footer">
-            <AttachmentPicker draft={attachments}/>
-            <ModelPicker compactLabel serviceTier={session.service_tier} onTierChange={tier=>{void updateModel(session.id,session.model,session.effort,tier).then(onRefresh).catch(reason=>setPanelError(String(reason)));}} provider={session.agent} models={engine.meta?.agents.find(item=>item.id===session.agent)?.models} model={session.model} effort={session.effort} onChange={(model,effort)=>{void updateModel(session.id,model,effort,session.service_tier).then(onRefresh).catch(reason=>setPanelError(String(reason)));}}/>
+            <div className="composer-utilities">
+              <AttachmentPicker draft={attachments}/>
+              <ModelPicker compactLabel serviceTier={session.service_tier} onTierChange={tier=>{void updateModel(session.id,session.model,session.effort,tier).then(onRefresh).catch(reason=>setPanelError(String(reason)));}} provider={session.agent} models={engine.meta?.agents.find(item=>item.id===session.agent)?.models} model={session.model} effort={session.effort} onChange={(model,effort)=>{void updateModel(session.id,model,effort,session.service_tier).then(onRefresh).catch(reason=>setPanelError(String(reason)));}}/>
+            </div>
             <button type={active&&!input.trim()&&!attachments.images.length?"button":"submit"} className="send-button" disabled={busy||sending||attachments.uploading||!canMessage||(!active&&!input.trim()&&!attachments.images.length)} aria-label={active&&!input.trim()&&!attachments.images.length?"Stop agent":"Send message"} onClick={active&&!input.trim()&&!attachments.images.length?()=>{void stopSession(session.id).then(onRefresh).catch(reason=>setPanelError(String(reason)));}:undefined}>{active&&!input.trim()&&!attachments.images.length?<span className="composer-stop-glyph" aria-hidden="true"/>:<ArrowUp weight="bold"/>}</button>
           </div>
           </form></div>

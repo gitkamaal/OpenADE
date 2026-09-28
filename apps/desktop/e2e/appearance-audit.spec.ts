@@ -134,12 +134,12 @@ test('New project uses a local folder palette, registers without a chat and supp
 test('Zeron composer pill expands, grows, collapses and anchors its custom model menu',async({page,request})=>{
  await page.setViewportSize({width:1480,height:920});await create(request,'Composer geometry audit');await ready(page);const home=(await page.locator('.source-new-composer').boundingBox())!;expect(home.width).toBe(768);expect(home.height).toBeCloseTo(120,1);await open(page,'Composer geometry audit');
  const form=page.locator('.session-composer'),input=page.getByLabel('Session message');
- await expect(form).toHaveAttribute('data-layout','compact');expect((await form.boundingBox())!.height).toBe(49);
+ await expect(form).toHaveAttribute('data-layout','compact');await expect.poll(async()=>Math.round((await form.boundingBox())!.height)).toBe(49);
  await input.fill('Short draft');await expect(form).toHaveAttribute('data-layout','compact');
- await input.fill('First line\nSecond line');await expect(form).toHaveAttribute('data-layout','expanded');expect((await form.boundingBox())!.height).toBeGreaterThanOrEqual(104);
+ await input.fill('First line\nSecond line');await expect(form).toHaveAttribute('data-layout','expanded');await expect.poll(async()=>(await form.boundingBox())!.height).toBeGreaterThanOrEqual(104);
  await page.getByLabel('Choose model',{exact:true}).click();await expect(page.getByLabel('Search models')).toBeFocused();await page.keyboard.press('Escape');await expect(page.getByLabel('Choose model',{exact:true})).toBeFocused();
  await input.fill(Array.from({length:30},(_,i)=>`Draft line ${i}`).join('\n'));expect((await form.boundingBox())!.height).toBeLessThanOrEqual(304);expect(await input.evaluate(el=>el.scrollHeight>el.clientHeight)).toBe(true);
- await input.fill('');await expect(form).toHaveAttribute('data-layout','compact');expect((await form.boundingBox())!.height).toBe(49);
+ await input.fill('');await expect(form).toHaveAttribute('data-layout','compact');await expect.poll(async()=>Math.round((await form.boundingBox())!.height)).toBe(49);
  await input.fill('A longer single line '.repeat(8));await expect(form).toHaveAttribute('data-layout','expanded');await input.fill('Draft preserved');await expect(form).toHaveAttribute('data-layout','compact');
  await page.setViewportSize({width:580,height:700});await expect(input).toHaveValue('Draft preserved');expect(await form.evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBe(true);
  await page.setViewportSize({width:1480,height:920});await expect(form).toHaveAttribute('data-layout','compact');

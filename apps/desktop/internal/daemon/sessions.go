@@ -63,10 +63,11 @@ type SessionManager struct {
 	live       map[string]*liveSession
 	providerMu sync.Mutex
 	codex      map[string]*codexConversation
+	deletions  *deletionFence
 }
 
-func NewSessionManager(store *Store, dataDir string) *SessionManager {
-	return &SessionManager{store: store, dataDir: dataDir, live: make(map[string]*liveSession), codex: make(map[string]*codexConversation)}
+func NewSessionManager(store *Store, dataDir string, deletions *deletionFence) *SessionManager {
+	return &SessionManager{store: store, dataDir: dataDir, live: make(map[string]*liveSession), codex: make(map[string]*codexConversation), deletions: deletions}
 }
 
 func (m *SessionManager) Create(ctx context.Context, request CreateSessionRequest) (Session, error) {
@@ -135,6 +136,15 @@ func (m *SessionManager) Create(ctx context.Context, request CreateSessionReques
 			return Session{}, fmt.Errorf("folders without Git use the current-folder checkout")
 		}
 		request.BaseBranch = ""
+	}
+	if !projectless {
+		removed, removeErr := m.store.ProjectRemoved(repo)
+		if removeErr != nil {
+			return Session{}, removeErr
+		}
+		if removed {
+			return Session{}, fmt.Errorf("project was removed; add it again before starting a chat")
+		}
 	}
 
 	branch := makeBranch(request.TicketKey, request.Title, id)
@@ -330,6 +340,17 @@ func (m *SessionManager) launchCommand(session Session, program string, args []s
 }
 
 func (m *SessionManager) Resume(session Session, prompt string) error {
+	release, err := m.deletions.admit(session.ID)
+	if err != nil {
+		return err
+	}
+	defer release()
+	fresh, err := m.store.GetSession(session.ID)
+	if err != nil {
+		return err
+	}
+	fresh.queueMessageID = session.queueMessageID
+	session = fresh
 	m.surfaceMu.Lock()
 	defer m.surfaceMu.Unlock()
 	prompt = strings.TrimSpace(prompt)
@@ -377,6 +398,16 @@ func (m *SessionManager) Resume(session Session, prompt string) error {
 }
 
 func (m *SessionManager) SwitchSurface(session Session, mode string) error {
+	release, err := m.deletions.admit(session.ID)
+	if err != nil {
+		return err
+	}
+	defer release()
+	fresh, err := m.store.GetSession(session.ID)
+	if err != nil {
+		return err
+	}
+	session = fresh
 	m.surfaceMu.Lock()
 	defer m.surfaceMu.Unlock()
 	if mode != "chat" && mode != "tui" {
@@ -417,7 +448,6 @@ func (m *SessionManager) SwitchSurface(session Session, mode string) error {
 	providerID := m.providerID(session)
 	var program string
 	var args []string
-	var err error
 	if providerID == "" || needsFreshClaudeSession(session, providerID) {
 		if isClaudeAgent(session.Agent) {
 			providerID = session.ID
@@ -439,6 +469,16 @@ func (m *SessionManager) SwitchSurface(session Session, mode string) error {
 }
 
 func (m *SessionManager) ResumeTUI(session Session) error {
+	release, err := m.deletions.admit(session.ID)
+	if err != nil {
+		return err
+	}
+	defer release()
+	fresh, err := m.store.GetSession(session.ID)
+	if err != nil {
+		return err
+	}
+	session = fresh
 	m.surfaceMu.Lock()
 	defer m.surfaceMu.Unlock()
 	if session.Mode != "tui" {
@@ -450,7 +490,6 @@ func (m *SessionManager) ResumeTUI(session Session) error {
 	providerID := m.providerID(session)
 	var program string
 	var args []string
-	var err error
 	if providerID != "" && !needsFreshClaudeSession(session, providerID) {
 		program, args, err = tuiProviderCommand(session, providerID)
 	} else {
@@ -761,6 +800,11 @@ func (m *SessionManager) wait(id string, live *liveSession, transcript *os.File)
 }
 
 func (m *SessionManager) DrainQueue(id string) error {
+	release, err := m.deletions.admit(id)
+	if err != nil {
+		return err
+	}
+	defer release()
 	m.queueMu.Lock()
 	defer m.queueMu.Unlock()
 	if _, err := m.getLive(id); err == nil {
@@ -833,6 +877,41 @@ func (m *SessionManager) Stop(id string) error {
 		return nil
 	}
 	return m.interrupt(live, "stopped")
+}
+
+// StopAndRelease is used by metadata deletion. It only permits deletion after a
+// running provider/PTY has exited, so streams cannot outlive the session record.
+func (m *SessionManager) StopAndRelease(id string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	live, err := m.getLive(id)
+	if err != nil {
+		return m.closeCodexAndWait(id, deadline)
+	}
+	if err := m.interrupt(live, "removed"); err != nil {
+		return err
+	}
+	select {
+	case <-live.done:
+		return m.closeCodexAndWait(id, deadline)
+	case <-time.After(time.Until(deadline)):
+		return fmt.Errorf("provider did not stop in time")
+	}
+}
+
+// A persistent app-server can remain alive after its active turn ends. Do not
+// delete the conversation record until its process and pipe reader have exited.
+func (m *SessionManager) closeCodexAndWait(id string, deadline time.Time) error {
+	c := m.codexClient(id)
+	if c == nil {
+		return nil
+	}
+	c.close()
+	select {
+	case <-c.rpc.processDone:
+		return nil
+	case <-time.After(time.Until(deadline)):
+		return fmt.Errorf("provider did not stop in time")
+	}
 }
 
 func (m *SessionManager) interrupt(live *liveSession, reason string) error {

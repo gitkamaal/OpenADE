@@ -33,7 +33,7 @@ export type SessionStatus =
   | "interrupted";
 
 export interface Session {
- model:string;effort:string;service_tier:string;instructions:string;
+ model:string;effort:string;service_tier:string;instructions:string;provider_session_id:string;archived:boolean;
   id: string;
   title: string;
   prompt: string;
@@ -362,7 +362,7 @@ export const getHistory = (id:string) => request<{branch:string;commits:GitCommi
 export const getFile = (id:string,path:string) => request<{path:string;content:string}>(`/api/sessions/${id}/file?path=${encodeURIComponent(path)}`);
 export const saveFile = (id:string,path:string,content:string,original:string) => request<{path:string;content:string}>(`/api/sessions/${id}/file?path=${encodeURIComponent(path)}`,{method:"PUT",body:JSON.stringify({content,original})});
 
-export interface EngineSnapshot{sequence:number;sessions:Session[];projects:string[];queues:Record<string,QueuedMessage[]>}
+export interface EngineSnapshot{sequence:number;sessions:Session[];projects:string[];project_names?:Record<string,string>;removed_projects?:string[];queues:Record<string,QueuedMessage[]>}
 export const getEngineState=()=>request<EngineSnapshot>("/api/state");
 
 export const commitChanges=(id:string,message:string,staged=false)=>request<{sha:string}>(`/api/sessions/${id}/commit`,{method:"POST",body:JSON.stringify({message,staged})});
@@ -380,6 +380,11 @@ export const updateSessionDetails=(id:string,details:{title?:string;instructions
 export interface ProjectDirectoryListing{path:string;parent:string;entries:{name:string;path:string}[];git?:boolean;limited?:boolean}
 export const getProjectDirectories=(path="")=>request<ProjectDirectoryListing>(`/api/projects/directories?path=${encodeURIComponent(path)}`);
 export const registerProject=(path:string)=>request<{path:string}>("/api/projects",{method:"POST",body:JSON.stringify({path})});
+export const renameProject=(path:string,name:string)=>request<{path:string;name:string}>("/api/projects/rename",{method:"POST",body:JSON.stringify({path,name})});
+export const removeProject=(path:string,session_ids:string[])=>request<{path:string;removed_sessions:number;cleanup_warning?:string}>("/api/projects/remove",{method:"POST",body:JSON.stringify({path,session_ids,confirm:true})});
+export const renameSession=(id:string,title:string)=>request<void>(`/api/sessions/${id}`,{method:"PATCH",body:JSON.stringify({title})});
+export const setSessionArchived=(id:string,archived:boolean)=>request<void>(`/api/sessions/${id}/archive`,{method:"PATCH",body:JSON.stringify({archived})});
+export const deleteSession=(id:string)=>request<{cleanup_warning?:string}|undefined>(`/api/sessions/${id}`,{method:"DELETE"});
 
 export interface Attachment {id:string;name:string;path:string;mime:string;size:number}
 export const uploadAttachment=(file:File)=>request<Attachment>(`/api/attachments?name=${encodeURIComponent(file.name)}`,{method:"POST",headers:{"Content-Type":file.type||"application/octet-stream"},body:file});
