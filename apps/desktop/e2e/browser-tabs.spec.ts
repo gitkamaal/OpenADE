@@ -50,6 +50,39 @@ test("workspace tabs swap their leading icon for Close and support middle-click 
  const keyboardClose=chips.first().getByLabel('Close Browser tab');await keyboardClose.focus();await expect(keyboardClose).toHaveCSS('opacity','1');await keyboardClose.press('Enter');await expect(chips).toHaveCount(1);await expect(chips.getByRole('tab',{selected:true})).toBeFocused();
 });
 
+test("workspace tab drag and keyboard reorder preserve the selected browser and live page",async({page,request})=>{
+ const hits=new Map<string,number>();const server=createServer((req,res)=>{const path=req.url||"/";hits.set(path,(hits.get(path)||0)+1);res.setHeader("Content-Type","text/html");res.end(`<h1>${path}</h1>`);});
+ await new Promise<void>(resolve=>server.listen(0,"127.0.0.1",resolve));const address=server.address();if(!address||typeof address==="string")throw Error("No preview port");const base=`http://127.0.0.1:${address.port}`;
+ try{
+  const session=await create(request,"Panel tab reorder parity",{agent:"shell",repo_root:"",prompt:"printf reorder-qa"});await expect.poll(()=>status(request,session.id)).toBe("completed");
+  await ready(page);await open(page,"Panel tab reorder parity");await page.getByLabel("Add panel").click();await page.getByRole("menuitem",{name:"Browser",exact:true}).click();
+  const url=page.locator(".browser-panel:visible").getByLabel("Website address"),go=page.locator(".browser-panel:visible").getByRole("button",{name:"Go",exact:true});
+  await url.fill(`${base}/one`);await go.click();await page.locator(".browser-panel:visible").getByLabel("New browser tab").click();await url.fill(`${base}/two`);await go.click();await page.locator(".browser-panel:visible").getByLabel("New browser tab").click();
+  const chips=page.locator(".panel-tabs>div");await expect(chips).toHaveCount(4);const before=await chips.evaluateAll(elements=>elements.map(element=>(element as HTMLElement).dataset.panelTab));
+  await expect.poll(()=>hits.get("/one")).toBe(1);await expect.poll(()=>hits.get("/two")).toBe(1);
+  await chips.nth(1).getByRole("tab").click();await expect(url).toHaveValue(`${base}/one`);const firstHits=hits.get("/one"),secondHits=hits.get("/two");
+  await chips.nth(1).dragTo(chips.nth(3));await expect.poll(()=>chips.evaluateAll(elements=>elements.map(element=>(element as HTMLElement).dataset.panelTab))).toEqual([before[0],before[2],before[3],before[1]]);
+  await expect(chips.last().getByRole("tab")).toHaveAttribute("aria-selected","true");await expect(url).toHaveValue(`${base}/one`);expect(hits.get("/one")).toBe(firstHits);expect(hits.get("/two")).toBe(secondHits);
+  await chips.last().getByRole("tab").focus();await chips.last().getByRole("tab").press("Alt+ArrowLeft");await expect.poll(()=>chips.evaluateAll(elements=>elements.map(element=>(element as HTMLElement).dataset.panelTab))).toEqual([before[0],before[2],before[1],before[3]]);await expect(chips.nth(2).getByRole("tab")).toBeFocused();await expect(url).toHaveValue(`${base}/one`);
+  await page.evaluate(()=>{const state=window as typeof window&{panelDragStyles:string[]};state.panelDragStyles=[];new MutationObserver(records=>{for(const record of records)if(record.target instanceof HTMLElement)state.panelDragStyles.push(record.target.getAttribute("style")||"");}).observe(document.querySelector(".panel-tabs")!,{subtree:true,attributes:true,attributeFilter:["style"]});});
+  await chips.nth(2).dragTo(chips.first(),{steps:10});
+  await expect.poll(()=>chips.evaluateAll(elements=>elements.map(element=>(element as HTMLElement).dataset.panelTab))).toEqual([before[1],before[0],before[2],before[3]]);await expect(url).toHaveValue(`${base}/one`);
+  expect(await page.evaluate(()=>(window as typeof window&{panelDragStyles:string[]}).panelDragStyles.some(style=>style.includes("116px")))).toBe(true);
+  await chips.first().dragTo(page.locator(".browser-panel:visible .preview-servers"));
+  await expect.poll(()=>chips.evaluateAll(elements=>elements.map(element=>(element as HTMLElement).dataset.panelTab))).toEqual([before[1],before[0],before[2],before[3]]);
+  await expect(chips.first().getByRole("tab")).toHaveAttribute("aria-selected","true");
+  await chips.nth(2).getByRole("tab").click();await expect(chips.nth(2).getByRole("tab")).toHaveAttribute("aria-selected","true");
+  await chips.first().dragTo(chips.last());await expect.poll(()=>chips.evaluateAll(elements=>elements.map(element=>(element as HTMLElement).dataset.panelTab))).toEqual([before[0],before[2],before[3],before[1]]);await expect(chips.nth(1).getByRole("tab")).toHaveAttribute("aria-selected","true");
+  await chips.last().getByRole("tab").click();await expect(chips.last().getByRole("tab")).toHaveAttribute("aria-selected","true");
+  for(let i=0;i<8;i++)await page.locator(".browser-panel:visible").getByLabel("New browser tab").click();
+  const strip=page.locator(".panel-tabs");await expect.poll(()=>strip.evaluate(element=>element.scrollWidth>element.clientWidth)).toBe(true);
+  await strip.evaluate(element=>{element.scrollLeft=element.scrollWidth;});const overflowBefore=await chips.evaluateAll(elements=>elements.map(element=>(element as HTMLElement).dataset.panelTab));
+  await chips.last().dragTo(chips.nth(overflowBefore.length-2),{steps:8});
+  await expect.poll(()=>chips.evaluateAll(elements=>elements.map(element=>(element as HTMLElement).dataset.panelTab))).toEqual([...overflowBefore.slice(0,-2),overflowBefore.at(-1),overflowBefore.at(-2)]);
+  expect(hits.get("/one")).toBe(firstHits);
+ }finally{server.close();}
+});
+
 test("native browser key events honor app shortcuts before browser actions and ignore stale tabs",async({page,request})=>{
  await page.addInitScript(()=>{
   localStorage.setItem("openade.preferences",JSON.stringify({shortcuts:{commandPalette:"Mod+Alt+L"}}));

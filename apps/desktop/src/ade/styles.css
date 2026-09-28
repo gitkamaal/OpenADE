@@ -527,8 +527,10 @@ select option{background:var(--surface);color:var(--text)}
 .session-workspace.shell-workspace .work-panel-clip{grid-column:1;grid-row:2}
 .work-panel{width:100%;height:100%;grid-template-rows:38px minmax(0,1fr);border-left:1px solid var(--line);background:var(--sidebar)}
 .work-panel-header{padding:0 5px;min-width:0;border-bottom:1px solid var(--line-soft);gap:3px;overflow:visible}
-.panel-tabs{display:flex;min-width:0;flex:1;align-items:center;gap:3px;overflow-x:auto;scrollbar-width:none}
-.panel-tabs>div{position:relative;display:flex;align-items:center;flex:0 0 112px;width:112px;height:24px;border-radius:6px;min-width:0}
+.panel-tabs{display:flex;min-width:0;flex:1;align-items:center;gap:4px;overflow-x:auto;scrollbar-width:none;user-select:none}
+.panel-tabs>div{position:relative;display:flex;align-items:center;flex:0 0 112px;width:112px;height:24px;border-radius:6px;min-width:0;transition:transform 150ms ease,opacity 150ms ease}
+.panel-tabs>div.panel-tab-dragging{opacity:.4}
+.panel-tab-drag-ghost{position:fixed;z-index:1100;width:112px;height:24px;display:flex;align-items:center;padding:0 9px;box-sizing:border-box;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;border:1px solid var(--line);border-radius:6px;background:var(--popup-fill,var(--surface-2));color:var(--text);box-shadow:0 8px 20px #0004;font-size:11.5px;pointer-events:none}
 .panel-tabs>div.active{background:var(--surface-2)}
 .panel-tabs button{height:24px;display:flex;align-items:center;gap:3px;font-size:11.5px;color:var(--muted);background:transparent;border:0;border-radius:5px;cursor:pointer;white-space:nowrap;padding:0 8px 0 4px}
 .panel-tabs [role=tab]{width:100%;min-width:0;text-align:left}.panel-tab-leading{display:flex;align-items:center;justify-content:center;flex:none;width:18px;height:18px}.panel-tab-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
