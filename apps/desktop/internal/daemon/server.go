@@ -34,6 +34,10 @@ type Daemon struct {
 	releaseProfile  func()
 	authToken       string
 	providerSetupMu sync.Mutex
+	accountMu       sync.Mutex
+	accountProbeMu  sync.Mutex
+	accountCache    *AgentAccountsSnapshot
+	accountCacheAt  time.Time
 	attachmentMu    sync.Mutex
 	artwork         *artworkStore
 	themeLibrary    *ThemeLibrary
@@ -157,6 +161,9 @@ func (d *Daemon) routes() http.Handler {
 	})
 	mux.HandleFunc("GET /api/meta", d.handleMeta)
 	mux.HandleFunc("GET /api/providers/{agent}/models", d.handleACPModels)
+	mux.HandleFunc("GET /api/agent-accounts", d.handleAgentAccounts)
+	mux.HandleFunc("POST /api/agent-accounts/codex/{id}/activate", d.handleActivateCodexAccount)
+	mux.HandleFunc("DELETE /api/agent-accounts/codex/{id}", d.handleForgetCodexAccount)
 	mux.HandleFunc("GET /api/title-settings", d.handleTitleSettings)
 	mux.HandleFunc("PATCH /api/title-settings", d.handleTitleSettings)
 	mux.HandleFunc("GET /api/state", d.handleSnapshot)

@@ -22,7 +22,7 @@ const executablePath = !process.env.CI && fs.existsSync(pinnedChromium)
 
 export default defineConfig({
   testDir: "e2e",
-  testMatch: ["ade-lifecycle.spec.ts","zeron-flows.spec.ts","engine-flows.spec.ts","performance.spec.ts","capture.spec.ts","parity-controls.spec.ts","appearance-audit.spec.ts","attachments.spec.ts","projectless.spec.ts","custom-themes.spec.ts","file-previews.spec.ts","message-rail.spec.ts","native-preferences.spec.ts","workspace-preferences.spec.ts","syntax.spec.ts","provider-protocol.spec.ts","project-sidebar.spec.ts","artwork.spec.ts","title-naming.spec.ts","review-comments.spec.ts","side-chats.spec.ts","acp.spec.ts","cursor.spec.ts","browser-tabs.spec.ts"],
+  testMatch: ["ade-lifecycle.spec.ts","zeron-flows.spec.ts","engine-flows.spec.ts","performance.spec.ts","capture.spec.ts","parity-controls.spec.ts","appearance-audit.spec.ts","attachments.spec.ts","projectless.spec.ts","custom-themes.spec.ts","file-previews.spec.ts","message-rail.spec.ts","native-preferences.spec.ts","workspace-preferences.spec.ts","syntax.spec.ts","provider-protocol.spec.ts","project-sidebar.spec.ts","artwork.spec.ts","title-naming.spec.ts","review-comments.spec.ts","side-chats.spec.ts","acp.spec.ts","cursor.spec.ts","browser-tabs.spec.ts","accounts.spec.ts"],
   timeout: 60_000,
   expect: { timeout: 15_000 },
   workers: 1,
@@ -52,6 +52,7 @@ export default defineConfig({
         SHELL: "/bin/sh",
         OPENADE_AUTH_TOKEN:"openade-e2e-synthetic-token-2026",
         OPENADE_PROVIDER_HOME:path.join(tmpDir,"provider-home"),
+        CODEX_HOME:path.join(tmpDir,"provider-home",".codex"),
         OPENADE_CURSOR_SHIM_EXECUTABLE:path.join(tmpDir,"bin","cursor-shim"),
         VITE_OPENADE_DAEMON_URL:`http://127.0.0.1:${daemonPort}`,
         VITE_OPENADE_AUTH_TOKEN:"openade-e2e-synthetic-token-2026",

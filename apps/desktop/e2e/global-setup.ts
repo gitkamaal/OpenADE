@@ -9,11 +9,29 @@ export default function prepareWorld(){
  for(const folder of ["fixture-repo","other/fixture-repo"]){const repo=path.join(tmp,folder);fs.mkdirSync(repo,{recursive:true});git(repo,"init","-b","main");git(repo,"config","user.name","E2E");git(repo,"config","user.email","e2e@example.com");fs.writeFileSync(path.join(repo,"README.md"),`# ${folder}\nfixture\n`);fs.writeFileSync(path.join(repo,"remove.txt"),"delete me\n");fs.mkdirSync(path.join(repo,".agents/skills/fix-ci"),{recursive:true});fs.writeFileSync(path.join(repo,".agents/skills/fix-ci/SKILL.md"),"---\ndescription: Fix failing CI\n---\nUse end-to-end tests.");fs.mkdirSync(path.join(repo,".claude/commands"),{recursive:true});fs.writeFileSync(path.join(repo,".claude/commands/ship.md"),"---\ndescription: Prepare review\n---\nPrepare review.");git(repo,"add",".");git(repo,"commit","-m","Initial fixture");const remote=path.join(tmp,folder.replaceAll("/","-")+".git");fs.mkdirSync(remote,{recursive:true});git(remote,"init","--bare");git(repo,"remote","add","origin",remote);git(repo,"push","-u","origin","main");}
  fs.mkdirSync(path.join(tmp,"data"));const bin=path.join(tmp,"bin");fs.mkdirSync(bin);
  const protocol=`#!/usr/bin/env python3
-import json,os,sys,time,signal
+import json,os,sys,time,signal,base64
 name=os.path.basename(sys.argv[0]);args=sys.argv[1:];sid=os.environ.get('OPENADE_SESSION_ID','fixture');prompt=args[-1] if args else ''
 structured='--json' in args or '--output-format' in args
 signal.signal(signal.SIGTERM,lambda *_:sys.exit(0))
 def emit(value): print(json.dumps(value),flush=True)
+if name=='codex' and args==['app-server'] and sid=='account-probe':
+ email='fixture@example.test'
+ connected=False
+ try:
+  auth=json.load(open(os.path.join(os.environ['CODEX_HOME'],'auth.json')))
+  payload=auth['tokens']['id_token'].split('.')[1]
+  email=json.loads(base64.urlsafe_b64decode(payload+'='*((-len(payload))%4)))['email']
+  connected=True
+ except (OSError,KeyError,IndexError,ValueError,TypeError):pass
+ for line in sys.stdin:
+  frame=json.loads(line);method=frame.get('method')
+  if 'id' not in frame:continue
+  if method=='initialize':result={}
+  elif method=='account/read':result={'account':({'type':'chatgpt','email':email,'planType':'plus','accessToken':'PRIVATE_FIXTURE_TOKEN'} if connected or os.environ.get('OPENADE_ACCOUNT_FIXTURE_REQUIRE_AUTH')!='1' else None),'requiresOpenaiAuth':True}
+  elif method=='account/rateLimits/read':result={'rateLimits':{'planType':'pro','primary':{'usedPercent':40,'windowDurationMins':300,'resetsAt':1800000000},'secondary':{'usedPercent':85,'windowDurationMins':10080,'resetsAt':1800500000}},'rateLimitsByLimitId':None,'accountId':'private-fixture-account'}
+  else:result={}
+  emit({'jsonrpc':'2.0','id':frame['id'],'result':result})
+ sys.exit(0)
 if os.environ.get('OPENADE_TITLE_ONLY')=='1':
  request=json.loads(prompt.split('Session request (JSON string):\\n')[-1]) if name=='codex' else prompt
  if name=='claude':request=json.loads(request.split('Session request (JSON string):\\n')[-1]) if 'Session request (JSON string):\\n' in request else request

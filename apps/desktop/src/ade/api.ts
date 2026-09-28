@@ -189,6 +189,12 @@ export async function health(): Promise<boolean> {
 }
 
 export const getMeta = () => request<Meta>("/api/meta");
+export interface AgentUsageWindow { label:string; used_fraction:number; resets_at?:number }
+export interface AgentAccount { id:string; provider:string; email?:string; plan_label?:string; auth_kind:string; active:boolean; switchable:boolean; usage_windows:AgentUsageWindow[]; usage_fetched_at?:number; usage_error?:string }
+export interface AgentAccountsSnapshot { accounts:AgentAccount[]; warnings:{provider:string;message:string}[] }
+export const getAgentAccounts = (refresh=false) => request<AgentAccountsSnapshot>(`/api/agent-accounts${refresh?"?refresh=1":""}`);
+export const activateCodexAccount = (id:string) => request<void>(`/api/agent-accounts/codex/${encodeURIComponent(id)}/activate`,{method:"POST"});
+export const forgetCodexAccount = (id:string) => request<void>(`/api/agent-accounts/codex/${encodeURIComponent(id)}`,{method:"DELETE"});
 export const getProviderModels = async (agent:string,refresh=false) => (await request<{models:ModelChoice[]}>(`/api/providers/${encodeURIComponent(agent)}/models${refresh?"?refresh=1":""}`)).models ?? [];
 export interface TitleSettings { harness: string; model: string }
 export const getTitleSettings = () => request<TitleSettings>("/api/title-settings");
