@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
+	"sort"
 	"strings"
 	"time"
 )
@@ -15,6 +17,90 @@ import (
 type projectDirectory struct {
 	Name string `json:"name"`
 	Path string `json:"path"`
+}
+
+// The local counterpart of Zeron's device → locations step. Mounted volumes
+// are best-effort: an ejecting or unreachable volume cannot hold the picker
+// open indefinitely, and Home plus the system root remain available.
+func (d *Daemon) handleProjectLocations(w http.ResponseWriter, r *http.Request) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		writeError(w, 500, err)
+		return
+	}
+	locations := []projectDirectory{{Name: "Home", Path: home}}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	select {
+	case d.projectReads <- struct{}{}:
+		results := make(chan []projectDirectory, 1)
+		go func() {
+			defer func() { <-d.projectReads }()
+			results <- mountedProjectLocations()
+		}()
+		select {
+		case drives := <-results:
+			locations = append(locations, drives...)
+		case <-ctx.Done():
+		}
+	case <-ctx.Done():
+	}
+	if len(locations) == 1 || !projectLocationsIncludeRoot(locations) {
+		locations = append(locations, projectDirectory{Name: "System", Path: string(filepath.Separator)})
+	}
+	writeJSON(w, 200, map[string]any{"locations": locations})
+}
+
+func projectLocationsIncludeRoot(locations []projectDirectory) bool {
+	for _, location := range locations {
+		if location.Path == string(filepath.Separator) {
+			return true
+		}
+	}
+	return false
+}
+
+func mountedProjectLocations() []projectDirectory {
+	if runtime.GOOS != "darwin" {
+		return nil
+	}
+	entries, err := os.ReadDir("/Volumes")
+	if err != nil {
+		return nil
+	}
+	seen := make(map[string]bool)
+	drives := make([]projectDirectory, 0, len(entries))
+	for _, entry := range entries {
+		name := entry.Name()
+		if strings.HasPrefix(name, ".") {
+			continue
+		}
+		path := filepath.Join("/Volumes", name)
+		info, statErr := os.Stat(path)
+		if statErr != nil || !info.IsDir() {
+			continue
+		}
+		resolved, resolveErr := filepath.EvalSymlinks(path)
+		if resolveErr != nil {
+			continue
+		}
+		resolved = filepath.Clean(resolved)
+		if seen[resolved] {
+			continue
+		}
+		seen[resolved] = true
+		drives = append(drives, projectDirectory{Name: name, Path: resolved})
+	}
+	sort.SliceStable(drives, func(i, j int) bool {
+		if drives[i].Path == "/" || drives[j].Path == "/" {
+			return drives[i].Path == "/" && drives[j].Path != "/"
+		}
+		return strings.ToLower(drives[i].Name) < strings.ToLower(drives[j].Name)
+	})
+	if len(drives) > 50 {
+		drives = drives[:50]
+	}
+	return drives
 }
 
 // Directory names only: file contents remain behind the session-scoped editor API.

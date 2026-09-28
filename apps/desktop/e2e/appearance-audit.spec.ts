@@ -125,9 +125,47 @@ test('sidebar submenus follow pointer intent and Created/By device operate on re
 
 test('New project uses a local folder palette, registers without a chat and supports non-Git folder workspaces',async({page,request})=>{
  const os=await import('node:os');const folder=fs.mkdtempSync(path.join(os.tmpdir(),'openade-folder-parity-'));fs.writeFileSync(path.join(folder,'README.md'),'# Plain folder\n');try{
- await ready(page);await page.getByLabel('Filter projects',{exact:true}).click();await page.getByRole('button',{name:'New project…',exact:true}).click();const dialog=page.getByRole('dialog',{name:'New project',exact:true});await expect(dialog).toBeVisible();await dialog.getByRole('option',{name:'Local',exact:true}).click();const search=dialog.getByRole('combobox',{name:'Search locations and folders',exact:true});await expect(search).toBeFocused();await search.fill(folder);await search.press('Enter');await expect(dialog.locator('.project-palette-add>span')).toHaveText('Folder workspace');await search.fill(path.join(folder,'README.md'));await search.press('Enter');await expect(dialog.getByRole('alert')).toContainText('choose an existing folder');await expect(dialog.getByRole('button',{name:'Add project',exact:true})).toBeDisabled();await search.fill(folder);await search.press('Enter');await expect(dialog.getByRole('button',{name:'Add project',exact:true})).toBeEnabled();await dialog.getByRole('button',{name:'Add project',exact:true}).click();await expect(dialog).toHaveCount(0);await expect(page.getByRole('combobox',{name:'Choose project',exact:true})).toHaveAttribute('data-value',fs.realpathSync(folder));await expect(page.getByRole('combobox',{name:'Checkout mode',exact:true})).toBeDisabled();await page.getByLabel('New session prompt').fill('Plain folder native chat');await choose(page,'Provider','codex');await page.getByLabel('Start session',{exact:true}).click();await expect(page.locator('.session-title h1')).toHaveText('Plain folder native chat');await expect(page.locator('.session-title code')).toHaveText('Folder workspace');await page.getByLabel('Toggle files panel').click();await page.getByRole('treeitem',{name:'README.md',exact:true}).click();await expect(page.getByRole('textbox',{name:'Edit README.md',exact:true})).toContainText('Plain folder');await panel(page,'Diffs');await expect(page.getByText('Git diffs and staging are available in Git projects.',{exact:true})).toBeVisible();await page.getByRole('button',{name:'Home',exact:true}).click();await page.reload();await page.getByLabel('Filter projects',{exact:true}).click();await expect(page.locator(`.select-popover [role=option][data-value="${fs.realpathSync(folder)}"]`)).toBeVisible();await page.keyboard.press('Escape');
+ await ready(page);await page.getByLabel('Filter projects',{exact:true}).click();await page.getByRole('button',{name:'New project…',exact:true}).click();const dialog=page.getByRole('dialog',{name:'New project',exact:true});await expect(dialog).toBeVisible();await dialog.getByRole('option',{name:'Local',exact:true}).click();await expect(dialog.getByRole('listbox',{name:'Project locations'})).toBeVisible();await dialog.getByRole('option',{name:'Home',exact:true}).click();const search=dialog.getByRole('combobox',{name:'Search folders',exact:true});await expect(search).toBeFocused();await search.fill(folder);await search.press('Enter');await expect(dialog.locator('.project-palette-add>span')).toHaveText('Folder workspace');await expect(dialog.getByRole('button',{name:'Add project',exact:true})).toBeEnabled();await search.fill(path.join(folder,'README.md'));await search.press('Enter');await expect(dialog.getByRole('alert')).toContainText('choose an existing folder');await expect(dialog.getByRole('button',{name:'Add project',exact:true})).toBeDisabled();await search.fill(folder);await search.press('Enter');await expect(dialog.getByRole('button',{name:'Add project',exact:true})).toBeEnabled();await dialog.getByRole('button',{name:'Add project',exact:true}).click();await expect(dialog).toHaveCount(0);await expect(page.getByRole('combobox',{name:'Choose project',exact:true})).toHaveAttribute('data-value',fs.realpathSync(folder));await expect(page.getByRole('combobox',{name:'Checkout mode',exact:true})).toBeDisabled();await page.getByLabel('New session prompt').fill('Plain folder native chat');await choose(page,'Provider','codex');await page.getByLabel('Start session',{exact:true}).click();await expect(page.locator('.session-title h1')).toHaveText('Plain folder native chat');await expect(page.locator('.session-title code')).toHaveText('Folder workspace');await page.getByLabel('Toggle files panel').click();await page.getByRole('treeitem',{name:'README.md',exact:true}).click();await expect(page.getByRole('textbox',{name:'Edit README.md',exact:true})).toContainText('Plain folder');await panel(page,'Diffs');await expect(page.getByText('Git diffs and staging are available in Git projects.',{exact:true})).toBeVisible();await page.getByRole('button',{name:'Home',exact:true}).click();await page.reload();await page.getByLabel('Filter projects',{exact:true}).click();await expect(page.locator(`.select-popover [role=option][data-value="${fs.realpathSync(folder)}"]`)).toBeVisible();await page.keyboard.press('Escape');
  const relative=await request.get('http://127.0.0.1:7455/api/projects/directories?path=../../');expect(relative.status()).toBe(400);const invalid=await request.post('http://127.0.0.1:7455/api/projects',{data:{path:path.join(folder,'README.md')}});expect(invalid.status()).toBe(400);
  }finally{fs.rmSync(folder,{recursive:true,force:true});}
+});
+
+test('New project mirrors device, location and folder navigation with searchable mounted drives',async({page,request})=>{
+ const response=await request.get('http://127.0.0.1:7455/api/projects/locations');expect(response.status()).toBe(200);
+ const locations=(await response.json()).locations as {name:string;path:string}[];
+ expect(locations[0]).toEqual({name:'Home',path:(await import('node:os')).homedir()});
+ const system=locations.find(location=>location.path==='/');expect(system).toBeTruthy();
+ await ready(page);await page.getByLabel('Filter projects',{exact:true}).click();await page.getByRole('button',{name:'New project…',exact:true}).click();
+ const dialog=page.getByRole('dialog',{name:'New project',exact:true});
+ const deviceSearch=dialog.getByRole('combobox',{name:'Search devices'});await expect(deviceSearch).toBeFocused();await deviceSearch.press('Enter');
+ const locationSearch=dialog.getByRole('combobox',{name:'Search locations'});await expect(locationSearch).toBeFocused();
+ await expect(dialog.getByRole('option',{name:'Home',exact:true})).toBeVisible();
+ await expect(dialog.getByRole('option',{name:system!.name,exact:true})).toBeVisible();
+ await locationSearch.fill('no-location-has-this-name');await expect(dialog.getByText('No locations found')).toBeVisible();
+ await locationSearch.fill(system!.name);await locationSearch.press('ArrowRight');
+ const folderSearch=dialog.getByRole('combobox',{name:'Search folders'});await expect(folderSearch).toBeFocused();
+ await expect(dialog.locator('.project-palette-breadcrumb')).toContainText(system!.name);
+ await folderSearch.press('Backspace');await expect(locationSearch).toBeFocused();
+ await locationSearch.press('ArrowLeft');await expect(deviceSearch).toBeFocused();
+ await deviceSearch.press('Enter');await expect(dialog.getByRole('option',{name:'Home',exact:true})).toBeEnabled();await locationSearch.press('Enter');await expect(folderSearch).toBeFocused();
+ await dialog.getByRole('button',{name:'Back',exact:true}).click();await expect(locationSearch).toBeFocused();
+ await page.keyboard.press('Escape');await expect(dialog).toHaveCount(0);
+});
+
+test('deep New project breadcrumbs fold into an anchored keyboard menu',async({page})=>{
+ const os=await import('node:os');const root=fs.mkdtempSync(path.join(os.homedir(),'.openade-picker-crumb-'));
+ const deep=path.join(root,'a','b','c','d','e');fs.mkdirSync(deep,{recursive:true});
+ try{
+  await ready(page);await page.getByLabel('Filter projects',{exact:true}).click();await page.getByRole('button',{name:'New project…',exact:true}).click();
+  const dialog=page.getByRole('dialog',{name:'New project',exact:true});
+  await dialog.getByRole('option',{name:'Local',exact:true}).click();await dialog.getByRole('option',{name:'Home',exact:true}).click();
+  const search=dialog.getByRole('combobox',{name:'Search folders'});await search.fill(deep);await search.press('Enter');
+  const folded=dialog.getByRole('button',{name:'Show hidden folders'});await expect(folded).toBeVisible();await folded.click();
+  const menu=page.getByRole('menu',{name:'Hidden project folders'});await expect(menu).toBeVisible();await expect(menu.getByRole('menuitem',{name:'b',exact:true})).toBeVisible();
+  await page.keyboard.press('Escape');await expect(menu).toHaveCount(0);await expect(folded).toBeFocused();await expect(dialog).toBeVisible();
+  await folded.click();await menu.getByRole('menuitem',{name:'b',exact:true}).click();
+  await expect(dialog.getByRole('button',{name:'b',exact:true})).toBeDisabled();await expect(dialog.getByRole('option',{name:'c',exact:true})).toBeVisible();
+ }finally{fs.rmSync(root,{recursive:true,force:true});}
 });
 
 

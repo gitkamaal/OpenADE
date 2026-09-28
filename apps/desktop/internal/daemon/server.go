@@ -188,6 +188,7 @@ func (d *Daemon) routes() http.Handler {
 	mux.HandleFunc("POST /api/sessions", d.handleCreateSession)
 	mux.HandleFunc("GET /api/projects", d.handleProjects)
 	mux.HandleFunc("GET /api/projects/directories", d.handleProjectDirectories)
+	mux.HandleFunc("GET /api/projects/locations", d.handleProjectLocations)
 	mux.HandleFunc("POST /api/projects", d.handleRegisterProject)
 	mux.HandleFunc("POST /api/projects/rename", d.handleRenameProject)
 	mux.HandleFunc("POST /api/projects/remove", d.handleRemoveProject)

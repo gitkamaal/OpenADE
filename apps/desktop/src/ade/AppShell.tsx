@@ -411,7 +411,7 @@ function Home({ activeView, projects, projectNames, removedProjects, meta, prefe
   const [repo, setRepo] = useState(draft.current.repo ?? projects[0] ?? "");
   const [projectless,setProjectless]=useState((draft.current.repo ?? projects[0] ?? "")==="");
   const [agent, setAgent] = useState(draft.current.agent ?? preferences.default_agent);
-  const [model,setModel]=useState(draft.current.model??"");const [effort,setEffort]=useState(draft.current.effort??"");const [serviceTier,setServiceTier]=useState(draft.current.serviceTier??"");const [checkout,setCheckout]=useState<"worktree"|"current">(draft.current.checkout==="current"?"current":"worktree");const [branches,setBranches]=useState<string[]>([]);const [gitProject,setGitProject]=useState(true);const [currentBranch,setCurrentBranch]=useState("HEAD");
+  const [model,setModel]=useState(draft.current.model??"");const [effort,setEffort]=useState(draft.current.effort??"");const [serviceTier,setServiceTier]=useState(draft.current.serviceTier??"");const [checkout,setCheckout]=useState<"worktree"|"current">(draft.current.checkout==="current"?"current":"worktree");const [branches,setBranches]=useState<string[]>([]);const [gitProject,setGitProject]=useState(true);const [resolvedProjectPath,setResolvedProjectPath]=useState("");const [currentBranch,setCurrentBranch]=useState("HEAD");
   const [ticket, setTicket] = useState("");
   const [ticketURL, setTicketURL] = useState("");
   const [base, setBase] = useState(draft.current.base??"HEAD");
@@ -434,7 +434,7 @@ function Home({ activeView, projects, projectNames, removedProjects, meta, prefe
     if ((preferredAvailable === false || preferences.disabled_providers.includes(preferences.default_agent)) && installed) setAgent(meta?.agents.find(item=>item.available&&!preferences.disabled_providers.includes(item.id))?.id ?? "shell");
   }, [meta, preferences.default_agent, preferences.disabled_providers]);
 
-  useEffect(()=>{if(!activeView)return;if(!repo.trim()){setBranches([]);setGitProject(false);return;}let stale=false;const timer=window.setTimeout(()=>void getBranches(repo).then(value=>{if(!stale){setGitProject(true);setBranches(value.branches);setCurrentBranch(value.current||"HEAD");}}).catch(async reason=>{try{const folder=await getProjectDirectories(repo);if(!stale){setBranches([]);setGitProject(folder.git!==false);if(folder.git===false)setCheckout("current");else onError(reason instanceof Error?reason.message:String(reason));}}catch{if(!stale)onError(reason instanceof Error?reason.message:String(reason));}}),250);return()=>{stale=true;clearTimeout(timer);};},[repo,projectless,activeView]);
+  useEffect(()=>{if(!activeView)return;setResolvedProjectPath("");if(!repo.trim()){setBranches([]);setGitProject(false);return;}let stale=false;const timer=window.setTimeout(()=>void getBranches(repo).then(value=>{if(!stale){setGitProject(true);setBranches(value.branches);setCurrentBranch(value.current||"HEAD");setResolvedProjectPath(repo);}}).catch(async reason=>{try{const folder=await getProjectDirectories(repo);if(!stale){setBranches([]);setGitProject(folder.git!==false);if(folder.git===false)setCheckout("current");else onError(reason instanceof Error?reason.message:String(reason));setResolvedProjectPath(repo);}}catch{if(!stale)onError(reason instanceof Error?reason.message:String(reason));}}),250);return()=>{stale=true;clearTimeout(timer);};},[repo,projectless,activeView]);
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (!activeView||starting.current||(!prompt.trim()&&!attachments.images.length)||attachments.uploading||(!repo.trim()&&!projectless)) return;
@@ -442,7 +442,12 @@ function Home({ activeView, projects, projectNames, removedProjects, meta, prefe
     setBusy(true);
     onError(null);
     try {
-      const session = await createSession({ auto_title:true,title: (prompt.trim()||"Image conversation").split("\n")[0].slice(0, 68), prompt: withAttachments(prompt,attachments.images), agent,model,effort,service_tier:serviceTier,checkout, mode: preferredSessionMode(preferences, agent), repo_root: repo.trim(), base_branch: base.trim() || "HEAD", ticket_key: ticket.trim(), ticket_url: ticketURL.trim() });
+      let effectiveCheckout=gitProject?checkout:"current";
+      if(repo.trim()&&resolvedProjectPath!==repo){
+        try{effectiveCheckout=(await getProjectDirectories(repo)).git===false?"current":checkout;}
+        catch{/* Let session creation report the invalid or inaccessible path. */}
+      }
+      const session = await createSession({ auto_title:true,title: (prompt.trim()||"Image conversation").split("\n")[0].slice(0, 68), prompt: withAttachments(prompt,attachments.images), agent,model,effort,service_tier:serviceTier,checkout:effectiveCheckout, mode: preferredSessionMode(preferences, agent), repo_root: repo.trim(), base_branch: base.trim() || "HEAD", ticket_key: ticket.trim(), ticket_url: ticketURL.trim() });
       const submittedIDs=new Set(originalImages.map(image=>image.id));attachments.setImages(current=>current.filter(image=>!submittedIDs.has(image.id)));
       sessionStorage.removeItem("openade-template");
       const remainingDraft={...latestDraft.current,prompt:latestDraft.current.prompt===originalPrompt?"":latestDraft.current.prompt};

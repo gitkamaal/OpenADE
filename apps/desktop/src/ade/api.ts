@@ -407,6 +407,7 @@ export const updateSessionDetails=(id:string,details:{title?:string;instructions
 
 export interface ProjectDirectoryListing{path:string;parent:string;entries:{name:string;path:string}[];git?:boolean;limited?:boolean}
 export const getProjectDirectories=(path="")=>request<ProjectDirectoryListing>(`/api/projects/directories?path=${encodeURIComponent(path)}`);
+export const getProjectLocations=()=>request<{locations:{name:string;path:string}[]}>("/api/projects/locations");
 export const registerProject=(path:string)=>request<{path:string}>("/api/projects",{method:"POST",body:JSON.stringify({path})});
 export const renameProject=(path:string,name:string)=>request<{path:string;name:string}>("/api/projects/rename",{method:"POST",body:JSON.stringify({path,name})});
 export const removeProject=(path:string,session_ids:string[])=>request<{path:string;removed_sessions:number;cleanup_warning?:string}>("/api/projects/remove",{method:"POST",body:JSON.stringify({path,session_ids,confirm:true})});
