@@ -3,14 +3,14 @@ import fs from "node:fs";
 import path from "node:path";
 import {spawn} from "node:child_process";
 import net from "node:net";
-import {test,create,daemon,tmp,status,ready,open,token} from "./helpers";
+import {test,create,daemon,tmp,status,ready,open,token,choose} from "./helpers";
 
-type Frame={method?:string;params?:Record<string,unknown>;result?:Record<string,unknown>;prompt?:string;sessionId?:string};
+type Frame={method?:string;params?:Record<string,unknown>;result?:Record<string,unknown>;prompt?:string;sessionId?:string;model?:string;effort?:string};
 const log=(id:string):Frame[]=>fs.readFileSync(path.join(tmp,"provider-home/acp-events",id+".jsonl"),"utf8").trim().split("\n").map(line=>JSON.parse(line));
 const freePort=()=>new Promise<number>((resolve,reject)=>{const server=net.createServer();server.once("error",reject);server.listen(0,"127.0.0.1",()=>{const address=server.address();if(!address||typeof address==="string"){server.close();reject(Error("No local port"));return;}server.close(()=>resolve(address.port));});});
 
 test("all five pinned-source ACP entry points stream into independent native chats",async({request,page})=>{
-  const rejected=await request.post(`${daemon}/api/sessions`,{data:{title:"Unsupported ACP model",prompt:"Do not send",agent:"grok",mode:"chat",repo_root:"",model:"unadvertised"}});
+  const rejected=await request.post(`${daemon}/api/sessions`,{data:{title:"Invalid ACP model",prompt:"Do not send",agent:"grok",mode:"chat",repo_root:"",model:"invalid model identifier"}});
   expect(rejected.status()).toBe(400);
   const meta=(await(await request.get(`${daemon}/api/meta`)).json()).agents as {id:string;path:string;capabilities:{transport:string;native_chat:boolean;resume:boolean}}[];
   for(const agent of ["grok","devin","hermes","pi","antigravity"]){
@@ -40,6 +40,48 @@ test("all five pinned-source ACP entry points stream into independent native cha
     expect((await request.delete(`${daemon}/api/sessions/${session.id}`)).status()).toBe(204);
     await expect.poll(async()=>((await(await request.get(`${daemon}/api/diagnostics`)).json()).provider_connections)).toBeLessThanOrEqual(baseline);
   }
+});
+
+test("advertised ACP model and reasoning selections reach the provider before each prompt",async({request,page})=>{
+  const grokCatalog=await request.get(`${daemon}/api/providers/grok/models`);
+  expect(grokCatalog.status()).toBe(200);
+  const grokModels=(await grokCatalog.json()).models as {id:string;efforts:string[]}[];
+  expect(grokModels.map(item=>item.id)).toEqual(["grok-auto","grok-pro"]);
+  expect(grokModels[0].efforts).toEqual([]);
+  const rejected=await request.post(`${daemon}/api/sessions`,{data:{title:"Unadvertised model",prompt:"Never sent",agent:"grok",mode:"chat",repo_root:"",model:"not-offered"}});
+  expect(rejected.status()).toBe(400);
+  const devinCatalog=(await(await request.get(`${daemon}/api/providers/devin/models`)).json()).models as {id:string;efforts:string[]}[];
+  expect(devinCatalog.map(item=>item.id)).toEqual(["devin-default","devin-pro"]);
+  expect(devinCatalog[0].efforts).toEqual(["low","high"]);
+  const grok=await create(request,"Selected Grok",{agent:"grok",model:"grok-pro"});
+  await expect.poll(()=>status(request,grok.id)).toBe("completed");
+  expect(log(grok.id).filter(frame=>frame.method==="session/set_model")).toHaveLength(1);
+  expect(log(grok.id).find(frame=>frame.prompt)?.model).toBe("grok-pro");
+  const devin=await create(request,"Selected Devin",{agent:"devin",model:"devin-pro",effort:"high"});
+  await expect.poll(()=>status(request,devin.id)).toBe("completed");
+  const frames=log(devin.id);
+  expect(frames.filter(frame=>frame.method==="session/set_config_option").map(frame=>frame.params?.configId)).toEqual(["model-choice","thought-level"]);
+  expect(frames.find(frame=>frame.prompt)).toMatchObject({model:"devin-pro",effort:"high"});
+  const unsupported=await request.post(`${daemon}/api/sessions/${devin.id}/model`,{data:{model:"unadvertised",effort:"",service_tier:""}});
+  expect(unsupported.status()).toBe(409);
+  const falseReset=await request.post(`${daemon}/api/sessions/${devin.id}/model`,{data:{model:"",effort:"",service_tier:""}});
+  expect(falseReset.status()).toBe(409);
+  const change=await request.post(`${daemon}/api/sessions/${devin.id}/model`,{data:{model:"devin-default",effort:"low",service_tier:""}});
+  expect(change.status(),await change.text()).toBe(200);
+  expect((await request.post(`${daemon}/api/sessions/${devin.id}/messages`,{data:{text:"New selection"}})).status()).toBe(202);
+  await expect.poll(async()=>{const current=(await(await request.get(`${daemon}/api/sessions/${devin.id}`)).json());return current.status==="completed"?current.generation:0;}).toBe(2);
+  expect(log(devin.id).filter(frame=>frame.prompt).at(-1)).toMatchObject({model:"devin-default",effort:"low"});
+  await ready(page);await choose(page,"Choose project","");await choose(page,"Provider","grok");
+  await page.getByLabel("Choose model").click();
+  await expect(page.getByRole("option",{name:/Grok Pro/})).toBeVisible();
+  await page.getByRole("option",{name:/Grok Pro/}).click();
+  await expect(page.getByLabel("Choose model")).toContainText("Grok Pro");
+  await page.getByLabel("Choose model").click();
+  await expect(page.getByRole("option",{name:/Agent default/})).toHaveCount(0);
+  await page.getByRole("option",{name:/Grok Auto/}).click();
+  await expect(page.getByLabel("Choose model")).toContainText("Grok Auto");
+  expect((await request.delete(`${daemon}/api/sessions/${grok.id}`)).status()).toBe(204);
+  expect((await request.delete(`${daemon}/api/sessions/${devin.id}`)).status()).toBe(204);
 });
 
 test("ACP permission choices are visible, explicit and sent to the owning session",async({request,page})=>{

@@ -65,6 +65,7 @@ type acpConversation struct {
 	promptID    string
 	completion  chan string
 	warning     string
+	state       acpSessionState
 }
 
 func (m *SessionManager) acpClient(id string) *acpConversation {
@@ -130,6 +131,9 @@ func (m *SessionManager) startACPTurn(session Session) error {
 		if err != nil {
 			return err
 		}
+	}
+	if err := c.applySelection(session.Model, session.Effort); err != nil {
+		return err
 	}
 	var startTree string
 	if session.Branch != "" {
@@ -284,9 +288,7 @@ func (m *SessionManager) startACPClient(session Session) (*acpConversation, erro
 		delete(params, "sessionId")
 		data, err = rpc.request(ctx, "session/new", params)
 	}
-	var result struct {
-		SessionID string `json:"sessionId"`
-	}
+	var result acpSessionState
 	if err == nil {
 		err = json.Unmarshal(data, &result)
 	}
@@ -296,6 +298,7 @@ func (m *SessionManager) startACPClient(session Session) (*acpConversation, erro
 	}
 	c.mu.Lock()
 	c.providerID = result.SessionID
+	c.state = result
 	closed := c.closed
 	c.mu.Unlock()
 	if closed {
@@ -466,7 +469,7 @@ func (c *acpConversation) handle(frame providerRPCFrame) {
 		}
 		return
 	}
-	if frame.Method != "session/update" || c.live == nil {
+	if frame.Method != "session/update" {
 		return
 	}
 	var update struct {
@@ -477,19 +480,29 @@ func (c *acpConversation) handle(frame providerRPCFrame) {
 		return
 	}
 	var body struct {
-		Kind    string                      `json:"sessionUpdate"`
-		Content struct{ Type, Text string } `json:"content"`
-		Title   string                      `json:"title"`
-		Status  string                      `json:"status"`
-		ToolID  string                      `json:"toolCallId"`
-		Used    *uint64                     `json:"used"`
-		Size    *uint64                     `json:"size"`
-		Max     *uint64                     `json:"max"`
-		Limit   *uint64                     `json:"limit"`
-		Window  *uint64                     `json:"contextWindow"`
-		Window2 *uint64                     `json:"context_window"`
+		Kind          string                      `json:"sessionUpdate"`
+		Content       struct{ Type, Text string } `json:"content"`
+		Title         string                      `json:"title"`
+		Status        string                      `json:"status"`
+		ToolID        string                      `json:"toolCallId"`
+		Used          *uint64                     `json:"used"`
+		Size          *uint64                     `json:"size"`
+		Max           *uint64                     `json:"max"`
+		Limit         *uint64                     `json:"limit"`
+		Window        *uint64                     `json:"contextWindow"`
+		Window2       *uint64                     `json:"context_window"`
+		ConfigOptions []acpConfigOption           `json:"configOptions"`
 	}
 	if json.Unmarshal(update.Update, &body) != nil {
+		return
+	}
+	if body.Kind == "config_option_update" {
+		if body.ConfigOptions != nil {
+			c.state.ConfigOptions = body.ConfigOptions
+		}
+		return
+	}
+	if c.live == nil {
 		return
 	}
 	switch body.Kind {

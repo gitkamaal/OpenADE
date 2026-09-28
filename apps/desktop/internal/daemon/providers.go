@@ -185,22 +185,42 @@ func (d *Daemon) handleModel(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, err)
 		return
 	}
-	if err := validateModel(input.Model, input.Effort); err != nil {
-		writeError(w, 400, err)
-		return
-	}
 	session, err := d.store.GetSession(r.PathValue("id"))
 	if err != nil {
 		writeStoreError(w, err)
+		return
+	}
+	if isACPAgent(session.Agent) {
+		err = validateACPModel(input.Model, input.Effort)
+	} else {
+		err = validateModel(input.Model, input.Effort)
+	}
+	if err != nil {
+		writeError(w, 400, err)
 		return
 	}
 	if err = validateServiceTier(session.Agent, input.ServiceTier); err != nil {
 		writeError(w, 400, err)
 		return
 	}
-	if isACPAgent(session.Agent) && (input.Model != "" || input.Effort != "" || input.ServiceTier != "") {
-		writeError(w, 409, fmt.Errorf("this ACP adapter does not expose model or effort selection yet"))
-		return
+	if isACPAgent(session.Agent) {
+		// An empty value means the agent's initial default, but ACP has no
+		// generic reset RPC. Do not claim a reset while the live agent keeps
+		// the previously selected wire value. Users can choose an advertised
+		// default model or effort explicitly.
+		if (session.Model != "" && input.Model == "") || (session.Effort != "" && input.Effort == "") {
+			writeError(w, 409, fmt.Errorf("choose an advertised ACP model and effort to replace the current selection"))
+			return
+		}
+		state, catalogErr := d.sessions.acpSelectionState(r.Context(), session, false)
+		if catalogErr != nil {
+			writeError(w, 502, catalogErr)
+			return
+		}
+		if selectionErr := state.validateSelection(input.Model, input.Effort); selectionErr != nil {
+			writeError(w, 409, selectionErr)
+			return
+		}
 	}
 	if isClaudeAgent(session.Agent) && input.Effort == "ultra" {
 		writeError(w, 400, fmt.Errorf("unsupported Claude reasoning effort"))

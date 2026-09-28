@@ -73,23 +73,28 @@ type SessionManager struct {
 	providerMu    sync.Mutex
 	codex         map[string]*codexConversation
 	acp           map[string]*acpConversation
+	acpCatalogMu  sync.Mutex
+	acpCatalog    map[string]acpCatalogEntry
 	deletions     *deletionFence
 }
 
 func NewSessionManager(store *Store, dataDir string, deletions *deletionFence) *SessionManager {
 	titleCtx, titleCancel := context.WithCancel(context.Background())
-	return &SessionManager{store: store, dataDir: dataDir, titleCtx: titleCtx, titleCancel: titleCancel, titling: make(map[string]struct{}), live: make(map[string]*liveSession), codex: make(map[string]*codexConversation), acp: make(map[string]*acpConversation), deletions: deletions}
+	return &SessionManager{store: store, dataDir: dataDir, titleCtx: titleCtx, titleCancel: titleCancel, titling: make(map[string]struct{}), live: make(map[string]*liveSession), codex: make(map[string]*codexConversation), acp: make(map[string]*acpConversation), acpCatalog: make(map[string]acpCatalogEntry), deletions: deletions}
 }
 
 func (m *SessionManager) Create(ctx context.Context, request CreateSessionRequest) (Session, error) {
-	if isACPAgent(request.Agent) && (request.Model != "" || request.Effort != "" || request.ServiceTier != "") {
-		return Session{}, fmt.Errorf("this ACP adapter does not expose model or effort selection yet")
-	}
 	if isClaudeAgent(request.Agent) && request.Effort == "ultra" {
 		return Session{}, fmt.Errorf("unsupported Claude reasoning effort")
 	}
-	if err := validateModel(request.Model, request.Effort); err != nil {
-		return Session{}, err
+	var modelErr error
+	if isACPAgent(request.Agent) {
+		modelErr = validateACPModel(request.Model, request.Effort)
+	} else {
+		modelErr = validateModel(request.Model, request.Effort)
+	}
+	if modelErr != nil {
+		return Session{}, modelErr
 	}
 	if err := validateServiceTier(request.Agent, request.ServiceTier); err != nil {
 		return Session{}, err
@@ -105,6 +110,15 @@ func (m *SessionManager) Create(ctx context.Context, request CreateSessionReques
 	}
 	if request.Agent == "" {
 		request.Agent = "claude"
+	}
+	if isACPAgent(request.Agent) && (request.Model != "" || request.Effort != "") {
+		state, catalogErr := m.probeACPState(ctx, request.Agent, false)
+		if catalogErr != nil {
+			return Session{}, catalogErr
+		}
+		if selectionErr := state.validateSelection(request.Model, request.Effort); selectionErr != nil {
+			return Session{}, selectionErr
+		}
 	}
 	if request.Mode == "" {
 		request.Mode = "chat"

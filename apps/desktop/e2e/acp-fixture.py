@@ -5,6 +5,7 @@ import threading
 import time
 
 sid = os.environ.get("OPENADE_SESSION_ID", "fixture")
+agent = os.path.basename(sys.argv[0])
 provider_session = "acp-" + sid
 home = os.environ["OPENADE_PROVIDER_HOME"]
 log_dir = os.path.join(home, "acp-events")
@@ -14,6 +15,24 @@ write_lock = threading.Lock()
 cancelled = threading.Event()
 permission_reply = threading.Event()
 permission_choice = [""]
+current_model = ["grok-auto" if agent == "grok" else "devin-default"]
+current_effort = ["low"]
+
+
+def config_options():
+    return [
+        {"id": "model-choice", "name": "Model", "type": "select", "category": "model", "currentValue": current_model[0], "options": [{"value": "devin-default", "name": "Devin Default"}, {"value": "devin-pro", "name": "Devin Pro"}]},
+        {"id": "thought-level", "name": "Reasoning", "type": "select", "category": "thought_level", "currentValue": current_effort[0], "options": [{"value": "low", "name": "Low"}, {"value": "high", "name": "High"}]},
+        {"id": "fast-mode", "name": "Fast mode", "type": "boolean", "category": "model_config", "currentValue": False},
+    ]
+
+
+def session_result():
+    if agent == "grok":
+        return {"sessionId": provider_session, "models": {"currentModelId": current_model[0], "availableModels": [{"modelId": "grok-auto", "name": "Grok Auto"}, {"modelId": "grok-pro", "name": "Grok Pro", "description": "Synthetic advanced model"}]}}
+    if agent == "devin":
+        return {"sessionId": provider_session, "configOptions": config_options()}
+    return {"sessionId": provider_session}
 
 
 def emit(value):
@@ -33,7 +52,7 @@ def update(kind, **fields):
 
 def prompt_turn(request_id, params):
     text = "".join(block.get("text", "") for block in params.get("prompt", []) if block.get("type") == "text")
-    record({"prompt": text, "sessionId": params.get("sessionId"), "promptId": params.get("_meta", {}).get("promptId")})
+    record({"prompt": text, "sessionId": params.get("sessionId"), "promptId": params.get("_meta", {}).get("promptId"), "model": current_model[0], "effort": current_effort[0]})
     emit({"method": "session/update", "params": {"sessionId": "wrong-session", "update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "WRONG SESSION"}}}})
     update("agent_thought_chunk", content={"type": "text", "text": "thinking"})
     if "ask-permission" in text:
@@ -66,12 +85,33 @@ for line in sys.stdin:
     if method == "initialize":
         emit({"id": request_id, "result": {"protocolVersion": 1, "agentInfo": {"name": "fixture-acp"}, "agentCapabilities": {"loadSession": True}}})
     elif method == "session/new":
-        emit({"id": request_id, "result": {"sessionId": provider_session}})
+        emit({"id": request_id, "result": session_result()})
     elif method == "session/load":
         if frame.get("params", {}).get("sessionId") != provider_session:
             emit({"id": request_id, "error": {"code": -32602, "message": "unknown session"}})
         else:
-            emit({"id": request_id, "result": {"sessionId": provider_session}})
+            emit({"id": request_id, "result": session_result()})
+    elif method == "session/set_model":
+        wanted = frame.get("params", {}).get("modelId")
+        if agent == "grok" and wanted in ("grok-auto", "grok-pro"):
+            current_model[0] = wanted
+            emit({"id": request_id, "result": {"models": session_result()["models"]}})
+        else:
+            emit({"id": request_id, "error": {"code": -32602, "message": "unsupported model"}})
+    elif method == "session/set_config_option":
+        params = frame.get("params", {})
+        config_id, wanted = params.get("configId"), params.get("value")
+        if agent != "devin":
+            emit({"id": request_id, "error": {"code": -32601, "message": "unsupported config"}})
+        elif config_id == "model-choice" and wanted in ("devin-default", "devin-pro"):
+            current_model[0] = wanted
+            update("config_option_update", configOptions=config_options())
+            emit({"id": request_id, "result": {"configOptions": config_options()}})
+        elif config_id == "thought-level" and wanted in ("low", "high"):
+            current_effort[0] = wanted
+            emit({"id": request_id, "result": {"configOptions": config_options()}})
+        else:
+            emit({"id": request_id, "error": {"code": -32602, "message": "unsupported config choice"}})
     elif method == "session/prompt":
         cancelled.clear()
         threading.Thread(target=prompt_turn, args=(request_id, frame.get("params", {})), daemon=True).start()

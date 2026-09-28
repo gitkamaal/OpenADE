@@ -156,6 +156,7 @@ func (d *Daemon) routes() http.Handler {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "pid": os.Getpid(), "version": "0.4.0-go", "engine_protocol": EngineProtocol, "profile": ProfileID(d.config.DataDir)})
 	})
 	mux.HandleFunc("GET /api/meta", d.handleMeta)
+	mux.HandleFunc("GET /api/providers/{agent}/models", d.handleACPModels)
 	mux.HandleFunc("GET /api/title-settings", d.handleTitleSettings)
 	mux.HandleFunc("PATCH /api/title-settings", d.handleTitleSettings)
 	mux.HandleFunc("GET /api/state", d.handleSnapshot)

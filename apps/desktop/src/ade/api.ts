@@ -188,6 +188,7 @@ export async function health(): Promise<boolean> {
 }
 
 export const getMeta = () => request<Meta>("/api/meta");
+export const getACPModels = async (agent:string,refresh=false) => (await request<{models:ModelChoice[]}>(`/api/providers/${encodeURIComponent(agent)}/models${refresh?"?refresh=1":""}`)).models ?? [];
 export interface TitleSettings { harness: string; model: string }
 export const getTitleSettings = () => request<TitleSettings>("/api/title-settings");
 export const setTitleSettings = (settings: TitleSettings) => request<TitleSettings>("/api/title-settings", { method: "PATCH", body: JSON.stringify(settings) });
