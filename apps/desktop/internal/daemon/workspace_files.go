@@ -134,36 +134,3 @@ func (d *Daemon) handleFile(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{"path": path, "content": string(data)})
 }
-
-type historyCommit struct {
-	SHA     string `json:"sha"`
-	Parents string `json:"parents"`
-	Author  string `json:"author"`
-	Date    string `json:"date"`
-	Subject string `json:"subject"`
-}
-
-func (d *Daemon) handleHistory(w http.ResponseWriter, r *http.Request) {
-	session, err := d.store.GetSession(r.PathValue("id"))
-	if err != nil {
-		writeStoreError(w, err)
-		return
-	}
-	output, err := gitOutput(r.Context(), session.WorktreePath, "log", "-n", "100", "--format=%H%x1f%P%x1f%an%x1f%aI%x1f%s%x1e")
-	if err != nil {
-		writeError(w, 500, err)
-		return
-	}
-	commits := []historyCommit{}
-	for _, record := range strings.Split(output, "\x1e") {
-		fields := strings.Split(strings.TrimSpace(record), "\x1f")
-		if len(fields) == 5 {
-			commits = append(commits, historyCommit{SHA: fields[0], Parents: fields[1], Author: fields[2], Date: fields[3], Subject: fields[4]})
-		}
-	}
-	branch, _ := gitOutput(r.Context(), session.WorktreePath, "branch", "--show-current")
-	if branch == "" {
-		branch = "HEAD"
-	}
-	writeJSON(w, 200, map[string]any{"branch": branch, "commits": commits})
-}

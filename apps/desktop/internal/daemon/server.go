@@ -224,6 +224,7 @@ func (d *Daemon) routes() http.Handler {
 	mux.HandleFunc("GET /api/sessions/{id}/file", d.handleFile)
 	mux.HandleFunc("PUT /api/sessions/{id}/file", d.handleFile)
 	mux.HandleFunc("GET /api/sessions/{id}/history", d.handleHistory)
+	mux.HandleFunc("POST /api/sessions/{id}/history/fetch", d.handleHistoryFetch)
 	mux.HandleFunc("GET /api/sessions/{id}/turns", d.handleTurns)
 	mux.HandleFunc("POST /api/sessions/{id}/commit", d.handleCommit)
 	mux.HandleFunc("POST /api/sessions/{id}/model", d.handleModel)

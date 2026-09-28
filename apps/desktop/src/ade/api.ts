@@ -379,8 +379,11 @@ export function relativeTime(value: string): string {
   return `${Math.floor(hours / 24)}d`;
 }
 
-export interface GitCommit { sha:string; parents:string; author:string; date:string; subject:string; }
-export const getHistory = (id:string) => request<{branch:string;commits:GitCommit[]}>(`/api/sessions/${id}/history`);
+export interface GitHistoryRef {kind:"branch"|"remote"|"tag";label:string}
+export interface GitCommit { sha:string; parents:string; author:string; email:string; date:string; subject:string; refs:GitHistoryRef[]; }
+export interface GitHistoryPage {branch:string;commits:GitCommit[];branch_tips:GitCommit[];head_sha:string;next_cursor:number|null;total_count:number|null;head_commit_count:number|null;comparison?:{base:string;ahead:number;behind:number}}
+export const getHistory = (id:string,cursor=0,q="") => request<GitHistoryPage>(`/api/sessions/${id}/history?${new URLSearchParams({cursor:String(cursor),q})}`);
+export const fetchHistory = (id:string) => request<{ok:boolean}>(`/api/sessions/${id}/history/fetch`,{method:"POST"});
 export const getFile = (id:string,path:string) => request<{path:string;content:string}>(`/api/sessions/${id}/file?path=${encodeURIComponent(path)}`);
 export const saveFile = (id:string,path:string,content:string,original:string) => request<{path:string;content:string}>(`/api/sessions/${id}/file?path=${encodeURIComponent(path)}`,{method:"PUT",body:JSON.stringify({content,original})});
 
