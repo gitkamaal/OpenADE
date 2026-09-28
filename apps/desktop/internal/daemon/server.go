@@ -305,10 +305,12 @@ func cors(next http.Handler) http.Handler {
 
 func (d *Daemon) handleMeta(w http.ResponseWriter, r *http.Request) {
 	agents := []map[string]any{}
-	for _, name := range []string{"claude", "codex", "grok", "devin", "hermes", "pi", "antigravity", "copilot", "opencode", "shell"} {
+	for _, name := range []string{"claude", "codex", "cursor", "grok", "devin", "hermes", "pi", "antigravity", "copilot", "opencode", "shell"} {
 		path, err := resolveProgram(name)
 		if isACPAgent(name) {
 			path, _, err = resolveACPProgram(name)
+		} else if name == "cursor" {
+			path, err = cursorRuntimeAvailable(d.config.DataDir)
 		}
 		capabilities := providerCapabilities(name)
 		if name == "codex" && err == nil && supportsCodexServer(path) {
@@ -317,7 +319,14 @@ func (d *Daemon) handleMeta(w http.ResponseWriter, r *http.Request) {
 			capabilities.Usage = true
 			capabilities.Transport = "app-server-stdio"
 		}
-		agents = append(agents, map[string]any{"id": name, "available": err == nil, "path": path, "capabilities": capabilities, "models": providerModels(name)})
+		entry := map[string]any{"id": name, "available": err == nil, "path": path, "capabilities": capabilities, "models": providerModels(name)}
+		if name == "cursor" {
+			entry["adapter_version"] = cursorSDKVersion
+			if _, overridden, _ := cursorOverride(); overridden {
+				entry["adapter_version"] = "custom override (unverified)"
+			}
+		}
+		agents = append(agents, entry)
 	}
 	_, ghErr := resolveProgram("gh")
 	writeJSON(w, http.StatusOK, map[string]any{"agents": agents, "github_available": ghErr == nil, "data_dir": d.config.DataDir})

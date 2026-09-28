@@ -389,6 +389,10 @@ func (m *SessionManager) probeACPState(ctx context.Context, agent string, refres
 
 func (d *Daemon) handleACPModels(w http.ResponseWriter, r *http.Request) {
 	agent := r.PathValue("agent")
+	if agent == "cursor" {
+		d.handleCursorModels(w, r)
+		return
+	}
 	if !isACPAgent(agent) {
 		writeError(w, http.StatusNotFound, fmt.Errorf("unknown ACP provider"))
 		return

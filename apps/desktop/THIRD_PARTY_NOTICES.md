@@ -14,7 +14,9 @@ License 1.1. The full notice is retained in `licenses/Geist-OFL.txt`.
 
 Icons use the existing Phosphor React package and its MIT license.
 
-The Claude, OpenAI, Grok, Devin, Hermes, Pi, and Antigravity provider marks are adapted from Zeron’s MIT-licensed UI assets; the marks identify their respective providers. Gruvbox palette values follow Zeron’s bundled Gruvbox theme mapping.
+The Claude, OpenAI, Cursor, Grok, Devin, Hermes, Pi, and Antigravity provider marks are adapted from Zeron’s MIT-licensed UI assets; the marks identify their respective providers. Gruvbox palette values follow Zeron’s bundled Gruvbox theme mapping.
+
+The Cursor JSONL shim adapts Zeron's MIT-licensed `crates/harness/src/cursor/shim.mjs` for OpenADE. Its notice is retained beside the shim in `internal/daemon/cursor_adapter/LICENSE.zeron`. The pinned `@cursor/sdk` package is installed separately from npm on first use and is not bundled in this repository or app archive.
 
 The macOS Frosted window material adapts GPUI's Apache-2.0 macOS rendering
 recipe (Zed Industries, Inc., 2022-2025; zeronsh/zui revision

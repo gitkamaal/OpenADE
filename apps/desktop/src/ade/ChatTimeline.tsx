@@ -166,5 +166,5 @@ function activityIcon(activity: ChatActivity) {
 }
 
 function agentLabel(agent: string): string {
-  return ({ claude: "Claude Code", codex: "Codex CLI", copilot: "Copilot", opencode: "OpenCode" } as Record<string, string>)[agent] ?? agent;
+  return ({ claude: "Claude Code", codex: "Codex CLI", cursor: "Cursor", copilot: "Copilot", opencode: "OpenCode" } as Record<string, string>)[agent] ?? agent;
 }

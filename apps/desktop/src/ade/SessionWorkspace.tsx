@@ -126,7 +126,7 @@ export function SessionWorkspace({ activeView=true, session, projectLabel, prefe
   const mountedRef = useRef(false);
   const focusTimerRef = useRef<number | undefined>(undefined);
   const active = ["running", "starting", "waiting"].includes(session.status);
-  const resumable = ["claude", "claude-code", "codex", "codex-cli", "grok", "devin", "hermes", "pi", "antigravity"].includes(session.agent) && !active;
+  const resumable = ["claude", "claude-code", "codex", "codex-cli", "cursor", "grok", "devin", "hermes", "pi", "antigravity"].includes(session.agent) && !active;
   const chatCapable = session.agent !== "shell" && !tuiMode;
   const canMessage = chatCapable && (active || resumable);
 
@@ -476,5 +476,5 @@ function TicketPanel({ ticket, session }: { ticket: Ticket | null; session: Sess
 }
 
 function agentLabel(agent: string): string {
-  return ({ claude: "Claude Code", codex: "Codex CLI", grok: "Grok", devin: "Devin", hermes: "Hermes", pi: "Pi", antigravity: "Antigravity", copilot: "Copilot", opencode: "OpenCode" } as Record<string, string>)[agent] ?? agent;
+  return ({ claude: "Claude Code", codex: "Codex CLI", cursor: "Cursor", grok: "Grok", devin: "Devin", hermes: "Hermes", pi: "Pi", antigravity: "Antigravity", copilot: "Copilot", opencode: "OpenCode" } as Record<string, string>)[agent] ?? agent;
 }

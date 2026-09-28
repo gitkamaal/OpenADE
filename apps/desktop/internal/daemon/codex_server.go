@@ -182,6 +182,11 @@ func (m *SessionManager) providerState(id string) ProviderState {
 		}
 		c.mu.Unlock()
 	}
+	if c := m.cursorClient(id); c != nil {
+		c.mu.Lock()
+		state.Connected = !c.closed
+		c.mu.Unlock()
+	}
 	sort.Slice(state.Requests, func(i, j int) bool { return state.Requests[i].order < state.Requests[j].order })
 	return state
 }

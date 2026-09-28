@@ -1,0 +1,7 @@
+{
+  "name": "openade-cursor-adapter",
+  "private": true,
+  "type": "module",
+  "version": "1.0.0",
+  "dependencies": {"@cursor/sdk": "1.0.32"}
+}

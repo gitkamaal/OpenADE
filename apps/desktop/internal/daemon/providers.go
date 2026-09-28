@@ -30,6 +30,9 @@ func providerCapabilities(agent string) ProviderCapabilities {
 	if isACPAgent(agent) {
 		return ProviderCapabilities{NativeChat: true, Resume: true, PersistentTurns: true, Interrupt: true, Permissions: true, Usage: true, Transport: "acp-stdio"}
 	}
+	if agent == "cursor" {
+		return ProviderCapabilities{NativeChat: true, Resume: true, PersistentTurns: true, Interrupt: true, Usage: true, Transport: "cursor-sdk-jsonl"}
+	}
 	switch agent {
 	case "claude", "claude-code", "codex", "codex-cli":
 		return ProviderCapabilities{NativeChat: true, DirectTUI: true, Resume: true, Interrupt: true, Transport: "structured-pipe"}
@@ -192,6 +195,8 @@ func (d *Daemon) handleModel(w http.ResponseWriter, r *http.Request) {
 	}
 	if isACPAgent(session.Agent) {
 		err = validateACPModel(input.Model, input.Effort)
+	} else if session.Agent == "cursor" {
+		err = d.sessions.validateCursorSelection(r.Context(), input.Model, input.Effort)
 	} else {
 		err = validateModel(input.Model, input.Effort)
 	}

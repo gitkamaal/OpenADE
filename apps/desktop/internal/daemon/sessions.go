@@ -54,33 +54,37 @@ type liveSession struct {
 	rawPTY            bool
 	codex             *codexConversation
 	acp               *acpConversation
+	cursor            *cursorConversation
 }
 
 type SessionManager struct {
-	store         *Store
-	dataDir       string
-	titleCtx      context.Context
-	titleCancel   context.CancelFunc
-	titleMu       sync.Mutex
-	titleWG       sync.WaitGroup
-	titling       map[string]struct{}
-	titleStopping bool
-	mu            sync.RWMutex
-	queueMu       sync.Mutex
-	surfaceMu     sync.Mutex
-	launchMu      sync.Mutex
-	live          map[string]*liveSession
-	providerMu    sync.Mutex
-	codex         map[string]*codexConversation
-	acp           map[string]*acpConversation
-	acpCatalogMu  sync.Mutex
-	acpCatalog    map[string]acpCatalogEntry
-	deletions     *deletionFence
+	store           *Store
+	dataDir         string
+	titleCtx        context.Context
+	titleCancel     context.CancelFunc
+	titleMu         sync.Mutex
+	titleWG         sync.WaitGroup
+	titling         map[string]struct{}
+	titleStopping   bool
+	mu              sync.RWMutex
+	queueMu         sync.Mutex
+	surfaceMu       sync.Mutex
+	launchMu        sync.Mutex
+	live            map[string]*liveSession
+	providerMu      sync.Mutex
+	codex           map[string]*codexConversation
+	acp             map[string]*acpConversation
+	cursor          map[string]*cursorConversation
+	acpCatalogMu    sync.Mutex
+	acpCatalog      map[string]acpCatalogEntry
+	cursorCatalogMu sync.Mutex
+	cursorCatalog   cursorCatalogEntry
+	deletions       *deletionFence
 }
 
 func NewSessionManager(store *Store, dataDir string, deletions *deletionFence) *SessionManager {
 	titleCtx, titleCancel := context.WithCancel(context.Background())
-	return &SessionManager{store: store, dataDir: dataDir, titleCtx: titleCtx, titleCancel: titleCancel, titling: make(map[string]struct{}), live: make(map[string]*liveSession), codex: make(map[string]*codexConversation), acp: make(map[string]*acpConversation), acpCatalog: make(map[string]acpCatalogEntry), deletions: deletions}
+	return &SessionManager{store: store, dataDir: dataDir, titleCtx: titleCtx, titleCancel: titleCancel, titling: make(map[string]struct{}), live: make(map[string]*liveSession), codex: make(map[string]*codexConversation), acp: make(map[string]*acpConversation), cursor: make(map[string]*cursorConversation), acpCatalog: make(map[string]acpCatalogEntry), deletions: deletions}
 }
 
 func (m *SessionManager) Create(ctx context.Context, request CreateSessionRequest) (Session, error) {
@@ -90,6 +94,8 @@ func (m *SessionManager) Create(ctx context.Context, request CreateSessionReques
 	var modelErr error
 	if isACPAgent(request.Agent) {
 		modelErr = validateACPModel(request.Model, request.Effort)
+	} else if request.Agent == "cursor" {
+		modelErr = m.validateCursorSelection(ctx, request.Model, request.Effort)
 	} else {
 		modelErr = validateModel(request.Model, request.Effort)
 	}
@@ -125,6 +131,9 @@ func (m *SessionManager) Create(ctx context.Context, request CreateSessionReques
 	}
 	if request.Mode != "chat" && request.Mode != "tui" {
 		return Session{}, fmt.Errorf("session mode must be chat or tui")
+	}
+	if request.Agent == "cursor" && request.Mode != "chat" {
+		return Session{}, fmt.Errorf("Cursor SDK only supports native chat")
 	}
 	if request.BaseBranch == "" {
 		request.BaseBranch = "HEAD"
@@ -289,6 +298,9 @@ func (m *SessionManager) launch(session Session) error {
 	if session.Mode == "chat" && isACPAgent(session.Agent) {
 		return m.startACPTurn(session)
 	}
+	if session.Mode == "chat" && session.Agent == "cursor" {
+		return m.startCursorTurn(session)
+	}
 	if session.Mode == "tui" && isClaudeAgent(session.Agent) {
 		// Claude's interactive output does not expose its provider session ID.
 		// Give every new direct TUI a stable ID up front so chat/TUI switches can
@@ -418,6 +430,10 @@ func (m *SessionManager) Resume(session Session, prompt string) error {
 	if session.Mode == "chat" && isACPAgent(session.Agent) {
 		session.Prompt = providerPrompt
 		return m.startACPTurn(session)
+	}
+	if session.Mode == "chat" && session.Agent == "cursor" {
+		session.Prompt = providerPrompt
+		return m.startCursorTurn(session)
 	}
 
 	var program string
@@ -953,7 +969,10 @@ func (m *SessionManager) StopAndRelease(id string, timeout time.Duration) error 
 		if err = m.closeCodexAndWait(id, deadline); err != nil {
 			return err
 		}
-		return m.closeACPAndWait(id, deadline)
+		if err = m.closeACPAndWait(id, deadline); err != nil {
+			return err
+		}
+		return m.closeCursorAndWait(id, deadline)
 	}
 	if err := m.interrupt(live, "removed"); err != nil {
 		return err
@@ -963,7 +982,10 @@ func (m *SessionManager) StopAndRelease(id string, timeout time.Duration) error 
 		if err = m.closeCodexAndWait(id, deadline); err != nil {
 			return err
 		}
-		return m.closeACPAndWait(id, deadline)
+		if err = m.closeACPAndWait(id, deadline); err != nil {
+			return err
+		}
+		return m.closeCursorAndWait(id, deadline)
 	case <-time.After(time.Until(deadline)):
 		return fmt.Errorf("provider did not stop in time")
 	}
@@ -995,6 +1017,9 @@ func (m *SessionManager) interrupt(live *liveSession, reason string) error {
 	}
 	if live.acp != nil {
 		return live.acp.interrupt(reason)
+	}
+	if live.cursor != nil {
+		return live.cursor.interrupt(reason)
 	}
 	return stopProcessGroup(live)
 }
@@ -1048,11 +1073,18 @@ func (m *SessionManager) Shutdown(ctx context.Context) {
 	for _, c := range m.acp {
 		acpClients = append(acpClients, c)
 	}
+	cursorClients := make([]*cursorConversation, 0, len(m.cursor))
+	for _, c := range m.cursor {
+		cursorClients = append(cursorClients, c)
+	}
 	m.providerMu.Unlock()
 	for _, c := range clients {
 		c.close()
 	}
 	for _, c := range acpClients {
+		c.close()
+	}
+	for _, c := range cursorClients {
 		c.close()
 	}
 	shutdownLiveProcesses(ctx, lives)

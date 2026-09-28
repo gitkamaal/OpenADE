@@ -53,6 +53,7 @@ import { NewThreadArtwork } from "./NewThreadArtwork";
 const agents = [
   { id: "claude", label: "Claude Code" },
   { id: "codex", label: "Codex" },
+  { id: "cursor", label: "Cursor" },
   { id: "grok", label: "Grok" },
   { id: "devin", label: "Devin" },
   { id: "hermes", label: "Hermes" },
@@ -489,7 +490,7 @@ function Home({ activeView, projects, projectNames, removedProjects, meta, prefe
 }
 
 function preferredSessionMode(preferences: Preferences, agent: string): "chat" | "tui" {
- if(!["claude","claude-code","codex","codex-cli","grok","devin","hermes","pi","antigravity","shell"].includes(agent))return "tui";
+ if(!["claude","claude-code","codex","codex-cli","cursor","grok","devin","hermes","pi","antigravity","shell"].includes(agent))return "tui";
   return preferences.session_surface === "terminal" && ["codex", "codex-cli", "claude", "claude-code"].includes(agent)
     ? "tui"
     : "chat";
@@ -514,7 +515,7 @@ function AgentsPage({ onUse }: { onUse: (prompt: string) => void }) {
 }
 
 function agentLabel(agent: string): string {
-  return ({ claude: "Claude Code", codex: "Codex CLI", grok: "Grok", devin: "Devin", hermes: "Hermes", pi: "Pi", antigravity: "Antigravity", copilot: "Copilot", opencode: "OpenCode", shell: "Local shell" } as Record<string, string>)[agent] ?? agent;
+  return ({ claude: "Claude Code", codex: "Codex CLI", cursor: "Cursor", grok: "Grok", devin: "Devin", hermes: "Hermes", pi: "Pi", antigravity: "Antigravity", copilot: "Copilot", opencode: "OpenCode", shell: "Local shell" } as Record<string, string>)[agent] ?? agent;
 }
 
 function ReviewPage({ projects, projectNames, sessions }: { projects: string[]; projectNames:Record<string,string>; sessions: Session[] }) {
