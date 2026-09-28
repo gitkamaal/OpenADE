@@ -651,8 +651,7 @@ export function Sidebar({
           dialog.sessionIDs ?? [],
         );
         if (result?.cleanup_warning) setNotice(result.cleanup_warning);
-        if (selectedId && (dialog.sessionIDs ?? []).includes(selectedId))
-          onDeleted(selectedId);
+        for (const id of dialog.sessionIDs ?? []) onDeleted(id);
       } else if (dialog.kind === "session") {
         await renameSession(dialog.target, value);
       } else {

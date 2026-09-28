@@ -15,6 +15,7 @@ import { memo, useLayoutEffect, useEffect, useRef, useState } from "react";
 import { Session } from "./api";
 import { ChatActivity, createTranscriptParser } from "./chat-model";
 import { MarkdownMessage } from "./MarkdownMessage";
+import { parseReviewComments } from "./ReviewComments";
 
 const hoverTimestampFormatter=new Intl.DateTimeFormat("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit",hour12:true});
 
@@ -52,16 +53,17 @@ export function ChatTimeline({ session, output, activityExpanded = false }: { se
 }
 
 const UserTurn=memo(function UserTurn({text,id,timestamp}:{text:string;id:string;timestamp?:number}){
- const parsed=parseAttachments(text);
+ const review=parseReviewComments(text);const parsed=parseAttachments(review.text);
  const ref=useRef<HTMLDivElement>(null);
  const [long,setLong]=useState(false),[expanded,setExpanded]=useState(false);
+ const [commentsOpen,setCommentsOpen]=useState(false);
  useLayoutEffect(()=>{
   const node=ref.current;if(!node)return;
   const measure=()=>setLong(node.scrollHeight>parseFloat(getComputedStyle(node).lineHeight)*5+1);
   const observer=new ResizeObserver(measure);observer.observe(node);measure();
   return()=>observer.disconnect();
  },[text]);
- return <article className="chat-user-turn" data-message-id={id}>{parsed.images.length>0&&<section className="user-attachments" aria-label="Message attachments">{parsed.images.map(image=><AttachmentImage key={image.id} image={image}/>)}</section>}{parsed.text&&<div><div ref={ref} className={`user-prompt-text ${!expanded?"folded":""}`}>{parsed.text}</div>{long&&<button className="user-prompt-fold" aria-label={expanded?"Collapse message":"Expand message"} aria-expanded={expanded} onClick={()=>setExpanded(value=>!value)}><CaretDown className={expanded?"expanded":""}/></button>}</div>}<TurnMetadata timestamp={timestamp} text={parsed.text} side="user"/></article>;
+ return <article className="chat-user-turn" data-message-id={id}>{parsed.images.length>0&&<section className="user-attachments" aria-label="Message attachments">{parsed.images.map(image=><AttachmentImage key={image.id} image={image}/>)}</section>}{parsed.text&&<div><div ref={ref} className={`user-prompt-text ${!expanded?"folded":""}`}>{parsed.text}</div>{long&&<button className="user-prompt-fold" aria-label={expanded?"Collapse message":"Expand message"} aria-expanded={expanded} onClick={()=>setExpanded(value=>!value)}><CaretDown className={expanded?"expanded":""}/></button>}</div>}{review.details.length>0&&<div className="message-review-comments"><button aria-label={`${review.details.length} review ${review.details.length===1?"comment":"comments"}`} aria-expanded={commentsOpen} onClick={()=>setCommentsOpen(value=>!value)}>{review.details.length} {review.details.length===1?"comment":"comments"}</button>{commentsOpen&&<ul>{review.details.map((detail,index)=><li key={index}><code>{detail.location}{detail.tag?` (${detail.tag})`:""}</code><span>{detail.body}</span></li>)}</ul>}</div>}<TurnMetadata timestamp={timestamp} text={parsed.text} side="user"/></article>;
 });
 
 const AssistantTurn=memo(function AssistantTurn({

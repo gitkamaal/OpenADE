@@ -22,7 +22,7 @@ const executablePath = !process.env.CI && fs.existsSync(pinnedChromium)
 
 export default defineConfig({
   testDir: "e2e",
-  testMatch: ["ade-lifecycle.spec.ts","zeron-flows.spec.ts","engine-flows.spec.ts","performance.spec.ts","capture.spec.ts","parity-controls.spec.ts","appearance-audit.spec.ts","attachments.spec.ts","projectless.spec.ts","custom-themes.spec.ts","file-previews.spec.ts","message-rail.spec.ts","native-preferences.spec.ts","workspace-preferences.spec.ts","syntax.spec.ts","provider-protocol.spec.ts","project-sidebar.spec.ts","artwork.spec.ts","title-naming.spec.ts"],
+  testMatch: ["ade-lifecycle.spec.ts","zeron-flows.spec.ts","engine-flows.spec.ts","performance.spec.ts","capture.spec.ts","parity-controls.spec.ts","appearance-audit.spec.ts","attachments.spec.ts","projectless.spec.ts","custom-themes.spec.ts","file-previews.spec.ts","message-rail.spec.ts","native-preferences.spec.ts","workspace-preferences.spec.ts","syntax.spec.ts","provider-protocol.spec.ts","project-sidebar.spec.ts","artwork.spec.ts","title-naming.spec.ts","review-comments.spec.ts"],
   timeout: 60_000,
   expect: { timeout: 15_000 },
   workers: 1,

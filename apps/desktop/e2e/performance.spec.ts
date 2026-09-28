@@ -3,7 +3,7 @@ import { expect } from "@playwright/test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { execFileSync } from "node:child_process";
-import { create,daemon,otherRepo,repo,status,tmp } from "./helpers";
+import { create,daemon,open,otherRepo,ready,repo,status,tmp } from "./helpers";
 const percentile=(values:number[],p:number)=>[...values].sort((a,b)=>a-b)[Math.min(values.length-1,Math.ceil(values.length*p)-1)];
 test("repeatable production-client performance with multiple projects and long inactive transcripts",async({browser,request},testInfo)=>{
  test.setTimeout(180000);const baseline=Boolean(process.env.OPENADE_E2E_SOURCE);const sessions=[];
@@ -26,4 +26,17 @@ test("repeatable production-client performance with multiple projects and long i
  const output=process.env.OPENADE_PERF_OUTPUT??testInfo.outputPath("performance.json");fs.mkdirSync(path.dirname(output),{recursive:true});fs.writeFileSync(output,JSON.stringify(report,null,2));await testInfo.attach("performance",{path:output,contentType:"application/json"});
  if(!baseline){expect(domNodes).toBeLessThanOrEqual(80);expect(report.inputToTwoFrames.p95).toBeLessThan(150);expect(report.sessionSwitch.p95).toBeLessThan(600);expect(report.engine.diagnostics.stream_clients).toBe(0);}
  await context.close();
+});
+
+test("large editor keeps review gutters viewport bounded",async({page,request},testInfo)=>{
+ const session=await create(request,"Large editor review performance");await expect.poll(()=>status(request,session.id)).toBe("completed");
+ const lines=Array.from({length:6000},(_,index)=>`export const value${index} = ${index};`);fs.writeFileSync(path.join(session.worktree_path,"large.ts"),lines.join("\n"));
+ await ready(page);await open(page,"Large editor review performance");await page.getByLabel("Toggle files panel").click();await page.getByRole("treeitem",{name:"large.ts",exact:true}).click();await expect(page.getByLabel("Edit large.ts")).toBeVisible();
+ const before=await page.locator(".cm-comment-gutter .cm-add-comment").count();
+ const scrollTwoFramesMs=await page.locator(".code-editor-host .cm-scroller").evaluate(async node=>{const start=performance.now();node.scrollTop=node.scrollHeight;await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));return performance.now()-start;});
+ await expect(page.getByRole("button",{name:"Add or view comment on line 6000"})).toBeVisible();
+ const after=await page.locator(".cm-comment-gutter .cm-add-comment").count();
+ const report={environment:"Production Vite in Chromium; Go daemon and synthetic provider, not native frame timing",fileLines:6000,visibleGutterButtonsBefore:before,visibleGutterButtonsAfter:after,scrollTwoFramesMs};
+ const output=process.env.OPENADE_EDITOR_PERF_OUTPUT??testInfo.outputPath("editor-performance.json");fs.mkdirSync(path.dirname(output),{recursive:true});fs.writeFileSync(output,JSON.stringify(report,null,2));await testInfo.attach("editor-performance",{path:output,contentType:"application/json"});
+ expect(before).toBeLessThan(160);expect(after).toBeLessThan(160);expect(scrollTwoFramesMs).toBeLessThan(1000);
 });

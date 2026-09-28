@@ -1,0 +1,130 @@
+import { expect } from "@playwright/test";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { create, daemon, open, panel, ready, status, test } from "./helpers";
+
+test("diff comments attach to old/new lines, survive navigation and send as a review badge", async ({ page, request }) => {
+  const session = await create(request, "Review a changed README");
+  await expect.poll(() => status(request, session.id)).toBe("completed");
+  fs.writeFileSync(path.join(session.worktree_path, "README.md"), "# Changed README\nfixture\nnew line\n");
+  await ready(page);
+  await open(page, "Review a changed README");
+  await panel(page, "Diffs");
+  const file = page.locator(".diff-document").filter({ hasText: "README.md" });
+  await expect(file).toBeVisible();
+  await file.getByRole("button", { name: "Add comment on old line 1 of README.md" }).click();
+  await page.getByLabel("Comment on README.md line 1").fill("Keep the old heading context");
+  await page.getByRole("button", { name: "Save comment" }).click();
+  await expect(file.getByText("Keep the old heading context")).toBeVisible();
+  await file.getByRole("button", { name: "Edit comment at README.md:1" }).click();
+  await page.getByLabel("Comment on README.md line 1").fill("Explain why the old heading changed");
+  await page.getByRole("button", { name: "Save comment" }).click();
+  await expect(file.getByText("Explain why the old heading changed")).toBeVisible();
+  await file.getByRole("button", { name: "Add comment on new line 3 of README.md" }).click();
+  await page.getByLabel("Comment on README.md line 3").fill("Check the new line");
+  await page.getByRole("button", { name: "Save comment" }).click();
+  await page.getByLabel("Show split diff").click();
+  await expect(file.getByText("Check the new line")).toBeVisible();
+  await expect(page.locator(".review-comment-strip")).toContainText("2 review comments");
+  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await open(page, "Review a changed README");
+  await expect(page.locator(".review-comment-strip")).toContainText("2 review comments");
+  await page.route(`**/api/sessions/${session.id}/message-queue`, async route => {
+    if (route.request().method() === "POST") await route.fulfill({ status: 503, contentType: "application/json", body: '{"error":"test rejection"}' });
+    else await route.continue();
+  });
+  await page.getByLabel("Send message").click();
+  await expect(page.locator(".review-comment-strip")).toContainText("2 review comments");
+  await page.unroute(`**/api/sessions/${session.id}/message-queue`);
+  await page.getByLabel("Send message").click();
+  await expect.poll(async () => {
+    const turns = (await (await request.get(`${daemon}/api/sessions/${session.id}/turns`)).json()).turns;
+    return turns.some((turn: { prompt: string }) => turn.prompt.includes("Comments on the diff"));
+  }).toBe(true);
+  const turns = (await (await request.get(`${daemon}/api/sessions/${session.id}/turns`)).json()).turns;
+  const review = turns.find((turn: { prompt: string }) => turn.prompt.includes("Comments on the diff"));
+  expect(review.prompt).toContain("- README.md:1 (L): Explain why the old heading changed");
+  expect(review.prompt).toContain("- README.md:3 (R): Check the new line");
+  await expect(page.locator(".review-comment-strip")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "2 review comments" })).toBeVisible();
+});
+
+test("file editor gutter comments share the composer and cite the selected file line", async ({ page, request }) => {
+  const session = await create(request, "Review a file line");
+  await expect.poll(() => status(request, session.id)).toBe("completed");
+  await ready(page);
+  await open(page, "Review a file line");
+  await page.getByLabel("Toggle files panel").click();
+  await page.getByRole("treeitem", { name: "README.md", exact: true }).click();
+  await expect(page.getByLabel("Edit README.md")).toBeVisible();
+  const marker = page.getByRole("button", { name: "Add or view comment on line 2" });
+  await expect(marker).toHaveAttribute("aria-label", "Add or view comment on line 2");
+  await marker.click();
+  await page.getByLabel("Comment on README.md line 2").fill("Clarify this fixture line");
+  await page.getByRole("button", { name: "Save comment" }).click();
+  await expect(page.locator(".file-comment-popover")).toContainText("Clarify this fixture line");
+  await page.getByRole("button", { name: "Edit comment at README.md:2" }).click();
+  await page.getByLabel("Comment on README.md line 2").fill("Explain this fixture line clearly");
+  await page.getByRole("button", { name: "Save comment" }).click();
+  await expect(page.locator(".file-comment-popover")).toContainText("Explain this fixture line clearly");
+  await expect(page.locator(".review-comment-strip")).toContainText("1 review comment");
+  await page.getByRole("button", { name: "Close file comments" }).click();
+  await page.getByLabel("Edit README.md").click();
+  await page.keyboard.press("Meta+ArrowUp");
+  await page.keyboard.insertText("New first line\n");
+  await expect(page.getByLabel("Edit README.md")).toContainText(/New first line\s*# fixture-repo/);
+  await expect(page.getByRole("button", { name: "Add or view comment on line 3" })).toBeVisible();
+  await page.getByRole("button", { name: "Add or view comment on line 3" }).click();
+  await expect(page.locator(".file-comment-popover")).toContainText("Explain this fixture line clearly");
+  await page.getByLabel("Session message").fill("Please check this line");
+  await page.getByLabel("Send message").click();
+  await expect.poll(async () => {
+    const turns = (await (await request.get(`${daemon}/api/sessions/${session.id}/turns`)).json()).turns;
+    return turns.some((turn: { prompt: string }) => turn.prompt.includes("Review comments (each cites"));
+  }).toBe(true);
+  const turns = (await (await request.get(`${daemon}/api/sessions/${session.id}/turns`)).json()).turns;
+  const review = turns.find((turn: { prompt: string }) => turn.prompt.includes("Review comments (each cites"));
+  expect(review.prompt).toContain("- README.md:3: Explain this fixture line clearly");
+  await expect(page.getByRole("button", { name: "1 review comment" })).toBeVisible();
+});
+
+test("review comments and image attachments retain both transcript badges", async ({ page, request }) => {
+  const session = await create(request, "Review an image and a file");
+  await expect.poll(() => status(request, session.id)).toBe("completed");
+  fs.writeFileSync(path.join(session.worktree_path, "README.md"), "# Revised heading\nfixture\n");
+  await ready(page);
+  await open(page, "Review an image and a file");
+  await panel(page, "Diffs");
+  await page.getByRole("button", { name: "Add comment on new line 1 of README.md" }).click();
+  await page.getByLabel("Comment on README.md line 1").fill("Match the screenshot heading");
+  await page.getByRole("button", { name: "Save comment" }).click();
+  const png = fs.readFileSync(new URL("./fixtures/preview-grid.png", import.meta.url));
+  await page.getByLabel("Choose image attachments").setInputFiles({ name: "review.png", mimeType: "image/png", buffer: png });
+  await page.getByLabel("Session message").fill("Compare the changed heading with the image");
+  await page.getByLabel("Send message").click();
+  await expect.poll(async () => {
+    const turns = (await (await request.get(`${daemon}/api/sessions/${session.id}/turns`)).json()).turns;
+    return turns.some((turn: { prompt: string }) => turn.prompt.includes("Match the screenshot heading"));
+  }).toBe(true);
+  await expect(page.getByLabel("Message attachments")).toBeVisible();
+  await expect(page.getByRole("button", { name: "1 review comment" })).toBeVisible();
+});
+
+test("Markdown preview comments share line anchors with the file editor", async ({ page, request }) => {
+  const session = await create(request, "Review rendered Markdown");
+  await expect.poll(() => status(request, session.id)).toBe("completed");
+  await ready(page);
+  await open(page, "Review rendered Markdown");
+  await page.getByLabel("Toggle files panel").click();
+  await page.getByRole("treeitem", { name: "README.md", exact: true }).click();
+  await page.getByLabel("Preview Markdown").click();
+  await page.getByRole("button", { name: "Add comment to Markdown line 1 of README.md" }).click();
+  await page.getByLabel("Comment on README.md line 1").fill("Make this heading more specific");
+  await page.getByRole("button", { name: "Save comment" }).click();
+  await expect(page.locator(".file-markdown-preview")).toContainText("Make this heading more specific");
+  await page.getByLabel("Edit Markdown").click();
+  await page.getByRole("button", { name: "Add or view comment on line 1" }).click();
+  await expect(page.locator(".file-comment-popover")).toContainText("Make this heading more specific");
+  await page.getByRole("button", { name: "Remove comment at README.md:1" }).click();
+  await expect(page.locator(".review-comment-strip")).toHaveCount(0);
+});

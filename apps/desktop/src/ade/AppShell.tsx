@@ -39,7 +39,7 @@ import {
   switchSessionSurface,
   NewThreadArtworkState,
 } from "./api";
-import { SessionWorkspace, recoverRejectedDraft } from "./SessionWorkspace";
+import { SessionWorkspace, forgetReviewComments, recoverRejectedDraft } from "./SessionWorkspace";
 import { loadPreferences, Preferences, savePreferences, themeClass, shortcutMatches, shouldSend } from "./preferences";
 import { SettingsNavigation, SettingsPage, SettingsSection } from "./SettingsPage";
 import { Page, Sidebar } from "./Sidebar";
@@ -370,7 +370,7 @@ function AppShell() {
         onToggle={toggleSidebar}
         onArchive={setArchived}
         onBeforeDelete={ids=>selectedId&&ids.includes(selectedId)&&editorDirty.current?"Save or discard your editor changes before deleting this chat.":null}
-        onDeleted={id=>{if(selectedId===id&&connected)void refresh();}}
+        onDeleted={id=>{forgetReviewComments(id);if(selectedId===id&&connected)void refresh();}}
       /></div>}
       {sidebarOpen && page !== "settings" && <ResizeBoundary className="sidebar-resizer" label="Resize sidebar" width={preferences.sidebar_width} min={224} max={400} defaultWidth={256} onResize={width=>updatePreferences({...preferences,sidebar_width:width},false)} onCommit={width=>updatePreferences({...preferences,sidebar_width:width})}/> }
 
