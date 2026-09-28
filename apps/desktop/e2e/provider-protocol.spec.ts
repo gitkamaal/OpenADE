@@ -34,6 +34,20 @@ test('known steering rejection stays queued, unknown delivery is quarantined and
  const crash=await create(request,'RPC death',{prompt:'explode'});await expect.poll(()=>status(request,crash.id)).toBe('failed');const unknown=await create(request,'Unknown method',{prompt:'unknown'});await expect.poll(()=>status(request,unknown.id)).toBe('completed');expect(logs(unknown.id).some(row=>row.unknownError===-32601)).toBe(true);
 });
 
+test('accepted steering timestamps a settled partial reply before the next user message',async({request,page})=>{
+ const s=await create(request,'Steered partial timestamp',{prompt:'partial-before-steer wait'});
+ const transcript=path.join(tmp,'data/transcripts',s.id+'.log');
+ await expect.poll(()=>fs.readFileSync(transcript,'utf8').includes('Partial before steering')).toBe(true);
+ const queued=await(await request.post(`${daemon}/api/sessions/${s.id}/message-queue`,{data:{text:'continue partial'}})).json();
+ expect((await request.post(`${daemon}/api/sessions/${s.id}/message-queue/${queued.id}/steer`)).status()).toBe(204);
+ await expect.poll(()=>status(request,s.id)).toBe('completed');
+ await ready(page);await open(page,'Steered partial timestamp');
+ const replies=page.locator('.chat-assistant-turn');await expect(replies).toHaveCount(2);
+ await expect(replies.first()).toContainText('Partial before steering');
+ await expect(replies.first().locator('time')).toHaveAttribute('datetime',/\d{4}-\d{2}-\d{2}T/);
+ await expect(replies.nth(1).locator('time')).toHaveAttribute('datetime',/\d{4}-\d{2}-\d{2}T/);
+});
+
 test('connection count stays bounded, active-limit admission fails safely and releases turns',async({request})=>{
  const active:string[]=[];try{
  for(let i=0;i<8;i++){const s=await create(request,'Active connection '+i,{prompt:'wait limit'});expect(s.status).toBe('running');active.push(s.id);}

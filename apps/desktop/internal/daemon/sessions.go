@@ -368,7 +368,7 @@ func (m *SessionManager) Resume(session Session, prompt string) error {
 			return err
 		}
 	}
-	marker, _ := json.Marshal(map[string]string{"type": "openade.user_message", "text": prompt})
+	marker, _ := json.Marshal(map[string]string{"type": "openade.user_message", "text": prompt, "created_at": encodeTime(time.Now().UTC())})
 	file, err := os.OpenFile(transcriptPath, os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return err
@@ -775,6 +775,24 @@ func (m *SessionManager) wait(id string, live *liveSession, transcript *os.File)
 		}
 	}
 	live.mu.Unlock()
+	if !live.rawPTY && transcript != nil {
+		// A settled assistant entry gets its own durable timestamp. Publish the
+		// same marker to current stream clients before reporting completion.
+		marker, _ := json.Marshal(map[string]string{"type": "openade.turn_finished", "created_at": encodeTime(time.Now().UTC())})
+		marker = append(marker, '\n')
+		live.mu.Lock()
+		_, _ = transcript.Write(marker)
+		live.scrollback = append(live.scrollback, marker...)
+		for subscriber := range live.subscribers {
+			select {
+			case subscriber <- marker:
+			default:
+				delete(live.subscribers, subscriber)
+				close(subscriber)
+			}
+		}
+		live.mu.Unlock()
+	}
 	m.mu.Lock()
 	if m.live[id] == live {
 		_ = m.store.updateGeneration(id, live.generation, status, 0, &code)

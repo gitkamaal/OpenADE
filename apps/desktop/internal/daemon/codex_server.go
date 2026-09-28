@@ -781,7 +781,7 @@ func (c *codexConversation) handle(frame providerRPCFrame) {
 		if p.Turn.Status == "interrupted" {
 			status = "interrupted"
 		}
-		c.emit(map[string]any{"type": "turn.completed"})
+		c.emit(map[string]any{"type": "turn.completed", "created_at": encodeTime(time.Now().UTC())})
 		if c.startDone != nil {
 			c.completedStatus = status
 			return
@@ -994,7 +994,7 @@ func (m *SessionManager) steerCodex(id, messageID string) (bool, error) {
 	// unrelated user-input request can still be answered while this RPC waits.
 	_, err = m.store.db.Exec(`UPDATE messages SET turn_id=?,text=?,status='sent' WHERE id=? AND session_id=?`, live.turnID, message.Text, messageID, id)
 	if err == nil {
-		err = c.emit(map[string]string{"type": "openade.user_message", "text": message.Text})
+		err = c.emit(map[string]string{"type": "openade.user_message", "text": message.Text, "created_at": encodeTime(time.Now().UTC())})
 	}
 	if err == nil {
 		err = m.store.CompleteQueuedMessage(messageID)

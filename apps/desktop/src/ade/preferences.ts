@@ -1,4 +1,5 @@
 import {themeId,resolveTheme} from "./themes";
+import type {NewThreadArtworkEffect} from "./api";
 export type ThemePreference = "graphite" | "dusk" | "paper" | "glass" | "system";
 export type SessionSurface = "chat" | "terminal";
 export type ActivityDetail = "compact" | "expanded";
@@ -17,7 +18,7 @@ export interface Preferences {
  sidebar_width:number; panel_width:number; sidebar_open:boolean; sidebar_compact:boolean; sidebar_show_branch:boolean; sidebar_show_pr:boolean; sidebar_show_provider:boolean; sidebar_show_project_icon:boolean; sidebar_show_project_label:boolean;
  notifications:boolean; background_only:boolean; sounds:boolean; sound_completed:boolean; sound_input:boolean; sound_errors:boolean;
  diff_split:boolean;diff_wrap:boolean;code_fences_fit_content:boolean;open_web_links_in_app:boolean;autosave_delay_ms:number;
- word_wrap:boolean; show_hidden:boolean; show_ignored:boolean; autosave:boolean;
+ word_wrap:boolean; show_hidden:boolean; show_ignored:boolean; autosave:boolean; new_thread_background_effect:NewThreadArtworkEffect;
  sidebar_sections:SidebarSection[]; session_sections:Record<string,string>; session_order:string[]; disabled_providers:string[]; archived_sessions:string[]; pinned_sessions:string[]; shortcuts:Record<string,string>;
 }
 export const defaultPreferences: Preferences = {
@@ -26,7 +27,7 @@ export const defaultPreferences: Preferences = {
  sidebar_width:256, panel_width:520, sidebar_open:true, sidebar_compact:true,sidebar_show_branch:false,sidebar_show_pr:false,sidebar_show_provider:true,sidebar_show_project_icon:false,sidebar_show_project_label:true,
  notifications:false, background_only:true, sounds:false, sound_completed:true, sound_input:true, sound_errors:true,
  diff_split:false,diff_wrap:false,code_fences_fit_content:false,open_web_links_in_app:true,autosave_delay_ms:900,
- word_wrap:false, show_hidden:false, show_ignored:false, autosave:false, sidebar_sections:[],session_sections:{},session_order:[], disabled_providers:[], archived_sessions:[], pinned_sessions:[], shortcuts:defaultShortcuts,
+ word_wrap:false, show_hidden:false, show_ignored:false, autosave:false, new_thread_background_effect:"none", sidebar_sections:[],session_sections:{},session_order:[], disabled_providers:[], archived_sessions:[], pinned_sessions:[], shortcuts:defaultShortcuts,
 };
 export function loadPreferences(): Preferences {
  try {
@@ -57,6 +58,7 @@ export function loadPreferences(): Preferences {
   if (raw.glass==="transparent") result.glass="frosted";
   if (!["default","opaque","frosted","liquid"].includes(result.glass)) result.glass="default";
   if (!["chat","terminal"].includes(result.session_surface)) result.session_surface="chat";
+  if (!["none","dither","ascii","halftone","scanlines"].includes(result.new_thread_background_effect)) result.new_thread_background_effect="none";
   if (!["project","device","list"].includes(result.project_organization)) result.project_organization="project";
   if (!["priority","updated","created","manual"].includes(result.project_sort)) result.project_sort="updated";
   result.autosave_delay_ms=Math.min(5000,Math.max(100,result.autosave_delay_ms));

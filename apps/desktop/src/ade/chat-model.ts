@@ -13,14 +13,15 @@ export interface ChatTurn {
   markdown: string;
   activities: ChatActivity[];
   streaming?: boolean;
+  timestamp?: number;
 }
 
 type JsonRecord = Record<string, unknown>;
 
-export function createTranscriptParser(initialPrompt:string){
+export function createTranscriptParser(initialPrompt:string,initialCreatedAt?:string){
   const turns: ChatTurn[] = [];
   if (initialPrompt.trim()) {
-    turns.push({ id: "user-0", role: "user", markdown: initialPrompt.trim(), activities: [] });
+    turns.push({ id: "user-0", role: "user", markdown: initialPrompt.trim(), activities: [],timestamp:parseTimestamp(initialCreatedAt) });
   }
 
   let assistant = newAssistant(0);
@@ -46,12 +47,17 @@ export function createTranscriptParser(initialPrompt:string){
     if (!event) return;
 
     if (event.type === "openade.user_message") {
+      // Steering can settle already-streamed assistant text before the
+      // provider's turn/completed frame arrives. The accepted user marker is
+      // the durable boundary for that preceding entry's hover timestamp.
+      if(assistant.timestamp===undefined)assistant.timestamp=parseTimestamp(event.created_at);
       commitAssistant(turns, assistant, finalMessage || partial);
       turns.push({
         id: `user-${turns.length}`,
         role: "user",
         markdown: String(event.text ?? "").trim(),
         activities: [],
+        timestamp: parseTimestamp(event.created_at),
       });
       assistant = newAssistant(turns.length);
       partial = "";
@@ -60,6 +66,8 @@ export function createTranscriptParser(initialPrompt:string){
     }
 
     const type = String(event.type ?? "");
+    if(type==="turn.completed")assistant.timestamp=parseTimestamp(event.created_at);
+    if(type==="openade.turn_finished"&&assistant.timestamp===undefined)assistant.timestamp=parseTimestamp(event.created_at);
     if(type==="openade.agent_delta"||type==="openade.agent_message"){const id=String(event.id??"message"),text=String(event.text??"");providerMessages.set(id,type==="openade.agent_delta"?(providerMessages.get(id)??"")+text:text);finalMessage=[...providerMessages.values()].filter(Boolean).join("\n\n");}
 
     const item = isRecord(event.item) ? event.item : null;
@@ -117,7 +125,9 @@ export function createTranscriptParser(initialPrompt:string){
     },
   };
 }
-export function parseChatTranscript(value:string,initialPrompt:string,running:boolean):ChatTurn[]{const parser=createTranscriptParser(initialPrompt);parser.append(value+"\n");return parser.snapshot(running);}
+export function parseChatTranscript(value:string,initialPrompt:string,running:boolean,initialCreatedAt?:string):ChatTurn[]{const parser=createTranscriptParser(initialPrompt,initialCreatedAt);parser.append(value+"\n");return parser.snapshot(running);}
+
+function parseTimestamp(value:unknown):number|undefined{if(typeof value!=="string")return undefined;const ms=Date.parse(value);return Number.isFinite(ms)?ms:undefined;}
 
 function newAssistant(index: number): ChatTurn {
   return { id: `assistant-${index}`, role: "assistant", markdown: "", activities: [] };

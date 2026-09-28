@@ -976,3 +976,21 @@ img.provider-claude{filter:brightness(0) saturate(100%) invert(58%) sepia(44%) s
 @media(prefers-reduced-motion:no-preference){.ade .session-composer textarea{transition:height 180ms cubic-bezier(.33,1,.68,1),padding 180ms cubic-bezier(.33,1,.68,1)}}
 @media(prefers-reduced-motion:reduce){.ade .session-composer textarea{transition:none}}
 .ade .session-composer .composer-utilities .command-trigger{pointer-events:auto}
+
+/* Zeron reserves a 32px lane below each settled entry. Revealing the date and
+   copy affordance never changes transcript height or moves later messages. */
+.ade .chat-timeline{gap:20px}
+.ade .chat-user-turn,.ade .chat-assistant-turn{margin-bottom:0}
+.ade .chat-user-turn>.message-meta,.ade .chat-assistant-turn>.message-meta{width:100%;height:32px;box-sizing:border-box;padding:8px 0 0;margin:0;border:0;border-radius:0;background:transparent;max-width:none}
+.ade.native-window .chat-user-turn>.message-meta{border:0;background:transparent}
+.ade .message-meta{display:flex;align-items:flex-start;justify-content:flex-start}
+.ade .message-meta.user{justify-content:flex-end}
+.ade .message-meta-content{display:flex;align-items:center;gap:8px;min-height:24px;opacity:0;pointer-events:none;transition:opacity 120ms ease}
+.ade .chat-user-turn:hover .message-meta-content,.ade .chat-user-turn:focus-within .message-meta-content,.ade .chat-assistant-turn:hover .message-meta-content,.ade .chat-assistant-turn:focus-within .message-meta-content{opacity:1;pointer-events:auto}
+.ade .message-meta time{color:var(--muted);opacity:.72;font-size:calc(12px * var(--interface-scale));line-height:24px;white-space:nowrap}
+.ade .message-meta button{display:grid;place-items:center;width:24px;height:24px;padding:0;border:0;border-radius:6px;background:transparent;color:var(--muted);cursor:pointer}
+.ade .message-meta button:hover{background:color-mix(in srgb,var(--text) 8%,transparent);color:var(--text)}
+.ade .message-meta button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.ade .message-meta button svg{width:14px;height:14px}
+.ade[data-native-material="increased-contrast"] .message-meta time{opacity:1}
+@media(prefers-reduced-motion:reduce){.ade .message-meta-content{transition:none}}

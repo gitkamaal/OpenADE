@@ -362,7 +362,10 @@ export const getHistory = (id:string) => request<{branch:string;commits:GitCommi
 export const getFile = (id:string,path:string) => request<{path:string;content:string}>(`/api/sessions/${id}/file?path=${encodeURIComponent(path)}`);
 export const saveFile = (id:string,path:string,content:string,original:string) => request<{path:string;content:string}>(`/api/sessions/${id}/file?path=${encodeURIComponent(path)}`,{method:"PUT",body:JSON.stringify({content,original})});
 
-export interface EngineSnapshot{sequence:number;sessions:Session[];projects:string[];project_names?:Record<string,string>;removed_projects?:string[];queues:Record<string,QueuedMessage[]>}
+export type NewThreadArtworkEffect="none"|"dither"|"ascii"|"halftone"|"scanlines";
+export interface NewThreadArtworkImage{id:string;name:string;mime:string}
+export interface NewThreadArtworkState{image?:NewThreadArtworkImage;effect:NewThreadArtworkEffect}
+export interface EngineSnapshot{sequence:number;sessions:Session[];projects:string[];project_names?:Record<string,string>;removed_projects?:string[];queues:Record<string,QueuedMessage[]>;new_thread_artwork:NewThreadArtworkState}
 export const getEngineState=()=>request<EngineSnapshot>("/api/state");
 
 export const commitChanges=(id:string,message:string,staged=false)=>request<{sha:string}>(`/api/sessions/${id}/commit`,{method:"POST",body:JSON.stringify({message,staged})});
@@ -394,10 +397,15 @@ export const fileMediaURL=(sessionId:string,path:string)=>`/api/sessions/${encod
 
 // Media bytes use the same private header as JSON requests. Bearer tokens must
 // not appear in image URLs, accessibility trees, captures or the browser cache.
-export async function fetchMedia(source:string,signal:AbortSignal){await engineConnection();const path=new URL(source,DAEMON_URL);if(!/^\/api\/(?:attachments\/[^/]+\/media|sessions\/[^/]+\/file-media)$/.test(path.pathname))throw Error("Unsupported image source.");path.searchParams.delete("token");const response=await fetch(DAEMON_URL+path.pathname+path.search,{signal,headers:{Authorization:`Bearer ${authToken}`}});if(!response.ok)throw Error("Image unavailable.");return response.blob();}
+export async function fetchMedia(source:string,signal:AbortSignal){await engineConnection();const path=new URL(source,DAEMON_URL);if(!/^\/api\/(?:attachments\/[^/]+\/media|sessions\/[^/]+\/file-media|new-thread-artwork\/media)$/.test(path.pathname))throw Error("Unsupported image source.");path.searchParams.delete("token");const response=await fetch(DAEMON_URL+path.pathname+path.search,{signal,headers:{Authorization:`Bearer ${authToken}`}});if(!response.ok)throw Error("Image unavailable.");return response.blob();}
 
 export interface ProviderQuestion {id:string;header:string;question:string;isOther:boolean;isSecret:boolean;options:{label:string;description:string}[]|null}
 export interface ProviderRequest {id:string;generation:number;kind:"question"|"approval";title:string;detail:string;questions:ProviderQuestion[];decisions:string[]}
 export interface ProviderState {connected:boolean;steering:boolean;requests:ProviderRequest[];context:{tokens:number|null;window:number|null}}
 export const getProviderState=(id:string,signal?:AbortSignal)=>request<ProviderState>(`/api/sessions/${id}/provider-state`,{signal});
 export const replyToProvider=(id:string,question:ProviderRequest,reply:{answers?:Record<string,string[]>;decision?:string})=>request<void>(`/api/sessions/${id}/provider-requests/${question.id}`,{method:"POST",body:JSON.stringify({generation:question.generation,...reply})});
+
+export const newThreadArtworkMediaURL=(id:string)=>`/api/new-thread-artwork/media?version=${encodeURIComponent(id)}`;
+export const uploadNewThreadArtwork=(file:File)=>request<NewThreadArtworkState>(`/api/new-thread-artwork?name=${encodeURIComponent(file.name)}`,{method:"POST",headers:{"Content-Type":file.type||"application/octet-stream"},body:file});
+export const removeNewThreadArtwork=()=>request<NewThreadArtworkState>("/api/new-thread-artwork",{method:"DELETE"});
+export const setNewThreadArtworkEffect=(effect:NewThreadArtworkEffect)=>request<NewThreadArtworkState>("/api/new-thread-artwork/effect",{method:"PATCH",body:JSON.stringify({effect})});

@@ -37,6 +37,7 @@ import {
   Session,
   setSessionArchived,
   switchSessionSurface,
+  NewThreadArtworkState,
 } from "./api";
 import { SessionWorkspace, recoverRejectedDraft } from "./SessionWorkspace";
 import { loadPreferences, Preferences, savePreferences, themeClass, shortcutMatches, shouldSend } from "./preferences";
@@ -47,6 +48,7 @@ import { ModelPicker } from "./ModelPicker";
 import {ProjectPalette} from "./ProjectPalette";
 import {CommandPalette} from "./CommandPalette";
 import { SitesPage } from "./SitesPage";
+import { NewThreadArtwork } from "./NewThreadArtwork";
 
 const agents = [
   { id: "claude", label: "Claude Code" },
@@ -379,7 +381,7 @@ function AppShell() {
         {!connected && <div className="connection-banner"><SpinnerGap className="spin" /> {error || "Connecting to the local daemon…"}<button onClick={()=>{const bridge=window as typeof window & {go?:{main?:{App?:{Reconnect?:()=>Promise<void>}}}};void (bridge.go?.main?.App?.Reconnect?.()||Promise.resolve()).then(refresh).catch(reason=>setError(String(reason)));}}>Reconnect</button></div>}
         {connected && error && <button aria-label="Dismiss error" className="error-toast" onClick={() => setError(null)}><span role="alert">{error}</span><X /></button>}
         {selected&&<div className="retained-workspace" hidden={page==="settings"} inert={page==="settings"}><Suspense fallback={<div className="opening-session" role="status">Opening session…</div>}><SessionWorkspace activeView={page!=="settings"} key={selected.id} session={selected} projectLabel={projectNames[selected.repo_root]} preferences={preferences} onPreferences={updatePreferences} onArchive={()=>{if(editorDirty.current){setError("Save or discard file changes before archiving.");return;}void setArchived(selected.id,!selected.archived).then(done=>{if(done&&!selected.archived)setSelectedId(null);});}} onBack={() => {if(editorDirty.current){setError("Save or discard file changes before leaving this session.");return;}setSelectedId(null);}} onRefresh={refresh} /></Suspense></div>}
-        <div className="retained-home" hidden={Boolean(selected)||page!=="home"} inert={Boolean(selected)||page!=="home"}><Home activeView={!selected&&page==="home"} sessions={sessions} projects={visibleProjects} projectNames={projectNames} removedProjects={removedProjects} meta={meta} preferences={preferences} onCreated={(session) => { setPendingSelectionID(session.id); void refresh(); }} onOpen={openSession} onError={setError} /></div>
+        <div className="retained-home" hidden={Boolean(selected)||page!=="home"} inert={Boolean(selected)||page!=="home"}><Home activeView={!selected&&page==="home"} sessions={sessions} projects={visibleProjects} projectNames={projectNames} removedProjects={removedProjects} meta={meta} preferences={preferences} artwork={engine.new_thread_artwork} onCreated={(session) => { setPendingSelectionID(session.id); void refresh(); }} onOpen={openSession} onError={setError} /></div>
         {selected&&page!=="settings" || page === "home" ? null : page === "sites" ? (
           <SitesPage />
         ) : page === "sessions" ? (
@@ -389,14 +391,14 @@ function AppShell() {
         ) : page === "review" ? (
           <ReviewPage projects={visibleProjects} projectNames={projectNames} sessions={sessions} />
         ) : (
-          <SettingsPage activeAppearance={activeTheme.appearance} resolvedMaterial={activeMaterial} nativeMaterial={nativeMaterial} preferences={preferences} onChange={updatePreferences} section={settingsSection} meta={meta} sessions={sessions} onSetup={session=>{if(editorDirty.current){setError("Save or discard file changes before opening provider setup.");return;}setPendingSelectionID(session.id);void refresh();}} onRestore={id=>{void setArchived(id,false);}} />
+          <SettingsPage activeAppearance={activeTheme.appearance} resolvedMaterial={activeMaterial} nativeMaterial={nativeMaterial} preferences={preferences} artwork={engine.new_thread_artwork} onArtworkChanged={(artwork)=>{updatePreferences({...preferences,new_thread_background_effect:artwork.effect});void refreshEngine();}} onChange={updatePreferences} section={settingsSection} meta={meta} sessions={sessions} onSetup={session=>{if(editorDirty.current){setError("Save or discard file changes before opening provider setup.");return;}setPendingSelectionID(session.id);void refresh();}} onRestore={id=>{void setArchived(id,false);}} />
         )}
       </main>
     </div>
   );
 }
 
-function Home({ activeView, projects, projectNames, removedProjects, meta, preferences, onCreated, onError }: { activeView:boolean; sessions: Session[]; projects: string[]; projectNames:Record<string,string>; removedProjects:string[]; meta: Meta | null; preferences: Preferences; onCreated: (session: Session) => void; onOpen: (id: string) => void; onError: (error: string | null) => void }) {
+function Home({ activeView, projects, projectNames, removedProjects, meta, preferences, artwork, onCreated, onError }: { activeView:boolean; sessions: Session[]; projects: string[]; projectNames:Record<string,string>; removedProjects:string[]; meta: Meta | null; preferences: Preferences; artwork:NewThreadArtworkState; onCreated: (session: Session) => void; onOpen: (id: string) => void; onError: (error: string | null) => void }) {
   const draft=useRef<{prompt?:string;repo?:string;agent?:string;model?:string;effort?:string;serviceTier?:string;checkout?:"current"|"worktree";base?:string}>((()=>{try{const value=JSON.parse(sessionStorage.getItem("openade.home-draft")||"{}");return value&&typeof value==="object"?value:{};}catch{return {};}})());
   const [prompt, setPrompt] = useState(() => sessionStorage.getItem("openade-template") ?? draft.current.prompt ?? "");
   const attachments=useAttachments("home");
@@ -468,7 +470,8 @@ function Home({ activeView, projects, projectNames, removedProjects, meta, prefe
 
   if(!activeView)return null;
   return <div className="home-page">
-    <section className="home-hero">
+    <section className={`home-hero ${artwork.image?"with-artwork":""}`}>
+      <NewThreadArtwork artwork={artwork}/>
       <div className="home-context"><Select aria-label="Choose device" icon={<Desktop size={14}/>} value="local"><option value="local">Local workspace</option></Select><Select aria-label="Choose project" searchable icon={<Folder size={14}/>} value={repo} placeholder="Choose project" onChange={event=>updateRepository(event.target.value)} footer={<><input aria-label="Repository" placeholder="Or enter a repository path…" value={repo} onChange={event=>updateRepository(event.target.value)}/><button type="button" onClick={()=>void browse()}>Browse folders…</button></>}><option value="">No project</option>{[...new Set([...projects,...(repo?[repo]:[])])].filter(Boolean).map(project=><option value={project} key={project}>{projectNames[project]??projectName(project)}</option>)}</Select></div>
       <form ref={homeComposer.form} className="composer source-new-composer" onSubmit={submit} onPaste={attachments.paste} onDragOver={event=>{if(event.dataTransfer.types.includes("Files"))event.preventDefault();}} onDrop={attachments.drop}>
         <AttachmentStrip draft={attachments}/>

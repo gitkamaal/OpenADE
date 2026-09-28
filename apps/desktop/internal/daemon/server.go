@@ -34,6 +34,7 @@ type Daemon struct {
 	authToken       string
 	providerSetupMu sync.Mutex
 	attachmentMu    sync.Mutex
+	artwork         *artworkStore
 	themeLibrary    *ThemeLibrary
 	projectReads    chan struct{}
 	projectMu       sync.Mutex
@@ -99,8 +100,15 @@ func New(config Config) (*Daemon, error) {
 		listener.Close()
 		return nil, err
 	}
+	artwork, err := newArtworkStore(config.DataDir)
+	if err != nil {
+		store.Close()
+		release()
+		listener.Close()
+		return nil, err
+	}
 	d := &Daemon{
-		config: config, store: store, themeLibrary: themeLibrary, releaseProfile: release, authToken: token, listener: listener,
+		config: config, store: store, themeLibrary: themeLibrary, artwork: artwork, releaseProfile: release, authToken: token, listener: listener,
 		projectReads: make(chan struct{}, 4),
 		deletions:    newDeletionFence(),
 	}
@@ -150,6 +158,11 @@ func (d *Daemon) routes() http.Handler {
 	mux.HandleFunc("GET /api/diagnostics", d.handleDiagnostics)
 	mux.HandleFunc("GET /api/events", d.handleEvents)
 	mux.HandleFunc("GET /api/themes", d.handleThemeLibrary)
+	mux.HandleFunc("GET /api/new-thread-artwork", d.handleNewThreadArtwork)
+	mux.HandleFunc("POST /api/new-thread-artwork", d.handleUploadNewThreadArtwork)
+	mux.HandleFunc("PATCH /api/new-thread-artwork/effect", d.handleArtworkEffect)
+	mux.HandleFunc("DELETE /api/new-thread-artwork", d.handleRemoveNewThreadArtwork)
+	mux.HandleFunc("GET /api/new-thread-artwork/media", d.handleNewThreadArtworkMedia)
 	mux.HandleFunc("POST /api/themes/link", d.handleLinkThemeSource)
 	mux.HandleFunc("POST /api/themes/{id}/reload", d.handleReloadThemeSource)
 	mux.HandleFunc("POST /api/themes/{id}/unlink", d.handleUnlinkThemeSource)
@@ -725,7 +738,7 @@ func (d *Daemon) authorize(next http.Handler) http.Handler {
 			return
 		}
 		supplied := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if supplied == "" && (r.URL.Path == "/api/events" || strings.HasSuffix(r.URL.Path, "/stream") || (strings.HasPrefix(r.URL.Path, "/api/attachments/") && strings.HasSuffix(r.URL.Path, "/media")) || (strings.HasPrefix(r.URL.Path, "/api/sessions/") && strings.HasSuffix(r.URL.Path, "/file-media"))) {
+		if supplied == "" && (r.URL.Path == "/api/events" || strings.HasSuffix(r.URL.Path, "/stream") || (strings.HasPrefix(r.URL.Path, "/api/attachments/") && strings.HasSuffix(r.URL.Path, "/media")) || r.URL.Path == "/api/new-thread-artwork/media" || (strings.HasPrefix(r.URL.Path, "/api/sessions/") && strings.HasSuffix(r.URL.Path, "/file-media"))) {
 			supplied = r.URL.Query().Get("token")
 		}
 		if subtle.ConstantTimeCompare([]byte(supplied), []byte(d.authToken)) != 1 {

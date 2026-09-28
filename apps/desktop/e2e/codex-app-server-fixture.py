@@ -56,6 +56,9 @@ def work(turn,prompt):
  if 'approval' in prompt:
   state[turn]['request']=502
   emit({'id':502,'method':'item/commandExecution/requestApproval','params':{'threadId':thread,'turnId':turn,'itemId':'cmd','startedAtMs':1,'command':'printf approved','cwd':os.getcwd(),'availableDecisions':['accept','decline','cancel'],'reason':'Fixture command outside the normal sandbox'}});return
+ if 'partial-before-steer' in prompt:
+  notify('item/agentMessage/delta',{'threadId':thread,'turnId':turn,'itemId':'message','delta':'Partial before steering'})
+  return
  if 'wait' in prompt:return
  time.sleep(.2);complete(turn,prompt)
 for line in sys.stdin:

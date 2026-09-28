@@ -18,9 +18,16 @@ test("launch native chat through the composer and render Markdown, activities, c
  await ready(page);await setRepository(page,repo);await choose(page,"Provider","codex");await page.getByLabel("New session prompt").fill("Native launch through composer");await page.getByLabel("Start session").click();
  await expect(page.getByRole("heading",{name:"Native chat response",exact:true})).toBeVisible();await expect(page.getByText("worktree isolation",{exact:true})).toBeVisible();await expect(page.locator(".activity-group")).toBeVisible();
  await page.locator(".activity-group > summary").first().click();await expect(page.getByText("git status",{exact:false}).first()).toBeVisible();
- await page.getByRole("button",{name:"Copy",exact:true}).first().click();await expect(page.getByRole("button",{name:"Copied",exact:true}).first()).toBeVisible();
+ const firstUser=page.locator('.chat-user-turn').first(),firstReply=page.locator('.chat-assistant-turn').first();
+ await expect(firstUser.locator('time')).toHaveAttribute('datetime',/\d{4}-\d{2}-\d{2}T/);
+ await expect(firstReply.locator('time')).toHaveAttribute('datetime',/\d{4}-\d{2}-\d{2}T/);
+ await firstReply.hover();await expect(firstReply.locator('.message-meta-content')).toHaveCSS('opacity','1');
+ await firstReply.getByRole('button',{name:'Copy message',exact:true}).click();await expect(firstReply.getByRole('button',{name:'Message copied',exact:true})).toBeVisible();
+ await firstUser.hover();await firstUser.getByRole('button',{name:'Copy message',exact:true}).click();expect(await page.evaluate(()=>navigator.clipboard.readText())).toBe('Native launch through composer');
  await page.getByLabel("Session message").fill("$fix");await expect(page.getByRole("listbox",{name:"Skills and commands"})).toBeVisible();await page.getByRole("option",{name:/\$fix-ci/}).click();await expect(page.getByLabel("Session message")).toHaveValue("$fix-ci ");await page.keyboard.press("Escape");
  await page.getByLabel("Session message").fill("Follow up from native chat");await page.getByLabel("Send message").click();await expect(page.getByText("Follow up from native chat",{exact:true}).first()).toBeVisible();await expect(page.getByRole("heading",{name:"Native chat response",exact:true})).toHaveCount(2);
+ await expect(page.locator('.chat-user-turn').nth(1).locator('time')).toHaveAttribute('datetime',/\d{4}-\d{2}-\d{2}T/);
+ await expect(page.locator('.chat-assistant-turn').nth(1).locator('time')).toHaveAttribute('datetime',/\d{4}-\d{2}-\d{2}T/);
 });
 test("queue remains attached to the session and turn; edit, remove and send-next are explicit",async({page,request})=>{
  const session=await create(request,"Queue interaction",{prompt:"wait-controlled initial"});await ready(page);await open(page,"Queue interaction");

@@ -16,10 +16,12 @@ import { Session } from "./api";
 import { ChatActivity, createTranscriptParser } from "./chat-model";
 import { MarkdownMessage } from "./MarkdownMessage";
 
+const hoverTimestampFormatter=new Intl.DateTimeFormat("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit",hour12:true});
+
 export function ChatTimeline({ session, output, activityExpanded = false }: { session: Session; output: string; activityExpanded?: boolean }) {
   const running = ["starting", "running", "waiting"].includes(session.status);
-  const parser=useRef(createTranscriptParser(session.prompt));const previous=useRef("");const prompt=useRef(session.prompt);
-  if(prompt.current!==session.prompt||!output.startsWith(previous.current)){parser.current=createTranscriptParser(session.prompt);previous.current="";prompt.current=session.prompt;}
+  const parser=useRef(createTranscriptParser(session.prompt,session.created_at));const previous=useRef("");const prompt=useRef(session.prompt);
+  if(prompt.current!==session.prompt||!output.startsWith(previous.current)){parser.current=createTranscriptParser(session.prompt,session.created_at);previous.current="";prompt.current=session.prompt;}
   parser.current.append(output.slice(previous.current.length));previous.current=output;
   const turns=parser.current.snapshot(running);
   const [visibleCount,setVisibleCount]=useState(80);const timeline=useRef<HTMLDivElement>(null);const jump=useRef<string|null>(null);
@@ -31,7 +33,7 @@ export function ChatTimeline({ session, output, activityExpanded = false }: { se
       {turns.length>visibleCount&&<button className="load-earlier" onClick={()=>setVisibleCount(count=>count+80)}>Show earlier messages</button>}
       {turns.slice(-visibleCount).map((turn) =>
         turn.role === "user" ? (
-          <UserTurn key={turn.id} id={turn.id} text={turn.markdown} />
+          <UserTurn key={turn.id} id={turn.id} text={turn.markdown} timestamp={turn.timestamp} />
         ) : (
           <AssistantTurn
             key={turn.id}
@@ -41,6 +43,7 @@ export function ChatTimeline({ session, output, activityExpanded = false }: { se
             streaming={Boolean(turn.streaming)}
             agent={session.agent}
             activityExpanded={activityExpanded}
+            timestamp={turn.timestamp}
           />
         ),
       )}
@@ -48,7 +51,7 @@ export function ChatTimeline({ session, output, activityExpanded = false }: { se
   );
 }
 
-const UserTurn=memo(function UserTurn({text,id}:{text:string;id:string}){
+const UserTurn=memo(function UserTurn({text,id,timestamp}:{text:string;id:string;timestamp?:number}){
  const parsed=parseAttachments(text);
  const ref=useRef<HTMLDivElement>(null);
  const [long,setLong]=useState(false),[expanded,setExpanded]=useState(false);
@@ -58,7 +61,7 @@ const UserTurn=memo(function UserTurn({text,id}:{text:string;id:string}){
   const observer=new ResizeObserver(measure);observer.observe(node);measure();
   return()=>observer.disconnect();
  },[text]);
- return <article className="chat-user-turn" data-message-id={id}>{parsed.images.length>0&&<section className="user-attachments" aria-label="Message attachments">{parsed.images.map(image=><AttachmentImage key={image.id} image={image}/>)}</section>}{parsed.text&&<div><div ref={ref} className={`user-prompt-text ${!expanded?"folded":""}`}>{parsed.text}</div>{long&&<button className="user-prompt-fold" aria-label={expanded?"Collapse message":"Expand message"} aria-expanded={expanded} onClick={()=>setExpanded(value=>!value)}><CaretDown className={expanded?"expanded":""}/></button>}</div>}</article>;
+ return <article className="chat-user-turn" data-message-id={id}>{parsed.images.length>0&&<section className="user-attachments" aria-label="Message attachments">{parsed.images.map(image=><AttachmentImage key={image.id} image={image}/>)}</section>}{parsed.text&&<div><div ref={ref} className={`user-prompt-text ${!expanded?"folded":""}`}>{parsed.text}</div>{long&&<button className="user-prompt-fold" aria-label={expanded?"Collapse message":"Expand message"} aria-expanded={expanded} onClick={()=>setExpanded(value=>!value)}><CaretDown className={expanded?"expanded":""}/></button>}</div>}<TurnMetadata timestamp={timestamp} text={parsed.text} side="user"/></article>;
 });
 
 const AssistantTurn=memo(function AssistantTurn({
@@ -68,6 +71,7 @@ const AssistantTurn=memo(function AssistantTurn({
   streaming,
   agent,
   activityExpanded,
+  timestamp,
 }: {
   session: Session;
   markdown: string;
@@ -75,30 +79,9 @@ const AssistantTurn=memo(function AssistantTurn({
   streaming: boolean;
   agent: string;
   activityExpanded: boolean;
+  timestamp?:number;
 }) {
-  const [copied, setCopied] = useState(false);
- const [copyFailed,setCopyFailed]=useState(false);
-  const copyTimerRef = useRef<number | undefined>(undefined);
-  const mountedRef = useRef(false);
   const visibleMarkdown = useProgressiveMarkdown(markdown, streaming);
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      if (copyTimerRef.current !== undefined) window.clearTimeout(copyTimerRef.current);
-    };
-  }, []);
-  const copy = async () => {
-    try{await copyText(markdown);}catch{if(mountedRef.current)setCopyFailed(true);return;}
- setCopyFailed(false);
-    if (!mountedRef.current) return;
-    setCopied(true);
-    if (copyTimerRef.current !== undefined) window.clearTimeout(copyTimerRef.current);
-    copyTimerRef.current = window.setTimeout(() => {
-      copyTimerRef.current = undefined;
-      setCopied(false);
-    }, 1200);
-  };
   return (
     <article className="chat-assistant-turn">
       <header><span className="agent-avatar"><ProviderIcon provider={agent}/></span><strong>{agentLabel(agent)}</strong></header>
@@ -107,14 +90,19 @@ const AssistantTurn=memo(function AssistantTurn({
         <div className="native-thinking"><SpinnerGap className="spin" /> Working through the task…</div>
       ) : null}
       {streaming && visibleMarkdown && <span className="streaming-cursor" aria-label="Streaming" />}
-      {markdown && !streaming && (
-        <div className="response-actions">
-          <button type="button" onClick={() => void copy()}>{copied ? <Check /> : <Copy />}<span>{copyFailed?"Unable to copy":copied ? "Copied" : "Copy"}</span></button>
-        </div>
-      )}
+      {!streaming&&<TurnMetadata timestamp={timestamp} text={markdown} side="assistant"/>}
     </article>
   );
 });
+
+function TurnMetadata({timestamp,text,side}:{timestamp?:number;text:string;side:"user"|"assistant"}){
+ const [copied,setCopied]=useState(false),[failed,setFailed]=useState(false),timer=useRef<number|undefined>(undefined),mounted=useRef(false);
+ useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;if(timer.current!==undefined)window.clearTimeout(timer.current);};},[]);
+ if(timestamp===undefined&&!text)return null;
+ const formatted=timestamp===undefined?"":hoverTimestampFormatter.format(timestamp);
+ const copy=async()=>{try{await copyText(text);if(!mounted.current)return;setCopied(true);setFailed(false);if(timer.current!==undefined)window.clearTimeout(timer.current);timer.current=window.setTimeout(()=>setCopied(false),1200);}catch{if(mounted.current)setFailed(true);}};
+ return <div className={`message-meta ${side}`}><div className="message-meta-content">{timestamp!==undefined&&<time dateTime={new Date(timestamp).toISOString()}>{formatted}</time>}{text&&<button type="button" aria-label={failed?"Unable to copy message":copied?"Message copied":"Copy message"} title={failed?"Unable to copy":copied?"Copied":"Copy message"} onClick={()=>void copy()}>{copied?<Check/>:<Copy/>}</button>}</div></div>;
+}
 
 function ActivityGroup({ activities, streaming, expanded }: { activities: ChatActivity[]; streaming: boolean; expanded: boolean }) {
   const [open, setOpen] = useState(expanded && !streaming);

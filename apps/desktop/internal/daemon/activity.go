@@ -241,6 +241,7 @@ func (d *Daemon) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, err)
 		return
 	}
+	snapshot["new_thread_artwork"] = d.artwork.snapshot()
 	writeJSON(w, 200, snapshot)
 }
 func (d *Daemon) handleEvents(w http.ResponseWriter, r *http.Request) {
