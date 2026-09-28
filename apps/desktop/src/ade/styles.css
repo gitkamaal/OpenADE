@@ -994,3 +994,13 @@ img.provider-claude{filter:brightness(0) saturate(100%) invert(58%) sepia(44%) s
 .ade .message-meta button svg{width:14px;height:14px}
 .ade[data-native-material="increased-contrast"] .message-meta time{opacity:1}
 @media(prefers-reduced-motion:reduce){.ade .message-meta-content{transition:none}}
+
+/* Zeron's composer surface does not acquire an accent stroke on pointer focus.
+   WebKit considers clicked text fields focus-visible, so use actual input
+   modality for the surrounding pill and auto-focused custom menu searches. */
+.ade :is(.composer,.session-composer):focus-within{outline:none}
+html[data-input-modality="keyboard"] .ade :is(.composer,.session-composer):focus-within{outline:2px solid color-mix(in srgb,var(--text) 60%,transparent);outline-offset:2px}
+html[data-input-modality="pointer"] :is(button,a,input,textarea,select,[role="combobox"],[tabindex]):focus-visible{outline:none!important}
+html[data-input-modality="pointer"] .ade .cm-focused{outline:none}
+html[data-input-modality="pointer"] .ade[data-native-material="increased-contrast"] :is(button,a,input,textarea,select,[role="combobox"],[tabindex]):focus-visible{outline:2px solid var(--text)!important;outline-offset:2px}
+.ade>.model-menu{max-height:calc(100vh - 16px);overflow-y:auto}

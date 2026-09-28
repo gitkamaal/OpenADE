@@ -37,6 +37,20 @@ test('custom choices support search, keyboard selection, focus return and unclip
  const checkout=page.getByRole('combobox',{name:'Checkout mode',exact:true});await checkout.press('Enter');await page.locator('.select-popover').press('End');await page.locator('.select-popover').press('Enter');await expect(checkout).toHaveAttribute('data-value','current');await expect(checkout).toBeFocused();await expect(branch).toBeDisabled();
  await page.getByLabel('Open settings').click();await page.getByRole('tab',{name:'Appearance',exact:true}).click();const glass=page.getByRole('combobox',{name:'Glass',exact:true});await glass.click();const rect=await page.locator('.select-popover').boundingBox();expect(rect).not.toBeNull();expect(rect!.y).toBeGreaterThanOrEqual(8);expect(rect!.y+rect!.height).toBeLessThanOrEqual(page.viewportSize()!.height-7);await page.keyboard.press('Escape');await expect(glass).toBeFocused();await expect(page.locator('.select-popover')).toHaveCount(0);
 });
+test('pointer-activated composers and dropdown searches stay quiet while keyboard focus remains visible',async({page,request})=>{
+ const session=await create(request,'Quiet focus surfaces');await ready(page);
+ const home=page.locator('.composer');await page.getByLabel('New session prompt').click();await expect(home).toHaveCSS('outline-style','none');
+ const homeBefore=await home.boundingBox();await page.getByLabel('Choose model',{exact:true}).click();await expect(page.getByLabel('Search models')).toBeFocused();
+ const homeAfter=await home.boundingBox(),homeMenu=await page.locator('.ade>.model-menu').boundingBox();expect(homeBefore&&homeAfter&&homeMenu).toBeTruthy();expect(Math.abs(homeAfter!.y-homeBefore!.y)).toBeLessThan(2);expect(homeMenu!.y+homeMenu!.height).toBeLessThanOrEqual(page.viewportSize()!.height-8);
+ await page.keyboard.press('Escape');
+ await page.getByLabel('Open settings').click();await page.getByRole('tab',{name:'Appearance',exact:true}).click();
+ const theme=page.getByRole('combobox',{name:'Dark theme',exact:true});await theme.click();
+ const search=page.getByRole('combobox',{name:'Search dark theme',exact:true});await expect(search).toBeFocused();await expect(search).toHaveCSS('outline-style','none');
+ await page.keyboard.press('Escape');await expect(theme).toBeFocused();
+ await page.getByRole('button',{name:'Back',exact:true}).click();await open(page,'Quiet focus surfaces');
+ const message=page.getByLabel('Session message');const composer=page.locator('.session-composer');await message.click();await expect(composer).toHaveCSS('outline-style','none');
+ await page.keyboard.press('Tab');await page.keyboard.press('Shift+Tab');await expect(message).toBeFocused();await expect(composer).toHaveCSS('outline-width','2px');
+});
 test('Frosted applies through the canvas, chat, editor, terminal and popup surfaces',async({page,request})=>{
  const session=await create(request,'Material throughout workspace');await ready(page);await page.getByLabel('Open settings').click();await page.getByRole('tab',{name:'Appearance',exact:true}).click();await choose(page,'Glass','frosted');await expect(page.locator('.main-shell')).toHaveCSS('background-color','rgba(0, 0, 0, 0)');await page.getByRole('button',{name:'Back',exact:true}).click();await open(page,'Material throughout workspace');await expect(page.locator('.conversation')).toHaveCSS('background-color','rgba(0, 0, 0, 0)');await expect(page.locator('.session-composer')).toHaveCSS('backdrop-filter','none');expect(await page.locator('.session-composer').evaluate(el=>getComputedStyle(el,'::before').backdropFilter)).toBe('blur(16px)');await page.getByLabel('Toggle files panel').click();await expect(page.locator('.files-panel-clip')).toHaveCSS('background-color','rgba(0, 0, 0, 0)');await page.getByRole('treeitem',{name:'README.md',exact:true}).click();await expect(page.locator('.cm-editor')).toHaveCSS('background-color','rgba(0, 0, 0, 0)');await panel(page,'Diffs');await expect(page.locator('.zeron-diffs')).toHaveCSS('background-color','rgba(0, 0, 0, 0)');await panel(page,'Terminal');await page.getByLabel('New terminal',{exact:true}).click();await expect(page.locator('.terminal-workspace')).toHaveCSS('background-color','rgba(0, 0, 0, 0)');await expect(page.locator('.terminal-host').first()).toHaveCSS('background-color','rgba(0, 0, 0, 0)');await page.locator('.terminal-workspace').getByRole('button',{name:/^Close Terminal/}).click();
 });
@@ -99,7 +113,7 @@ test('Liquid Glass persists and native accessibility changes restore solid surfa
  await expect(page.getByText('Frosted fallback — native Liquid Glass unavailable',{exact:true})).toBeVisible();
  await choose(page,'Glass','opaque');await expect(page.locator('.ade')).toHaveAttribute('data-native-material','opaque');
  await expect(page.locator('select,datalist')).toHaveCount(0);
- await choose(page,'Glass','liquid');await page.getByRole('button',{name:'Back',exact:true}).click();await open(page,'Accessible glass workspace');await page.getByLabel('Session message').focus();await expect(page.locator('.session-composer')).toHaveCSS('outline-width','2px');await panel(page,'Terminal');await page.getByLabel('New terminal',{exact:true}).click();
+ await choose(page,'Glass','liquid');await page.getByRole('button',{name:'Back',exact:true}).click();await open(page,'Accessible glass workspace');await page.getByLabel('Session message').focus();await page.keyboard.press('Tab');await page.keyboard.press('Shift+Tab');await expect(page.locator('.session-composer')).toHaveCSS('outline-width','2px');await panel(page,'Terminal');await page.getByLabel('New terminal',{exact:true}).click();
  const viewport=page.locator('.xterm-viewport').first();await expect(viewport).toHaveCSS('background-color','rgba(0, 0, 0, 0)');
  await page.locator('.xterm-helper-textarea').first().focus();
  await page.evaluate(()=>(window as typeof window & {appearanceChanged:(status:string)=>void}).appearanceChanged('reduced-transparency'));

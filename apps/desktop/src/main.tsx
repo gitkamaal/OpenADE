@@ -1,5 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import "./input-modality";
 import AppShell from "./ade/AppShell";
 import "./ade/styles.css";
 import "./ade/new-thread-artwork.css";

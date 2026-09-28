@@ -143,7 +143,7 @@ test('Zeron composer pill expands, grows, collapses and anchors its custom model
  await input.fill('A longer single line '.repeat(8));await expect(form).toHaveAttribute('data-layout','expanded');await input.fill('Draft preserved');await expect(form).toHaveAttribute('data-layout','compact');
  await page.setViewportSize({width:580,height:700});await expect(input).toHaveValue('Draft preserved');expect(await form.evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBe(true);
  await page.setViewportSize({width:1480,height:920});await expect(form).toHaveAttribute('data-layout','compact');
- await page.getByLabel('Choose model',{exact:true}).click();const menu=(await page.locator('.model-menu').boundingBox())!,trigger=(await page.getByLabel('Choose model',{exact:true}).boundingBox())!;expect(menu.y+menu.height).toBeLessThanOrEqual(trigger.y+3);await page.keyboard.press('Escape');
+ await page.getByLabel('Choose model',{exact:true}).click();const menu=(await page.locator('.model-menu').boundingBox())!,trigger=(await page.getByLabel('Choose model',{exact:true}).boundingBox())!;expect(menu.y+menu.height).toBeLessThanOrEqual(trigger.y+3);await expect.poll(async()=>{const settled=(await page.locator('.model-menu').boundingBox())!,anchor=(await page.getByLabel('Choose model',{exact:true}).boundingBox())!;return Math.abs(settled.x+settled.width-anchor.x-anchor.width)}).toBeLessThan(2);await page.keyboard.press('Escape');
  await shot(page,'52-browser-source-composer-compact');await input.fill('First line\nSecond line');await shot(page,'53-browser-source-composer-expanded');
 });
 
