@@ -4,9 +4,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 const png=fs.readFileSync(new URL('./fixtures/preview-grid.png',import.meta.url));
 const rasterFormats=[
- {name:'media-grid.webp',mime:'image/webp',stored:'.webp'},
- {name:'media-grid.bmp',mime:'image/bmp',stored:'.png'},
- {name:'media-grid.tif',mime:'image/tiff',stored:'.png'},
+ {name:'media-grid.webp',mime:'image/webp',stored:'.webp',width:3},
+ {name:'media-grid.bmp',mime:'image/bmp',stored:'.png',width:3},
+ {name:'media-grid.tif',mime:'image/tiff',stored:'.png',width:3},
+ {name:'media-grid.avif',mime:'image/avif',stored:'.png',width:6},
+ {name:'media-grid.heic',mime:'image/heic',stored:'.png',width:6},
 ];
 
 async function fillQueue(request:APIRequestContext,sessionId:string){
@@ -83,14 +85,14 @@ test('media authentication, invalid uploads and image payloads are enforced by t
  await expect(page.getByLabel('View pasted.png')).toBeVisible();await page.reload();await expect(page.getByLabel('View pasted.png')).toBeVisible();await page.getByLabel('Send message').click();await expect(page.getByLabel('Message attachments')).toBeVisible();
 });
 
-test('WebP, BMP and TIFF attachments preview and persist in provider-safe formats',async({page,request})=>{
+test('WebP, BMP, TIFF, AVIF and HEIC attachments preview and persist in provider-safe formats',async({page,request})=>{
  await ready(page);await setRepository(page,repo);await choose(page,'Provider','codex');
  for(const format of rasterFormats){
   const buffer=fs.readFileSync(new URL(`./fixtures/${format.name}`,import.meta.url));
   await page.getByLabel('Choose image attachments').setInputFiles({name:format.name,mimeType:format.mime,buffer});
   const preview=page.getByLabel(`View ${format.name}`);
   await expect(preview).toBeVisible();
-  await expect.poll(()=>preview.locator('img').evaluate(node=>(node as HTMLImageElement).naturalWidth)).toBe(3);
+  await expect.poll(()=>preview.locator('img').evaluate(node=>(node as HTMLImageElement).naturalWidth)).toBe(format.width);
   const uploaded=await request.post(`${daemon}/api/attachments?name=${format.name}`,{data:buffer,headers:{'Content-Type':format.mime}});
   expect(uploaded.status()).toBe(201);
   const metadata=await uploaded.json();
@@ -102,6 +104,17 @@ test('WebP, BMP and TIFF attachments preview and persist in provider-safe format
  }
  await page.reload();
  for(const format of rasterFormats)await expect(page.getByLabel(`View ${format.name}`)).toBeVisible();
+});
+
+test('SVG attachment becomes a bounded PNG without forwarding active vector content',async({page,request})=>{
+ const vector=Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="240" height="120"><rect width="240" height="120" fill="#187ec8"/><script>alert(1)</script><image href="file:///etc/passwd" width="10" height="10"/></svg>');
+ await ready(page);await setRepository(page,repo);await choose(page,'Provider','codex');
+ await page.getByLabel('Choose image attachments').setInputFiles({name:'bounded.svg',mimeType:'image/svg+xml',buffer:vector});
+ const preview=page.getByLabel('View bounded.svg');await expect(preview).toBeVisible();await expect.poll(()=>preview.locator('img').evaluate(node=>(node as HTMLImageElement).naturalWidth)).toBe(240);
+ const response=await request.post(`${daemon}/api/attachments?name=bounded.svg`,{data:vector,headers:{'Content-Type':'image/svg+xml'}});expect(response.status()).toBe(201);
+ const metadata=await response.json();expect(metadata.path.endsWith('.png')).toBe(true);expect(metadata.mime).toBe('image/png');
+ const image=await request.get(`${daemon}/api/attachments/${metadata.id}/media`);expect(image.status()).toBe(200);expect((await image.body()).subarray(0,8)).toEqual(Buffer.from([137,80,78,71,13,10,26,10]));
+ const spoofed=await request.post(`${daemon}/api/attachments?name=spoofed.avif`,{data:png,headers:{'Content-Type':'image/avif'}});expect(spoofed.status()).toBe(400);
 });
 
 

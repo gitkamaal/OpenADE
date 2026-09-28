@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 )
 
 func (d *Daemon) handleFileMedia(w http.ResponseWriter, r *http.Request) {
@@ -36,6 +38,52 @@ func (d *Daemon) handleFileMedia(w http.ResponseWriter, r *http.Request) {
 	info, err := file.Stat()
 	if err != nil || !info.Mode().IsRegular() || info.Size() > maxAttachmentBytes {
 		writeError(w, 400, fmt.Errorf("choose an image up to 24 MiB"))
+		return
+	}
+	if strings.EqualFold(filepath.Ext(path), ".svg") {
+		if info.Size() > maxWorkspaceSVGBytes {
+			writeError(w, 400, fmt.Errorf("choose an SVG up to 8 MiB"))
+			return
+		}
+		data, readErr := io.ReadAll(io.LimitReader(file, maxWorkspaceSVGBytes+1))
+		if readErr != nil || len(data) > maxWorkspaceSVGBytes {
+			writeError(w, 400, fmt.Errorf("choose an SVG up to 8 MiB"))
+			return
+		}
+		prepared, prepareErr := sanitizeWorkspaceSVG(data)
+		if prepareErr != nil {
+			writeError(w, 400, prepareErr)
+			return
+		}
+		w.Header().Set("Content-Type", "image/svg+xml")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Cache-Control", "private, no-store")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'")
+		http.ServeContent(w, r, path, info.ModTime(), bytes.NewReader(prepared))
+		return
+	}
+	format := ""
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".avif":
+		format = "avif"
+	case ".heic", ".heif":
+		format = "heic"
+	}
+	if format != "" {
+		data, readErr := io.ReadAll(io.LimitReader(file, maxAttachmentBytes+1))
+		if readErr != nil || len(data) > maxAttachmentBytes {
+			writeError(w, 400, fmt.Errorf("choose an image up to 24 MiB"))
+			return
+		}
+		converted, convertErr := systemImagePNG(format, data)
+		if convertErr != nil {
+			writeError(w, 400, convertErr)
+			return
+		}
+		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Cache-Control", "private, no-store")
+		http.ServeContent(w, r, path, info.ModTime(), bytes.NewReader(converted))
 		return
 	}
 	header := make([]byte, 512)

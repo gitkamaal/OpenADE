@@ -4,6 +4,35 @@ import fs from 'node:fs';
 import path from 'node:path';
 const png=fs.readFileSync(new URL('./fixtures/preview-grid.png',import.meta.url));
 
+test('macOS AVIF and HEIC workspace files render as bounded authenticated PNG previews',async({page,request})=>{
+ const session=await create(request,'Native codec file previews');await expect.poll(()=>status(request,session.id)).toBe('completed');
+ for(const name of ['media-grid.avif','media-grid.heic'])fs.copyFileSync(new URL(`./fixtures/${name}`,import.meta.url),path.join(session.worktree_path,name));
+ await ready(page);await open(page,'Native codec file previews');await page.getByLabel('Toggle files panel').click();
+ for(const name of ['media-grid.avif','media-grid.heic']){
+  const response=await request.get(`${daemon}/api/sessions/${session.id}/file-media?path=${name}`);expect(response.status()).toBe(200);expect(response.headers()['content-type']).toContain('image/png');expect((await response.body()).subarray(0,8)).toEqual(Buffer.from([137,80,78,71,13,10,26,10]));
+  await page.getByRole('treeitem',{name,exact:true}).click();const viewport=page.getByRole('region',{name:`${name} image viewport`});await expect(viewport).toBeVisible();await expect.poll(()=>viewport.locator('img').evaluate(node=>(node as HTMLImageElement).naturalWidth)).toBe(6);
+ }
+ fs.writeFileSync(path.join(session.worktree_path,'spoofed.avif'),png);expect((await request.get(`${daemon}/api/sessions/${session.id}/file-media?path=spoofed.avif`)).status()).toBe(400);
+});
+
+test('static SVG previews render while scripts, HTML, links and external resources are removed',async({page,request})=>{
+ const session=await create(request,'Safe SVG file preview');await expect.poll(()=>status(request,session.id)).toBe('completed');
+ const svg='<svg xmlns="http://www.w3.org/2000/svg" width="240" height="120" viewBox="0 0 240 120"><defs><linearGradient id="shade"><stop offset="0" stop-color="#187ec8"/><stop offset="1" stop-color="#4dcc9b"/></linearGradient></defs><rect width="240" height="120" fill="url(#shade)" onload="alert(1)"/><text x="12" y="64" font-size="22" fill="white">Safe vector</text><circle cx="20" cy="20" r="8" fill="red" style="fill:#f3c452"/><script>alert(2)</script><foreignObject width="50" height="50"><div xmlns="http://www.w3.org/1999/xhtml">Unsafe HTML</div></foreignObject><image href="https://example.invalid/private" width="20" height="20"/><a href="file:///etc/passwd"><circle cx="12" cy="12" r="8"/></a></svg>';
+ fs.writeFileSync(path.join(session.worktree_path,'safe.svg'),svg);
+ fs.writeFileSync(path.join(session.worktree_path,'vector.md'),'# Vector\n\n![Safe vector](safe.svg)\n');
+ const media=`${daemon}/api/sessions/${session.id}/file-media?path=`;
+ const response=await request.get(media+'safe.svg');expect(response.status()).toBe(200);expect(response.headers()['content-type']).toContain('image/svg+xml');expect(response.headers()['cache-control']).toContain('no-store');
+ const prepared=await response.text();expect(prepared).toContain('Safe vector');expect(prepared).toContain('url(#shade)');expect(prepared).toContain('fill="#f3c452"');expect(prepared).not.toContain('fill="red"');for(const unsafe of ['<script','<foreignObject','<image','<a ','onload','example.invalid','file:///etc/passwd','Unsafe HTML','alert(2)'])expect(prepared).not.toContain(unsafe);
+ await ready(page);await open(page,'Safe SVG file preview');await page.getByLabel('Toggle files panel').click();await page.getByRole('treeitem',{name:'safe.svg',exact:true}).click();
+ const viewport=page.getByRole('region',{name:'safe.svg image viewport'});await expect(viewport).toBeVisible();await expect.poll(()=>viewport.locator('img').evaluate(node=>(node as HTMLImageElement).naturalWidth)).toBe(240);await expect(page.getByLabel('Save file',{exact:true})).toBeDisabled();
+ await page.getByRole('treeitem',{name:'vector.md',exact:true}).click();await page.getByLabel('Preview Markdown').click();await expect.poll(()=>page.getByLabel('View Safe vector').locator('img').evaluate(node=>(node as HTMLImageElement).naturalWidth)).toBe(240);
+ fs.writeFileSync(path.join(session.worktree_path,'doctype.svg'),'<!DOCTYPE svg [<!ENTITY hidden SYSTEM "file:///etc/passwd">]><svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>');
+ fs.writeFileSync(path.join(session.worktree_path,'huge.svg'),'<svg xmlns="http://www.w3.org/2000/svg" width="99999" height="10"/>');
+ fs.writeFileSync(path.join(session.worktree_path,'external.svg'),'<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><rect width="20" height="20" fill="u\\72l(https://example.invalid/private)"/></svg>');
+ for(const name of ['doctype.svg','huge.svg'])expect((await request.get(media+name)).status()).toBe(400);
+ const escaped=await request.get(media+'external.svg');expect(escaped.status()).toBe(200);expect(await escaped.text()).not.toContain('example.invalid');
+});
+
 test('workspace WebP, BMP and TIFF files render through authenticated image media',async({page,request})=>{
  const session=await create(request,'Raster file preview formats');await expect.poll(()=>status(request,session.id)).toBe('completed');
  for(const name of ['media-grid.webp','media-grid.bmp','media-grid.tif'])fs.copyFileSync(new URL(`./fixtures/${name}`,import.meta.url),path.join(session.worktree_path,name));

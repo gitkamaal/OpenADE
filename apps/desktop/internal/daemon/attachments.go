@@ -46,9 +46,31 @@ func (d *Daemon) handleUploadAttachment(w http.ResponseWriter, r *http.Request) 
 		writeError(w, 413, fmt.Errorf("image exceeds 24 MiB"))
 		return
 	}
+	sourceName := filepath.Base(r.URL.Query().Get("name"))
+	nativeFormat := ""
+	switch strings.ToLower(filepath.Ext(sourceName)) {
+	case ".svg":
+		nativeFormat = "svg"
+		data, err = sanitizeWorkspaceSVG(data)
+	case ".avif":
+		nativeFormat = "avif"
+	case ".heic", ".heif":
+		nativeFormat = "heic"
+	}
+	if err != nil {
+		writeError(w, 400, err)
+		return
+	}
+	if nativeFormat != "" {
+		data, err = systemImagePNG(nativeFormat, data)
+		if err != nil {
+			writeError(w, 400, err)
+			return
+		}
+	}
 	config, format, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil || config.Width <= 0 || config.Height <= 0 || int64(config.Width)*int64(config.Height) > 64_000_000 {
-		writeError(w, 400, fmt.Errorf("choose a valid PNG, JPEG, GIF, WebP, BMP or TIFF image up to 64 megapixels"))
+		writeError(w, 400, fmt.Errorf("choose a valid PNG, JPEG, GIF, WebP, BMP, TIFF, SVG, AVIF or HEIC image up to 64 megapixels"))
 		return
 	}
 	ext := map[string]string{"png": ".png", "jpeg": ".jpg", "gif": ".gif", "webp": ".webp", "bmp": ".png", "tiff": ".png"}[format]
@@ -70,7 +92,7 @@ func (d *Daemon) handleUploadAttachment(w http.ResponseWriter, r *http.Request) 
 		data = encoded.Bytes()
 		format = "png"
 	}
-	name := filepath.Base(r.URL.Query().Get("name"))
+	name := sourceName
 	name = strings.Map(func(c rune) rune {
 		if unicode.IsControl(c) {
 			return -1
