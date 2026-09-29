@@ -38,6 +38,42 @@ test('Claude cached context usage excludes child traffic and persists in the cha
  await expect.poll(async()=>{const current=await(await request.get(`${daemon}/api/sessions/${s.id}`)).json();return current.generation===2?current.status:'previous';}).toBe('completed');
  expect((await state(request,s.id)).context).toEqual({tokens:42000,window:200000});
 });
+test('Claude stdio questions use the custom multi-page wizard and return answers to the same run',async({request,page})=>{
+ const s=await create(request,'Claude stdio question',{agent:'claude',prompt:'claude-question'});
+ await expect.poll(async()=>(await state(request,s.id)).requests.length).toBe(1);
+ const pending=(await state(request,s.id)).requests[0];
+ expect((await request.post(`${daemon}/api/sessions/${s.id}/provider-requests/${pending.id}`,{data:{generation:pending.generation+1,answers:{}}})).status()).toBe(409);
+ await expect.poll(()=>status(request,s.id)).toBe('waiting');
+ await ready(page);await open(page,'Claude stdio question');
+ const wizard=page.getByRole('dialog',{name:'Your input is needed'});await expect(wizard).toBeVisible();
+ await wizard.getByRole('button',{name:'Editor'}).click();await wizard.getByRole('button',{name:'Terminal'}).click();
+ await expect(wizard.getByRole('button',{name:'Editor'})).toHaveAttribute('aria-pressed','true');
+ await wizard.getByRole('button',{name:'Next'}).click();await expect(wizard).toContainText('Which priority?');
+ await wizard.getByRole('button',{name:'Now'}).click();
+ await expect.poll(()=>status(request,s.id)).toBe('completed');await expect(wizard).toBeHidden();
+ expect((await request.post(`${daemon}/api/sessions/${s.id}/provider-requests/${pending.id}`,{data:{generation:pending.generation,answers:{}}})).status()).toBe(409);
+ const wire=JSON.parse(fs.readFileSync(path.join(tmp,'provider-home/claude-control-answer.json'),'utf8'));
+ expect(wire).toMatchObject({type:'control_response',response:{subtype:'success',request_id:'claude-ask-1',response:{behavior:'allow',updatedInput:{answers:{'Which areas?':['Editor','Terminal'],'Which priority?':'Now'}}}}});
+ const transcript=fs.readFileSync(path.join(tmp,'data/transcripts',s.id+'.log'),'utf8');
+ expect(transcript).not.toContain('control_request');expect(transcript).not.toContain('Which areas?');expect(transcript).toContain('"status":"pending"');expect(transcript).toContain('"status":"answered"');
+});
+test('Claude non-question stdio tool permissions are answered without a wizard',async({request})=>{
+ const s=await create(request,'Claude stdio tool',{agent:'claude',prompt:'claude-question permission'});
+ await expect.poll(()=>status(request,s.id)).toBe('completed');
+ expect((await state(request,s.id)).requests).toEqual([]);
+ const wire=JSON.parse(fs.readFileSync(path.join(tmp,'provider-home/claude-control-answer.json'),'utf8'));
+ expect(wire.response.response).toEqual({behavior:'allow',updatedInput:{command:'printf harmless'}});
+});
+test('stopping Claude during a question dismisses its request and transcript chip',async({request})=>{
+ const s=await create(request,'Claude interrupted question',{agent:'claude',prompt:'claude-question'});
+ await expect.poll(async()=>(await state(request,s.id)).requests.length).toBe(1);
+ const question=(await state(request,s.id)).requests[0];
+ expect((await request.post(`${daemon}/api/sessions/${s.id}/stop`)).ok()).toBe(true);
+ await expect.poll(()=>status(request,s.id)).toBe('stopped');
+ await expect.poll(async()=>(await state(request,s.id)).requests.length).toBe(0);
+ const transcript=fs.readFileSync(path.join(tmp,'data/transcripts',s.id+'.log'),'utf8');
+ expect(transcript).toContain(`"id":"${question.id}"`);expect(transcript).toContain('"status":"dismissed"');
+});
 test('Claude Agent/Task child output stays in its own document and SendMessage reopens it',async({request,page})=>{
  const s=await create(request,'Claude linked agent',{agent:'claude',prompt:'claude-child'});
  await expect.poll(()=>status(request,s.id)).toBe('completed');

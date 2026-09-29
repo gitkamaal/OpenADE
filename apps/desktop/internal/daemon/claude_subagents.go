@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -16,17 +18,26 @@ import (
 // bounded document. The same document API and chat renderer serve Codex.
 type claudeSubagents struct {
 	*codexSubagents
-	generation int64
-	carry      []byte
-	tasks      map[string]string // Claude task ID -> Agent/Task tool_use ID
-	pending    map[string][][]byte
-	pendingLen int
-	lastModel  string
-	context    ProviderContext
+	generation  int64
+	carry       []byte
+	tasks       map[string]string // Claude task ID -> Agent/Task tool_use ID
+	pending     map[string][][]byte
+	pendingLen  int
+	lastModel   string
+	context     ProviderContext
+	inputMu     sync.Mutex
+	input       *os.File
+	inputClosed bool
+	pid         int
+	requestsMu  sync.Mutex
+	requests    map[string]*claudePendingQuestion
+	nextRequest uint64
+	live        *liveSession
+	transcript  *os.File
 }
 
 func newClaudeSubagents(store *Store, dataDir, sessionID string, generation int64) *claudeSubagents {
-	s := &claudeSubagents{codexSubagents: newCodexSubagents(store, dataDir, sessionID, ""), generation: generation, tasks: map[string]string{}, pending: map[string][][]byte{}}
+	s := &claudeSubagents{codexSubagents: newCodexSubagents(store, dataDir, sessionID, ""), generation: generation, tasks: map[string]string{}, pending: map[string][][]byte{}, requests: map[string]*claudePendingQuestion{}}
 	var saved string
 	if store.db.QueryRow(`SELECT state FROM provider_context WHERE session_id=?`, sessionID).Scan(&saved) == nil {
 		_ = json.Unmarshal([]byte(saved), &s.context)
@@ -43,15 +54,27 @@ type claudeWireBlock struct {
 
 type claudeWireFrame struct {
 	Type, Subtype, Parent, ToolUseID, TaskID, SubagentType, Status string
+	RequestID                                                      string `json:"request_id"`
 	Message                                                        struct {
-		Content []claudeWireBlock          `json:"content"`
+		Content json.RawMessage            `json:"content"`
 		Model   string                     `json:"model"`
 		Usage   map[string]json.RawMessage `json:"usage"`
 	} `json:"message"`
+	Request struct {
+		Subtype  string          `json:"subtype"`
+		ToolName string          `json:"tool_name"`
+		Input    json.RawMessage `json:"input"`
+	} `json:"request"`
 	ModelUsage map[string]struct {
 		CanonicalModel string          `json:"canonicalModel"`
 		ContextWindow  json.RawMessage `json:"contextWindow"`
 	} `json:"modelUsage"`
+}
+
+func (f *claudeWireFrame) blocks() []claudeWireBlock {
+	var blocks []claudeWireBlock
+	_ = json.Unmarshal(f.Message.Content, &blocks)
+	return blocks
 }
 
 func claudeCount(raw json.RawMessage) (uint64, bool) {
@@ -193,16 +216,28 @@ func (s *claudeSubagents) line(raw []byte) []byte {
 		}
 		return nil
 	}
+	if frame.Type == "control_request" {
+		return s.handleControlRequest(&frame)
+	}
 	s.recordContext(&frame)
+	if frame.Type == "result" {
+		s.closeInput()
+	}
 	out := append(raw, '\n')
 	if frame.Type == "user" {
-		s.settleToolResults(frame.Message.Content)
-		return out
+		blocks := frame.blocks()
+		s.settleToolResults(blocks)
+		for _, block := range blocks {
+			if block.Type == "tool_result" {
+				return out
+			}
+		}
+		return nil
 	}
 	if frame.Type != "assistant" {
 		return out
 	}
-	for _, block := range frame.Message.Content {
+	for _, block := range frame.blocks() {
 		if block.Type != "tool_use" || block.ID == "" || len(block.ID) > 256 {
 			continue
 		}
@@ -297,7 +332,7 @@ func (s *claudeSubagents) childLine(spawnID string, raw []byte, frame *claudeWir
 		if frame.Type != "user" {
 			return
 		}
-		for _, block := range frame.Message.Content {
+		for _, block := range frame.blocks() {
 			if block.Type == "text" && strings.TrimSpace(block.Text) != "" && !strings.HasPrefix(block.Text, "[Request interrupted") && !strings.HasPrefix(block.Text, "<system-reminder>") {
 				s.setStatus(doc, "running")
 				break
@@ -308,7 +343,7 @@ func (s *claudeSubagents) childLine(spawnID string, raw []byte, frame *claudeWir
 		}
 	}
 	if frame.Type == "assistant" {
-		for _, block := range frame.Message.Content {
+		for _, block := range frame.blocks() {
 			if block.Type != "tool_use" || block.ID == "" || len(block.ID) > 256 {
 				continue
 			}
@@ -322,8 +357,9 @@ func (s *claudeSubagents) childLine(spawnID string, raw []byte, frame *claudeWir
 		}
 	}
 	if frame.Type == "user" {
-		s.settleToolResults(frame.Message.Content)
-		for _, block := range frame.Message.Content {
+		blocks := frame.blocks()
+		s.settleToolResults(blocks)
+		for _, block := range blocks {
 			if block.Type == "text" && strings.TrimSpace(block.Text) != "" && !strings.HasPrefix(block.Text, "[Request interrupted") && !strings.HasPrefix(block.Text, "<system-reminder>") {
 				s.write(doc, map[string]any{"type": "openade.user_message", "text": clipSubagentText(block.Text, 64*1024)})
 			}
@@ -351,6 +387,8 @@ func (s *claudeSubagents) finish(doc *subagentDoc, status string) {
 }
 
 func (s *claudeSubagents) finishProcess() {
+	s.closeInput()
+	s.dismissQuestions()
 	for _, doc := range s.bySpawn {
 		if doc.Status == "running" {
 			s.setStatus(doc, "interrupted")

@@ -439,7 +439,7 @@ export const fileMediaURL=(sessionId:string,path:string)=>`/api/sessions/${encod
 // not appear in image URLs, accessibility trees, captures or the browser cache.
 export async function fetchMedia(source:string,signal:AbortSignal){await engineConnection();const path=new URL(source,DAEMON_URL);if(!/^\/api\/(?:attachments\/[^/]+\/media|sessions\/[^/]+\/file-media|sessions\/[^/]+\/generated-images\/[0-9a-f]{64}\/media|new-thread-artwork\/media)$/.test(path.pathname))throw Error("Unsupported image source.");path.searchParams.delete("token");const mutableWorkspaceImage=path.pathname.endsWith('/file-media');const response=await fetch(DAEMON_URL+path.pathname+path.search,{signal,cache:mutableWorkspaceImage?'no-store':'default',headers:{Authorization:`Bearer ${authToken}`}});if(!response.ok)throw Error("Image unavailable.");return response.blob();}
 
-export interface ProviderQuestion {id:string;header:string;question:string;isOther:boolean;isSecret:boolean;options:{label:string;description:string}[]|null}
+export interface ProviderQuestion {id:string;header:string;question:string;multiSelect?:boolean;isOther:boolean;isSecret:boolean;options:{label:string;description:string}[]|null}
 export interface ProviderRequest {id:string;generation:number;kind:"question"|"approval";title:string;detail:string;questions:ProviderQuestion[];decisions:string[]}
 export interface ProviderState {connected:boolean;steering:boolean;requests:ProviderRequest[];context:{tokens:number|null;window:number|null}}
 export const getProviderState=(id:string,signal?:AbortSignal)=>request<ProviderState>(`/api/sessions/${id}/provider-state`,{signal});

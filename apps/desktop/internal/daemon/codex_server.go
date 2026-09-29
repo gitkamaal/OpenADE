@@ -71,12 +71,13 @@ func supportsCodexServer(program string) bool {
 }
 
 type ProviderQuestion struct {
-	ID       string           `json:"id"`
-	Header   string           `json:"header"`
-	Question string           `json:"question"`
-	IsOther  bool             `json:"isOther"`
-	IsSecret bool             `json:"isSecret"`
-	Options  []ProviderOption `json:"options"`
+	ID          string           `json:"id"`
+	Header      string           `json:"header"`
+	Question    string           `json:"question"`
+	MultiSelect bool             `json:"multiSelect,omitempty"`
+	IsOther     bool             `json:"isOther"`
+	IsSecret    bool             `json:"isSecret"`
+	Options     []ProviderOption `json:"options"`
 }
 type ProviderOption struct {
 	Label       string `json:"label"`
@@ -188,6 +189,10 @@ func (m *SessionManager) providerState(id string) ProviderState {
 		c.mu.Lock()
 		state.Connected = !c.closed
 		c.mu.Unlock()
+	}
+	if c := m.claudeClient(id); c != nil {
+		state.Connected = true
+		state.Requests = append(state.Requests, c.providerRequests()...)
 	}
 	sort.Slice(state.Requests, func(i, j int) bool { return state.Requests[i].order < state.Requests[j].order })
 	return state

@@ -21,12 +21,12 @@ func TestClaudePrintArgsUsesForwardFlagOnlyWhenAdvertised(t *testing.T) {
 			if err := os.WriteFile(program, []byte("#!/bin/sh\nprintf '%s' '"+tc.help+"'\n"), 0700); err != nil {
 				t.Fatal(err)
 			}
-			args := claudePrintArgs(program, []string{"--resume", "conversation-id"}, "Continue")
+			args := claudePrintArgs(program, []string{"--resume", "conversation-id"})
 			if got := slices.Contains(args, "--forward-subagent-text"); got != tc.forwarded {
 				t.Fatalf("forward flag=%t, want %t: %v", got, tc.forwarded, args)
 			}
-			if args[len(args)-1] != "Continue" || !slices.Contains(args, "stream-json") {
-				t.Fatalf("Claude structured run lost its prompt or output format: %v", args)
+			if !slices.Contains(args, "stream-json") || !slices.Contains(args, "--permission-prompt-tool") || slices.Contains(args, "Continue") {
+				t.Fatalf("Claude structured run must use stdin and the control bridge: %v", args)
 			}
 		})
 	}

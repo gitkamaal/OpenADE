@@ -21,15 +21,18 @@ func (d *Daemon) handleProviderReply(w http.ResponseWriter, r *http.Request) {
 	}
 	c := d.sessions.codexClient(r.PathValue("id"))
 	a := d.sessions.acpClient(r.PathValue("id"))
-	if c == nil && a == nil {
+	claude := d.sessions.claudeClient(r.PathValue("id"))
+	if c == nil && a == nil && claude == nil {
 		writeError(w, 409, fmt.Errorf("this request is no longer active"))
 		return
 	}
 	var err error
 	if c != nil {
 		err = c.reply(r.PathValue("requestID"), body)
-	} else {
+	} else if a != nil {
 		err = a.reply(r.PathValue("requestID"), body)
+	} else {
+		err = claude.reply(r.PathValue("requestID"), body)
 	}
 	if err != nil {
 		writeError(w, 409, err)

@@ -17,13 +17,14 @@ def emit(value): print(json.dumps(value),flush=True)
 if name=='claude' and args==['--help']:
  print('--forward-subagent-text',flush=True);sys.exit(0)
 if name=='claude' and '--input-format' in args:
- for raw in sys.stdin:
-  frame=json.loads(raw)
-  if frame.get('type')=='control_request' and frame.get('request',{}).get('subtype')=='initialize':
-   with open(os.path.join(os.environ['OPENADE_PROVIDER_HOME'],'claude-model-probes.log'),'a') as probe_log:probe_log.write('initialize\\n')
-   emit({'type':'control_response','response':{'subtype':'success','request_id':frame['request_id'],'response':{'models':[{'value':'default','resolvedModel':'claude-opus-5-5','displayName':'Opus 5.5'},{'value':'gateway/claude-custom','resolvedModel':'gateway/claude-custom','displayName':'Work Claude','description':'Custom organization model','supportedEffortLevels':['low','high','high','unknown']},{'value':'sonnet'},{'value':'bad model id'}]}}})
-   break
- sys.exit(0)
+ frame=json.loads(sys.stdin.readline())
+ if frame.get('type')=='control_request' and frame.get('request',{}).get('subtype')=='initialize':
+  with open(os.path.join(os.environ['OPENADE_PROVIDER_HOME'],'claude-model-probes.log'),'a') as probe_log:probe_log.write('initialize\\n')
+  emit({'type':'control_response','response':{'subtype':'success','request_id':frame['request_id'],'response':{'models':[{'value':'default','resolvedModel':'claude-opus-5-5','displayName':'Opus 5.5'},{'value':'gateway/claude-custom','resolvedModel':'gateway/claude-custom','displayName':'Work Claude','description':'Custom organization model','supportedEffortLevels':['low','high','high','unknown']},{'value':'sonnet'},{'value':'bad model id'}]}}})
+  sys.exit(0)
+ if frame.get('type')!='user':sys.exit(9)
+ prompt=frame.get('message',{}).get('content','')
+ if '--replay-user-messages' in args:emit({'type':'user','message':{'content':prompt}})
 if name=='codex' and args==['app-server'] and sid=='account-probe':
  email='fixture@example.test'
  connected=False
@@ -62,6 +63,15 @@ if structured:
   print('env: node: No such file or directory',flush=True);sys.exit(127)
  if name=='claude':emit({'type':'system','session_id':'claude-'+sid})
  else:emit({'type':'thread.started','thread_id':'codex-'+sid})
+ if name=='claude' and 'claude-question' in prompt:
+  kind='Bash' if 'permission' in prompt else 'AskUserQuestion'
+  question_input={'questions':[{'header':'Scope','question':'Which areas?','multiSelect':True,'options':[{'label':'Editor','description':'Edit files'},{'label':'Terminal','description':'Run commands'}]},{'header':'Priority','question':'Which priority?','options':['Now','Later']}]} if kind=='AskUserQuestion' else {'command':'printf harmless'}
+  emit({'type':'control_request','request_id':'claude-ask-1','request':{'subtype':'can_use_tool','tool_name':kind,'input':question_input}})
+  reply=json.loads(sys.stdin.readline())
+  with open(os.path.join(os.environ['OPENADE_PROVIDER_HOME'],'claude-control-answer.json'),'w') as answer_file:json.dump(reply,answer_file)
+  emit({'type':'assistant','message':{'content':[{'type':'text','text':'Claude received the control response.'}]}})
+  emit({'type':'result','result':'Claude received the control response.'})
+  sys.exit(0)
  if name=='claude' and 'claude-context' in prompt:
   emit({'type':'assistant','parent_tool_use_id':'child-only','message':{'model':'child','content':[],'usage':{'input_tokens':999999}}})
   emit({'type':'assistant','message':{'model':'primary','content':[{'type':'text','text':'Claude context is available.'}],'usage':{'input_tokens':200,'cache_read_input_tokens':40000,'cache_creation_input_tokens':1800,'output_tokens':100}}})

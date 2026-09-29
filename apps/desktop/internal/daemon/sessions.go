@@ -347,6 +347,7 @@ func (m *SessionManager) launchCommand(session Session, program string, args []s
 	cmd.Dir = session.WorktreePath
 	cmd.Env = processEnvironment("TERM=xterm-256color", "COLORTERM=truecolor", "OPENADE_SESSION_ID="+session.ID)
 	var ptmx *os.File
+	var claudeInput *os.File
 	rawPTY := session.Mode == "tui" || !providerCapabilities(session.Agent).NativeChat
 	if rawPTY {
 		ptmx, err = pty.StartWithSize(cmd, &pty.Winsize{Rows: 42, Cols: 120})
@@ -355,14 +356,28 @@ func (m *SessionManager) launchCommand(session Session, program string, args []s
 		ptmx, writer, err = os.Pipe()
 		if err == nil {
 			cmd.Stdout = writer
-			cmd.Stderr = writer
-			cmd.Stdin = nil
+			if session.Mode == "chat" && isClaudeAgent(session.Agent) {
+				cmd.Stderr = io.Discard
+				var input io.WriteCloser
+				input, err = cmd.StdinPipe()
+				if err == nil {
+					claudeInput = input.(*os.File)
+				}
+			} else {
+				cmd.Stderr = writer
+				cmd.Stdin = nil
+			}
 			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-			err = cmd.Start()
+			if err == nil {
+				err = cmd.Start()
+			}
 			_ = writer.Close()
 		}
 	}
 	if err != nil {
+		if claudeInput != nil {
+			_ = claudeInput.Close()
+		}
 		if ptmx != nil {
 			_ = ptmx.Close()
 		}
@@ -376,17 +391,36 @@ func (m *SessionManager) launchCommand(session Session, program string, args []s
 	live.turnID = turnID
 	if session.Mode == "chat" && isClaudeAgent(session.Agent) {
 		live.claude = newClaudeSubagents(m.store, m.dataDir, session.ID, generation)
+		live.claude.attachInput(claudeInput, cmd.Process.Pid)
 	}
 	if err := m.store.UpdateRuntime(session.ID, "running", cmd.Process.Pid, nil); err != nil {
 		terminateUnmanagedProcess(live)
 		return err
 	}
+	transcriptDir := filepath.Join(m.dataDir, "transcripts")
+	if err := os.MkdirAll(transcriptDir, 0o755); err != nil {
+		terminateUnmanagedProcess(live)
+		_ = m.store.UpdateRuntime(session.ID, "failed", 0, nil)
+		return err
+	}
+	transcript, err := os.OpenFile(filepath.Join(transcriptDir, session.ID+".log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		terminateUnmanagedProcess(live)
+		_ = m.store.UpdateRuntime(session.ID, "failed", 0, nil)
+		return err
+	}
+	if live.claude != nil {
+		live.claude.attachOutput(live, transcript)
+		if err := live.claude.sendInitial(session.Prompt); err != nil {
+			_ = transcript.Close()
+			terminateUnmanagedProcess(live)
+			_ = m.store.UpdateRuntime(session.ID, "failed", 0, nil)
+			return fmt.Errorf("start Claude stream: %w", err)
+		}
+	}
 	m.mu.Lock()
 	m.live[session.ID] = live
 	m.mu.Unlock()
-	transcriptDir := filepath.Join(m.dataDir, "transcripts")
-	_ = os.MkdirAll(transcriptDir, 0o755)
-	transcript, _ := os.OpenFile(filepath.Join(transcriptDir, session.ID+".log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	go m.readOutput(session.ID, live, transcript)
 	go m.wait(session.ID, live, transcript)
 	return nil
@@ -585,7 +619,7 @@ func resumeAgentCommand(session Session, providerID, prompt string) (string, []s
 	}
 	switch name {
 	case "claude":
-		return program, claudePrintArgs(program, []string{"--resume", providerID}, prompt), nil
+		return program, claudePrintArgs(program, []string{"--resume", providerID}), nil
 	case "codex":
 		return program, codexExecArgs(session, providerID, prompt), nil
 	default:
@@ -599,18 +633,18 @@ func startClaudeAgentCommand(session Session, providerID, prompt string) (string
 	if err != nil {
 		return "", nil, err
 	}
-	return program, claudePrintArgs(program, []string{"--session-id", providerID}, prompt), nil
+	return program, claudePrintArgs(program, []string{"--session-id", providerID}), nil
 }
 
 var claudeForwardSupport sync.Map
 
-func claudePrintArgs(program string, prefix []string, prompt string) []string {
+func claudePrintArgs(program string, prefix []string) []string {
 	args := append([]string{}, prefix...)
-	args = append(args, "--print", "--verbose", "--output-format", "stream-json", "--include-partial-messages")
+	args = append(args, "--print", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--replay-user-messages", "--permission-prompt-tool", "stdio")
 	if supportsClaudeForwardSubagentText(program) {
 		args = append(args, "--forward-subagent-text")
 	}
-	return append(args, "--permission-mode", "acceptEdits", prompt)
+	return args
 }
 
 func supportsClaudeForwardSubagentText(program string) bool {
@@ -735,7 +769,7 @@ func agentCommand(session Session) (string, []string, error) {
 		}
 	case "claude":
 		if session.Prompt != "" {
-			return program, claudePrintArgs(program, []string{"--name", session.Title}, session.Prompt), nil
+			return program, claudePrintArgs(program, []string{"--name", session.Title}), nil
 		}
 		return program, []string{"--name", session.Title}, nil
 	case "codex":
