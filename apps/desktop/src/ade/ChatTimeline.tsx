@@ -170,15 +170,21 @@ function workSummary(activities:ChatActivity[]):string{
  const thoughts=activities.filter(activity=>activity.kind==="thinking").length;
  const commands=activities.filter(activity=>activity.kind==="command").length;
  const counts={edited:0,read:0,searched:0,fetched:0,todos:0,other:0};
+ const editedPaths=new Set<string>();
  for(const activity of activities.filter(item=>item.kind==="tool")){
   const title=activity.title.toLowerCase();
-  if(/^(edit|write|apply patch|changed files)/.test(title))counts.edited++;
+  if(activity.operation||/^(edit|write|apply patch|changed files)/.test(title)){
+   if(activity.paths?.length)for(const path of activity.paths)editedPaths.add(path);
+   else counts.edited++;
+  }
   else if(/^(read|open file)/.test(title))counts.read++;
   else if(/^(search|grep|glob|web search)/.test(title))counts.searched++;
   else if(/^(web fetch|fetch)/.test(title))counts.fetched++;
   else if(/^(todo|update plan)/.test(title))counts.todos++;
   else counts.other++;
  }
+ counts.edited+=editedPaths.size;
+ const failures=activities.filter(activity=>activity.failed).length;
  const plural=(count:number,single:string,many:string)=>`${count} ${count===1?single:many}`;
  const parts:string[]=[];
  if(thoughts)parts.push(thoughts===1?"Thought process":`Thought ${thoughts} times`);
@@ -189,6 +195,7 @@ function workSummary(activities:ChatActivity[]):string{
  if(counts.fetched)parts.push(`fetched ${plural(counts.fetched,"page","pages")}`);
  if(counts.todos)parts.push("updated todos");
  if(counts.other)parts.push(`called ${plural(counts.other,"tool","tools")}`);
+ if(failures)parts.push(`${failures} failed`);
  return parts.join(" · ").replace(/^./,letter=>letter.toUpperCase())||"Activity";
 }
 

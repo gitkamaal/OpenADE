@@ -56,6 +56,15 @@ def work(turn,prompt):
   notify('item/completed',{'threadId':thread,'turnId':turn,'item':{'id':'message','type':'agentMessage','text':'First text. Second text. Third text.'}})
   notify('turn/completed',{'threadId':thread,'turn':{'id':turn,'status':'completed'}})
   return
+ if 'typed-file-changes' in prompt:
+  for item_id,kind,file_path,status in [('change-one','update','src/shared.ts','completed'),('change-two','add','src/shared.ts','completed'),('change-three','update','src/other.ts','failed')]:
+   item={'id':item_id,'type':'fileChange','status':'inProgress','changes':[{'kind':kind,'path':file_path}]}
+   notify('item/started',{'threadId':thread,'turnId':turn,'item':item})
+   finished={**item,'status':status}
+   if item_id=='change-one':finished.pop('changes')
+   notify('item/completed',{'threadId':thread,'turnId':turn,'item':finished})
+  complete(turn,'Typed files inspected')
+  return
  if 'flood' in prompt:
   for _ in range(40):notify('item/agentMessage/delta',{'threadId':thread,'turnId':turn,'delta':'x'*300000})
   return

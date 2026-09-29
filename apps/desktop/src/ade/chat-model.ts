@@ -5,6 +5,9 @@ export interface ChatActivity {
   kind: ChatActivityKind;
   title: string;
   detail?: string;
+  operation?: "edit" | "write" | "patch";
+  paths?: string[];
+  failed?: boolean;
   status?: "pending" | "answered" | "dismissed";
   docId?: string;
   subagentState?: "starting" | "spawned" | "failed";
@@ -117,12 +120,23 @@ export function createTranscriptParser(initialPrompt:string,initialCreatedAt?:st
     }
     if(type==="openade.tool"){
       const title=String(event.title??"Used a tool"),detail=String(event.detail??""),wireID=String(event.id??"");
+      const operation=event.operation==="edit"||event.operation==="write"||event.operation==="patch"?event.operation:undefined;
+      const paths=Array.isArray(event.paths)?event.paths.filter((path):path is string=>typeof path==="string"&&path.length>0&&path.length<=1024).slice(0,64):[];
+      const failed=event.failed===true;
       if(wireID){
         const id=`${assistant.id}-tool-${wireID}`;
         const existing=assistant.activities.find(activity=>activity.id===id);
-        if(existing){existing.title=title;existing.detail=detail;}
-        else assistant.activities.push({id,kind:"tool",title,detail});
-      }else addActivity(assistant,"tool",title,detail);
+        if(existing){
+          if(paths.length||!existing.paths?.length){existing.title=title;existing.detail=detail;existing.operation=operation;}
+          if(paths.length)existing.paths=paths;
+          if(failed)existing.failed=true;
+        }
+        else assistant.activities.push({id,kind:"tool",title,detail,operation,paths,failed});
+      }else{
+        addActivity(assistant,"tool",title,detail);
+        const activity=assistant.activities.at(-1);
+        if(activity?.kind==="tool"){activity.operation=operation;activity.paths=paths;activity.failed=failed;}
+      }
     }
     if(type==="openade.question"){
       const wireID=String(event.id??""),header=String(event.header??"Question").trim().slice(0,256),status=String(event.status??"");

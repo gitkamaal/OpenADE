@@ -614,9 +614,10 @@ func (c *codexConversation) handle(frame providerRPCFrame) {
 		Delta     string                      `json:"delta"`
 		Item      struct {
 			Type, ID, Text, Command, AggregatedOutput, Status, Tool string
-			SavedPath                                               string          `json:"savedPath"`
-			SavedPathSnake                                          string          `json:"saved_path"`
-			Failure                                                 json.RawMessage `json:"failure"`
+			Changes                                                 []struct{ Path, Kind string } `json:"changes"`
+			SavedPath                                               string                        `json:"savedPath"`
+			SavedPathSnake                                          string                        `json:"saved_path"`
+			Failure                                                 json.RawMessage               `json:"failure"`
 		} `json:"item"`
 		TokenUsage struct {
 			Last               struct{ TotalTokens, InputTokens, OutputTokens *uint64 }
@@ -848,8 +849,47 @@ func (c *codexConversation) handle(frame providerRPCFrame) {
 			}
 		case "commandExecution":
 			c.emit(map[string]any{"type": phase, "item": map[string]string{"type": "command_execution", "command": p.Item.Command, "aggregated_output": p.Item.AggregatedOutput}})
-		case "fileChange":
-			c.emit(map[string]any{"type": "openade.tool", "title": "Changed files", "detail": p.Item.Status})
+		case "fileChange", "file_change":
+			// Keep start/completion on one row, and pass the typed path through
+			// so the collapsed summary counts distinct files rather than frames.
+			id := p.Item.ID
+			if len(id) > 256 {
+				id = ""
+			}
+			title, operation := "Changed files", "patch"
+			paths := make([]string, 0, min(len(p.Item.Changes), 64))
+			seen := make(map[string]bool)
+			for _, change := range p.Item.Changes {
+				path := strings.TrimSpace(change.Path)
+				if path == "" || len(path) > 1024 || seen[path] {
+					continue
+				}
+				seen[path] = true
+				paths = append(paths, path)
+				if len(paths) == 64 {
+					break
+				}
+			}
+			if len(p.Item.Changes) == 1 {
+				switch p.Item.Changes[0].Kind {
+				case "add":
+					title, operation = "Wrote file", "write"
+				case "update":
+					title, operation = "Edited file", "edit"
+				default:
+					title = "Applied patch"
+				}
+			} else if len(p.Item.Changes) > 1 {
+				title = "Applied patch"
+			}
+			detail := ""
+			if len(paths) == 1 {
+				detail = paths[0]
+			} else if len(paths) > 1 {
+				detail = fmt.Sprintf("%d files", len(paths))
+			}
+			failed := p.Item.Status == "failed" || p.Item.Status == "declined"
+			c.emit(map[string]any{"type": "openade.tool", "id": id, "title": title, "detail": detail, "operation": operation, "paths": paths, "failed": failed})
 		case "mcpToolCall", "webSearch":
 			title := "MCP tool"
 			if p.Item.Type == "webSearch" {

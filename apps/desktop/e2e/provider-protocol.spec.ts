@@ -89,6 +89,28 @@ test('thinking separated by assistant text remains in two ordered work groups',a
  await expect(parts.nth(4)).toHaveText('Third text.');
 });
 
+test('Codex file changes keep stable rows and count distinct paths after reload',async({request,page})=>{
+ const session=await create(request,'Typed file changes',{agent:'codex',prompt:'typed-file-changes'});
+ await expect.poll(()=>status(request,session.id)).toBe('completed');
+ const transcript=fs.readFileSync(path.join(tmp,'data/transcripts',session.id+'.log'),'utf8');
+ const tools=transcript.trim().split('\n').map(line=>JSON.parse(line)).filter(event=>event.type==='openade.tool');
+ expect(tools).toHaveLength(6);
+ expect(tools[0]).toMatchObject({id:'change-one',title:'Edited file',paths:['src/shared.ts'],operation:'edit'});
+ expect(tools[1]).toMatchObject({id:'change-one',paths:[]});
+ expect(tools[5]).toMatchObject({id:'change-three',paths:['src/other.ts'],failed:true});
+ await ready(page);await open(page,'Typed file changes');
+ const group=page.locator('.chat-assistant-turn .activity-group').last();
+ await expect(group.locator('summary')).toHaveText('Edited 2 files · 1 failed');
+ await group.locator('summary').click();
+ await expect(group.locator('.activity-row')).toHaveCount(3);
+ await group.locator('.activity-row').nth(0).getByRole('button',{name:'Edited file'}).click();
+ await expect(group.locator('.activity-row').nth(0)).toContainText('src/shared.ts');
+ await page.reload();
+ await expect(group.locator('summary')).toHaveText('Edited 2 files · 1 failed');
+ await group.locator('summary').click();
+ await expect(group.locator('.activity-row')).toHaveCount(3);
+});
+
 test('Codex app-server reasoning text reaches the native work accordion',async({request,page})=>{
  const session=await create(request,'reasoning-content',{agent:'codex'});
  await expect.poll(()=>status(request,session.id)).toBe('completed');
