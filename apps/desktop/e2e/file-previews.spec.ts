@@ -4,6 +4,35 @@ import fs from 'node:fs';
 import path from 'node:path';
 const png=fs.readFileSync(new URL('./fixtures/preview-grid.png',import.meta.url));
 
+test('files search follows source keyboard reveal and the eye controls hidden and ignored entries',async({page,request})=>{
+ const session=await create(request,'Source file explorer controls');await expect.poll(()=>status(request,session.id)).toBe('completed');
+ fs.mkdirSync(path.join(session.worktree_path,'src'),{recursive:true});
+ fs.writeFileSync(path.join(session.worktree_path,'src','zebra-quick-xylophone.md'),'# Search target\n');
+ fs.writeFileSync(path.join(session.worktree_path,'.hidden-note.md'),'hidden\n');
+ fs.writeFileSync(path.join(session.worktree_path,'.gitignore'),'ignored-secret.tmp\n');
+ fs.writeFileSync(path.join(session.worktree_path,'ignored-secret.tmp'),'ignored\n');
+ await ready(page);await open(page,'Source file explorer controls');await page.getByLabel('Toggle files panel').click();
+ const tree=page.getByRole('tree',{name:'Project files'});
+ await expect(tree.getByRole('treeitem',{name:'.hidden-note.md',exact:true})).toHaveCount(0);
+ await expect(tree.getByRole('treeitem',{name:'ignored-secret.tmp',exact:true})).toHaveCount(0);
+ await page.getByRole('button',{name:'Show all files (even hidden)'}).click();
+ await expect(page.getByRole('button',{name:'Hide hidden and ignored files'})).toHaveAttribute('aria-pressed','true');
+ await expect(tree.getByRole('treeitem',{name:'.hidden-note.md',exact:true})).toBeVisible();
+ await expect(tree.getByRole('treeitem',{name:'ignored-secret.tmp',exact:true})).toBeVisible();
+ const search=page.getByRole('searchbox',{name:'Search files'});await search.fill('zqx');
+ const results=page.getByRole('tree',{name:'Fuzzy workspace file results'});
+ await expect(results.getByRole('treeitem',{name:'src',exact:true})).toHaveAttribute('aria-expanded','true');
+ await expect(results.getByRole('treeitem',{name:'src/zebra-quick-xylophone.md'})).toBeVisible();
+ await search.press('ArrowDown');await expect(search).toHaveAttribute('aria-activedescendant','file-search-result-1');
+ await search.press('Enter');await expect(search).toHaveValue('');
+ await expect(page.getByRole('tab',{name:'zebra-quick-xylophone.md'})).toHaveAttribute('aria-selected','true');
+ await expect(tree.getByRole('treeitem',{name:'src/zebra-quick-xylophone.md'})).toBeVisible();
+ await search.fill('zqx');await search.press('Escape');await expect(search).toHaveValue('');await expect(tree).toBeFocused();
+ await page.getByRole('button',{name:'Hide hidden and ignored files'}).click();
+ await expect(tree.getByRole('treeitem',{name:'.hidden-note.md',exact:true})).toHaveCount(0);
+ await expect(tree.getByRole('treeitem',{name:'ignored-secret.tmp',exact:true})).toHaveCount(0);
+});
+
 test('files tree uses the pinned source icon identities and loads their native assets',async({page,request})=>{
  const session=await create(request,'File identity icons');await expect.poll(()=>status(request,session.id)).toBe('completed');
  fs.mkdirSync(path.join(session.worktree_path,'src'),{recursive:true});

@@ -1114,3 +1114,9 @@ html[data-input-modality="pointer"] .ade[data-native-material="increased-contras
 .file-identity-icon{display:block;flex:none;width:16px;height:16px;object-fit:contain}
 .file-list .file-identity-icon{width:16px;height:16px}
 .editor-tabs .file-identity-icon,.file-editor>header .file-identity-icon{width:14px;height:14px}
+.files-index .files-search-field{display:flex;align-items:center;flex:1;min-width:0;height:26px;padding:0 7px;gap:5px;border-radius:6px;background:var(--surface-2);color:var(--muted-2)}
+.files-index .files-search-field>svg{width:12px;height:12px;flex:none}
+.files-index .files-search-field>input{width:100%;height:100%;padding:0;background:transparent;outline:none}
+.files-index .files-search-field:focus-within{outline:2px solid var(--accent);outline-offset:1px}
+.files-index .files-visibility[aria-pressed=true]{background:var(--surface-2);color:var(--text)}
+.file-search-count{margin:2px 8px 5px;color:var(--muted-2);font-size:10px}
