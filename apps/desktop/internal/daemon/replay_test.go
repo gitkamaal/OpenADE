@@ -46,3 +46,32 @@ func TestTranscriptPagesReassembleAcrossUTF8AndEventBoundaries(t *testing.T) {
 		t.Fatalf("zero cursor should be empty: %+v, %v", empty, err)
 	}
 }
+
+func TestLineReplayDropsOnlyIncompleteLeadingEvent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "transcript.log")
+	original := bytes.Repeat([]byte("{\"text\":\"π replay\"}\n"), 170000)
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := readReplay(path, 0)
+	if err != nil || !raw.Reset || raw.Offset == 0 {
+		t.Fatalf("expected a forced replay from the scrollback floor: %+v, %v", raw, err)
+	}
+	if bytes.HasPrefix(raw.Data, []byte("{\"text\"")) {
+		t.Fatal("fixture floor unexpectedly landed on an event boundary")
+	}
+	aligned, err := readLineReplay(path, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if aligned.Cursor != int64(len(original)) || aligned.Offset < raw.Offset || !bytes.HasPrefix(aligned.Data, []byte("{\"text\"")) {
+		t.Fatalf("line replay lost its cursor or first complete event: %+v", aligned)
+	}
+	if aligned.Offset > 0 && original[aligned.Offset-1] != '\n' {
+		t.Fatal("replay did not begin after a complete line")
+	}
+	partial, err := readLineReplay(path, raw.Offset)
+	if err != nil || partial.Reset || partial.Offset != raw.Offset || !bytes.Equal(partial.Data, raw.Data) {
+		t.Fatalf("ordinary cursor continuation was changed: %+v, %v", partial, err)
+	}
+}

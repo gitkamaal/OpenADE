@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"net/http"
@@ -83,6 +84,37 @@ func readReplay(path string, after int64) (Replay, error) {
 	}
 	data, err := io.ReadAll(io.LimitReader(file, end-start))
 	return Replay{Data: data, Offset: start, Cursor: start + int64(len(data)), Reset: reset}, err
+}
+
+// A forced JSONL replay starts at the scrollback floor, which can fall in the
+// middle of an event or a UTF-8 rune. Drop only that incomplete leading line.
+// Ordinary cursor resumes keep their bytes so an in-progress line can finish.
+func readLineReplay(path string, after int64) (Replay, error) {
+	replay, err := readReplay(path, after)
+	if err != nil || !replay.Reset || replay.Offset == 0 || len(replay.Data) == 0 {
+		return replay, err
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return Replay{}, err
+	}
+	defer file.Close()
+	var previous [1]byte
+	if _, err := file.ReadAt(previous[:], replay.Offset-1); err != nil {
+		return Replay{}, err
+	}
+	if previous[0] == '\n' {
+		return replay, nil
+	}
+	cut := bytes.IndexByte(replay.Data, '\n')
+	if cut < 0 {
+		replay.Offset = replay.Cursor
+		replay.Data = nil
+		return replay, nil
+	}
+	replay.Offset += int64(cut + 1)
+	replay.Data = replay.Data[cut+1:]
+	return replay, nil
 }
 func streamCursor(r *http.Request) (int64, error) {
 	value := r.URL.Query().Get("after")

@@ -1197,9 +1197,17 @@ func (m *SessionManager) Shutdown(ctx context.Context) {
 }
 
 func (m *SessionManager) Subscribe(id string, after int64) (Replay, <-chan []byte, func(), error) {
+	session, err := m.store.GetSession(id)
+	if err != nil {
+		return Replay{}, nil, nil, err
+	}
+	replay := readReplay
+	if session.Mode == "chat" && session.Agent != "shell" {
+		replay = readLineReplay
+	}
 	live, err := m.getLive(id)
 	if err != nil {
-		transcript, readErr := readReplay(filepath.Join(m.dataDir, "transcripts", id+".log"), after)
+		transcript, readErr := replay(filepath.Join(m.dataDir, "transcripts", id+".log"), after)
 		if readErr != nil {
 			return Replay{}, nil, nil, err
 		}
@@ -1209,7 +1217,7 @@ func (m *SessionManager) Subscribe(id string, after int64) (Replay, <-chan []byt
 	}
 	ch := make(chan []byte, 128)
 	live.mu.Lock()
-	initial, readErr := readReplay(filepath.Join(m.dataDir, "transcripts", id+".log"), after)
+	initial, readErr := replay(filepath.Join(m.dataDir, "transcripts", id+".log"), after)
 	if readErr != nil {
 		initial = Replay{Data: append([]byte(nil), live.scrollback...), Reset: true}
 		initial.Cursor = int64(len(initial.Data))

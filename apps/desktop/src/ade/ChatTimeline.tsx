@@ -25,7 +25,7 @@ function formatHoverTimestamp(timestamp:number){
  return `${value("month")} ${value("day")}, ${value("hour")}:${value("minute")} ${value("dayPeriod")}`;
 }
 
-export function ChatTimeline({ session, output, activityExpanded = false, onOpenSubagent, initialPromptOverride, disableDurableTimestamps = false }: { session: Session; output: string; activityExpanded?: boolean; onOpenSubagent?:(id:string,title:string)=>void; initialPromptOverride?:string; disableDurableTimestamps?:boolean }) {
+export function ChatTimeline({ session, output, activityExpanded = false, onOpenSubagent, onNavigate, initialPromptOverride, disableDurableTimestamps = false }: { session: Session; output: string; activityExpanded?: boolean; onOpenSubagent?:(id:string,title:string)=>void; onNavigate?:()=>void; initialPromptOverride?:string; disableDurableTimestamps?:boolean }) {
   const running = ["starting", "running", "waiting"].includes(session.status);
   const initialPrompt=initialPromptOverride??(session.parent_session_id?"":session.prompt);
   const [durable,setDurable]=useState<{sessionId:string;records:SessionTurnTime[]}|null>(null);
@@ -44,8 +44,8 @@ export function ChatTimeline({ session, output, activityExpanded = false, onOpen
 
   return (
     <div ref={timeline} className="chat-timeline" aria-live="polite">
-      <MessageRail turns={turns} timeline={timeline} onJump={index=>{const target=turns[index];const row=timeline.current?.querySelector<HTMLElement>(`[data-message-id="${target.id}"]`),scroll=timeline.current?.closest<HTMLElement>(".messages");if(row&&scroll)scroll.scrollTo({top:scroll.scrollTop+row.getBoundingClientRect().top-scroll.getBoundingClientRect().top-24,behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth"});else{jump.current=target.id;setVisibleCount(current=>Math.max(current,turns.length-index));}}}/>
-      {turns.length>visibleCount&&<button className="load-earlier" onClick={()=>setVisibleCount(count=>count+80)}>Show earlier messages</button>}
+      <MessageRail turns={turns} timeline={timeline} onJump={index=>{onNavigate?.();const target=turns[index];const row=timeline.current?.querySelector<HTMLElement>(`[data-message-id="${target.id}"]`),scroll=timeline.current?.closest<HTMLElement>(".messages");if(row&&scroll)scroll.scrollTo({top:scroll.scrollTop+row.getBoundingClientRect().top-scroll.getBoundingClientRect().top-24,behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth"});else{jump.current=target.id;setVisibleCount(current=>Math.max(current,turns.length-index));}}}/>
+      {turns.length>visibleCount&&<button className="load-earlier" onClick={()=>{onNavigate?.();setVisibleCount(count=>count+80);}}>Show earlier messages</button>}
       {turns.slice(-visibleCount).map((turn) =>
         turn.role === "system" ? <div className="fork-seam" key={turn.id} role="note">Forked from <strong>{turn.markdown}</strong></div> : turn.role === "user" ? (
           <UserTurn key={turn.id} id={turn.id} text={turn.markdown} timestamp={turn.timestamp} />
