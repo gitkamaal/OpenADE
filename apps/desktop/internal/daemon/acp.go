@@ -163,6 +163,9 @@ func (m *SessionManager) startACPTurn(session Session) error {
 		_ = m.store.ReleaseUnsentCodexMessage(session.queueMessageID)
 		return fmt.Errorf("ACP conversation is no longer available")
 	}
+	if c.context.resetForModel(session.Model) {
+		c.saveContext()
+	}
 	if c.idle != nil {
 		c.idle.Stop()
 	}
@@ -260,7 +263,7 @@ func (m *SessionManager) startACPClient(session Session) (*acpConversation, erro
 	if err != nil {
 		return nil, fmt.Errorf("start %s ACP: %w", session.Agent, err)
 	}
-	c := &acpConversation{manager: m, sessionID: session.ID, agent: session.Agent, rpc: rpc, requests: map[string]*ProviderRequest{}, options: map[string][]acpPermissionOption{}, progress: make(chan struct{})}
+	c := &acpConversation{manager: m, sessionID: session.ID, agent: session.Agent, rpc: rpc, requests: map[string]*ProviderRequest{}, options: map[string][]acpPermissionOption{}, progress: make(chan struct{}), context: m.savedProviderContext(session.ID)}
 	go c.events()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -276,6 +279,7 @@ func (m *SessionManager) startACPClient(session Session) (*acpConversation, erro
 	params := map[string]any{"cwd": session.WorktreePath, "mcpServers": []any{}}
 	method := "session/new"
 	oldID := m.providerID(session)
+	fresh := oldID == ""
 	if oldID != "" {
 		method = "session/load"
 		params["sessionId"] = oldID
@@ -287,6 +291,7 @@ func (m *SessionManager) startACPClient(session Session) (*acpConversation, erro
 		c.mu.Unlock()
 		delete(params, "sessionId")
 		data, err = rpc.request(ctx, "session/new", params)
+		fresh = true
 	}
 	var result acpSessionState
 	if err == nil {
@@ -299,6 +304,10 @@ func (m *SessionManager) startACPClient(session Session) (*acpConversation, erro
 	c.mu.Lock()
 	c.providerID = result.SessionID
 	c.state = result
+	if fresh {
+		c.context = ProviderContext{Model: session.Model}
+		c.saveContext()
+	}
 	closed := c.closed
 	c.mu.Unlock()
 	if closed {

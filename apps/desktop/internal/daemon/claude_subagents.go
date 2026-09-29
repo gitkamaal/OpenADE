@@ -36,11 +36,17 @@ type claudeSubagents struct {
 	transcript  *os.File
 }
 
-func newClaudeSubagents(store *Store, dataDir, sessionID string, generation int64) *claudeSubagents {
+func newClaudeSubagents(store *Store, dataDir, sessionID string, generation int64, selectedModel string, fresh bool) *claudeSubagents {
 	s := &claudeSubagents{codexSubagents: newCodexSubagents(store, dataDir, sessionID, ""), generation: generation, tasks: map[string]string{}, pending: map[string][][]byte{}, requests: map[string]*claudePendingQuestion{}}
 	var saved string
 	if store.db.QueryRow(`SELECT state FROM provider_context WHERE session_id=?`, sessionID).Scan(&saved) == nil {
 		_ = json.Unmarshal([]byte(saved), &s.context)
+	}
+	if fresh {
+		s.context = ProviderContext{Model: selectedModel}
+		s.saveContext()
+	} else if s.context.resetForModel(selectedModel) {
+		s.saveContext()
 	}
 	return s
 }
@@ -95,6 +101,11 @@ func (s *claudeSubagents) saveContext() {
 func (s *claudeSubagents) recordContext(frame *claudeWireFrame) {
 	if frame.Type == "assistant" {
 		if frame.Message.Model != "" {
+			if s.context.ActualModel != frame.Message.Model {
+				s.context.ActualModel = frame.Message.Model
+				s.context.Tokens, s.context.Window = nil, nil
+				s.saveContext()
+			}
 			s.lastModel = frame.Message.Model
 		}
 		var tokens uint64

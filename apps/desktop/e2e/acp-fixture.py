@@ -67,6 +67,12 @@ def prompt_turn(request_id, params):
     for chunk in ("ACP ", "native ", "chat ", "works."):
         update("agent_message_chunk", content={"type": "text", "text": chunk})
         time.sleep(0.02)
+    if "context-fresh-fallback" in text:
+        gate = os.path.join(home, "acp-fallback-context-" + sid)
+        open(gate + ".ready", "w").close()
+        deadline = time.monotonic() + 10
+        while not os.path.exists(gate + ".go") and time.monotonic() < deadline:
+            time.sleep(0.02)
     update("usage_update", used=80, contextWindow=128)
     if "grok-extension" in text:
         emit({"method": "_x.ai/session/prompt_complete", "params": {"sessionId": provider_session, "promptId": params.get("_meta", {}).get("promptId"), "stopReason": "end_turn"}})
@@ -87,7 +93,7 @@ for line in sys.stdin:
     elif method == "session/new":
         emit({"id": request_id, "result": session_result()})
     elif method == "session/load":
-        if frame.get("params", {}).get("sessionId") != provider_session:
+        if os.environ.get("OPENADE_ACP_FAIL_LOAD") == "1" or frame.get("params", {}).get("sessionId") != provider_session:
             emit({"id": request_id, "error": {"code": -32602, "message": "unknown session"}})
         else:
             emit({"id": request_id, "result": session_result()})

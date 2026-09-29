@@ -7,11 +7,12 @@ import (
 )
 
 func (d *Daemon) handleProviderState(w http.ResponseWriter, r *http.Request) {
-	if _, err := d.store.GetSession(r.PathValue("id")); err != nil {
+	session, err := d.store.GetSession(r.PathValue("id"))
+	if err != nil {
 		writeStoreError(w, err)
 		return
 	}
-	writeJSON(w, 200, d.sessions.providerState(r.PathValue("id")))
+	writeJSON(w, 200, d.sessions.providerState(session))
 }
 func (d *Daemon) handleProviderReply(w http.ResponseWriter, r *http.Request) {
 	var body providerReply

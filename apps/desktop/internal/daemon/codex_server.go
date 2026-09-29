@@ -98,9 +98,32 @@ type ProviderRequest struct {
 	order      uint64
 }
 type ProviderContext struct {
+	Tokens      *uint64 `json:"tokens"`
+	Window      *uint64 `json:"window"`
+	Model       string  `json:"selected_model,omitempty"`
+	ActualModel string  `json:"actual_model,omitempty"`
+}
+
+type ProviderContextValues struct {
 	Tokens *uint64 `json:"tokens"`
 	Window *uint64 `json:"window"`
 }
+
+func (c ProviderContext) forModel(model string) ProviderContextValues {
+	if c.Model != model {
+		return ProviderContextValues{}
+	}
+	return ProviderContextValues{Tokens: c.Tokens, Window: c.Window}
+}
+
+func (c *ProviderContext) resetForModel(model string) bool {
+	if c.Model == model {
+		return false
+	}
+	c.Tokens, c.Window, c.Model, c.ActualModel = nil, nil, model, ""
+	return true
+}
+
 type codexUsageCounts struct {
 	TotalTokens       *uint64 `json:"totalTokens"`
 	TotalTokensSnake  *uint64 `json:"total_tokens"`
@@ -123,10 +146,10 @@ func firstCodexCount(primary, fallback *uint64) *uint64 {
 }
 
 type ProviderState struct {
-	Connected bool              `json:"connected"`
-	Steering  bool              `json:"steering"`
-	Requests  []ProviderRequest `json:"requests"`
-	Context   ProviderContext   `json:"context"`
+	Connected bool                  `json:"connected"`
+	Steering  bool                  `json:"steering"`
+	Requests  []ProviderRequest     `json:"requests"`
+	Context   ProviderContextValues `json:"context"`
 }
 type codexSteering struct {
 	live     *liveSession
@@ -187,15 +210,16 @@ func (m *SessionManager) savedProviderContext(id string) ProviderContext {
 	}
 	return usage
 }
-func (m *SessionManager) providerState(id string) ProviderState {
-	state := ProviderState{Requests: []ProviderRequest{}, Context: m.savedProviderContext(id)}
+func (m *SessionManager) providerState(session Session) ProviderState {
+	id := session.ID
+	state := ProviderState{Requests: []ProviderRequest{}, Context: m.savedProviderContext(id).forModel(session.Model)}
 	if c := m.codexClient(id); c != nil {
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		state.Connected = !c.closed
 		state.Steering = !c.closed && c.live != nil && c.providerTurn != "" && len(c.requests) == 0 && c.startDone == nil && c.steering == nil
 		if c.context.Tokens != nil || c.context.Window != nil {
-			state.Context = c.context
+			state.Context = c.context.forModel(session.Model)
 		}
 		for _, q := range c.requests {
 			state.Requests = append(state.Requests, *q)
@@ -205,7 +229,7 @@ func (m *SessionManager) providerState(id string) ProviderState {
 		c.mu.Lock()
 		state.Connected = !c.closed
 		if c.context.Tokens != nil || c.context.Window != nil {
-			state.Context = c.context
+			state.Context = c.context.forModel(session.Model)
 		}
 		for _, q := range c.requests {
 			state.Requests = append(state.Requests, *q)
@@ -319,6 +343,11 @@ func (m *SessionManager) startCodexTurn(session Session, program string) error {
 			return err
 		}
 		c = &codexConversation{manager: m, sessionID: session.ID, threadID: result.Thread.ID, rpc: rpc, requests: map[string]*ProviderRequest{}, subagents: newCodexSubagents(m.store, m.dataDir, session.ID, result.Thread.ID), context: m.savedProviderContext(session.ID), progress: make(chan struct{})}
+		if method == "thread/start" {
+			c.context = ProviderContext{Model: session.Model}
+			encoded, _ := json.Marshal(c.context)
+			_, _ = m.store.db.Exec(`INSERT INTO provider_context(session_id,state) VALUES(?,?) ON CONFLICT(session_id) DO UPDATE SET state=excluded.state`, session.ID, string(encoded))
+		}
 		m.providerMu.Lock()
 		m.codex[session.ID] = c
 		c.idle = time.AfterFunc(codexIdleTimeout, c.close)
@@ -352,6 +381,10 @@ func (m *SessionManager) startCodexTurn(session Session, program string) error {
 		_ = m.store.updateGeneration(session.ID, generation, "failed", 0, nil)
 		_ = m.store.ReleaseUnsentCodexMessage(session.queueMessageID)
 		return fmt.Errorf("Codex disconnected; retry your message")
+	}
+	if c.context.resetForModel(session.Model) {
+		encoded, _ := json.Marshal(c.context)
+		_, _ = m.store.db.Exec(`INSERT INTO provider_context(session_id,state) VALUES(?,?) ON CONFLICT(session_id) DO UPDATE SET state=excluded.state`, session.ID, string(encoded))
 	}
 	if c.idle != nil {
 		c.idle.Stop()

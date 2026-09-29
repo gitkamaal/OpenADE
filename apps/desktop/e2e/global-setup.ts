@@ -72,6 +72,14 @@ if structured:
   emit({'type':'assistant','message':{'content':[{'type':'text','text':'Claude received the control response.'}]}})
   emit({'type':'result','result':'Claude received the control response.'})
   sys.exit(0)
+ if name=='claude' and 'claude-context-model-transition' in prompt:
+  gate=os.path.join(os.environ['OPENADE_PROVIDER_HOME'],'claude-context-model-'+sid)
+  emit({'type':'assistant','message':{'model':'secondary','content':[{'type':'text','text':'The other model is working.'}],'usage':{'input_tokens':10000}}})
+  open(gate+'.ready','w').close()
+  deadline=time.monotonic()+10
+  while not os.path.exists(gate+'.go') and time.monotonic()<deadline:time.sleep(.02)
+  emit({'type':'result','result':'The other model is working.','modelUsage':{'secondary':{'contextWindow':100000}}})
+  sys.exit(0)
  if name=='claude' and 'claude-context' in prompt:
   emit({'type':'assistant','parent_tool_use_id':'child-only','message':{'model':'child','content':[],'usage':{'input_tokens':999999}}})
   emit({'type':'assistant','message':{'model':'primary','content':[{'type':'text','text':'Claude context is available.'}],'usage':{'input_tokens':200,'cache_read_input_tokens':40000,'cache_creation_input_tokens':1800,'output_tokens':100}}})

@@ -59,6 +59,7 @@ test("advertised ACP model and reasoning selections reach the provider before ea
   expect(log(grok.id).find(frame=>frame.prompt)?.model).toBe("grok-pro");
   const devin=await create(request,"Selected Devin",{agent:"devin",model:"devin-pro",effort:"high"});
   await expect.poll(()=>status(request,devin.id)).toBe("completed");
+  await expect.poll(async()=>{const context=(await(await request.get(`${daemon}/api/sessions/${devin.id}/provider-state`)).json()).context;return [context.tokens,context.window];}).toEqual([80,128]);
   const frames=log(devin.id);
   expect(frames.filter(frame=>frame.method==="session/set_config_option").map(frame=>frame.params?.configId)).toEqual(["model-choice","thought-level"]);
   expect(frames.find(frame=>frame.prompt)).toMatchObject({model:"devin-pro",effort:"high"});
@@ -68,8 +69,10 @@ test("advertised ACP model and reasoning selections reach the provider before ea
   expect(falseReset.status()).toBe(409);
   const change=await request.post(`${daemon}/api/sessions/${devin.id}/model`,{data:{model:"devin-default",effort:"low",service_tier:""}});
   expect(change.status(),await change.text()).toBe(200);
+  await expect.poll(async()=>{const context=(await(await request.get(`${daemon}/api/sessions/${devin.id}/provider-state`)).json()).context;return [context.tokens,context.window];}).toEqual([null,null]);
   expect((await request.post(`${daemon}/api/sessions/${devin.id}/messages`,{data:{text:"New selection"}})).status()).toBe(202);
   await expect.poll(async()=>{const current=(await(await request.get(`${daemon}/api/sessions/${devin.id}`)).json());return current.status==="completed"?current.generation:0;}).toBe(2);
+  await expect.poll(async()=>{const context=(await(await request.get(`${daemon}/api/sessions/${devin.id}/provider-state`)).json()).context;return [context.tokens,context.window];}).toEqual([80,128]);
   expect(log(devin.id).filter(frame=>frame.prompt).at(-1)).toMatchObject({model:"devin-default",effort:"low"});
   await ready(page);await choose(page,"Choose project","");await choose(page,"Provider","grok");
   await page.getByLabel("Choose model").click();
@@ -125,6 +128,29 @@ test("ACP session/load restores the same provider conversation after daemon rest
     expect(frames.filter(frame=>frame.method==="session/prompt")).toHaveLength(2);
     expect((await(await send(`/api/sessions/${session.id}`)).json()).provider_session_id).toBe(`acp-${session.id}`);
   }finally{await stop(child);}
+});
+
+test("a failed ACP reload clears usage before its replacement provider session reports usage",async()=>{
+  const port=await freePort(),base=`http://127.0.0.1:${port}`,data=path.join(tmp,"acp-fallback-context"),headers={Authorization:`Bearer ${token}`,"Content-Type":"application/json"};
+  const launch=(failLoad=false)=>spawn(path.join(tmp,"openade-e2e"),["--daemon","--addr",`127.0.0.1:${port}`,"--data-dir",data],{env:{...process.env,PATH:path.join(tmp,"bin")+":"+process.env.PATH,OPENADE_PROVIDER_HOME:path.join(tmp,"provider-home"),OPENADE_AUTH_TOKEN:token,OPENADE_ACP_FAIL_LOAD:failLoad?"1":""},stdio:"ignore"});
+  const wait=()=>expect.poll(async()=>{try{return(await fetch(base+"/api/health")).status;}catch{return 0;}}).toBe(200);
+  const send=(url:string,method="GET",body?:unknown)=>fetch(base+url,{method,headers,body:body===undefined?undefined:JSON.stringify(body)});
+  const stop=async(child:ReturnType<typeof launch>)=>{if(child.exitCode!==null)return;const ended=new Promise<void>(resolve=>child.once("exit",()=>resolve()));child.kill("SIGTERM");await ended;};
+  let child=launch(),gate="";
+  try{
+    await wait();
+    const response=await send("/api/sessions","POST",{title:"ACP fallback context",prompt:"Before reload",agent:"grok",mode:"chat",repo_root:""});
+    expect(response.status).toBe(201);const session=await response.json();gate=path.join(tmp,"provider-home","acp-fallback-context-"+session.id);
+    await expect.poll(async()=>(await(await send(`/api/sessions/${session.id}`)).json()).status).toBe("completed");
+    await expect.poll(async()=>{const context=(await(await send(`/api/sessions/${session.id}/provider-state`)).json()).context;return [context.tokens,context.window];}).toEqual([80,128]);
+    await stop(child);child=launch(true);await wait();
+    expect((await send(`/api/sessions/${session.id}/messages`,"POST",{text:"context-fresh-fallback"})).status).toBe(202);
+    await expect.poll(()=>fs.existsSync(gate+".ready")).toBe(true);
+    await expect.poll(async()=>{const context=(await(await send(`/api/sessions/${session.id}/provider-state`)).json()).context;return [context.tokens,context.window];}).toEqual([null,null]);
+    fs.writeFileSync(gate+".go","");
+    await expect.poll(async()=>{const current=(await(await send(`/api/sessions/${session.id}`)).json());return current.status==="completed"?current.generation:0;}).toBe(2);
+    await expect.poll(async()=>{const context=(await(await send(`/api/sessions/${session.id}/provider-state`)).json()).context;return [context.tokens,context.window];}).toEqual([80,128]);
+  }finally{if(gate)fs.writeFileSync(gate+".go","");await stop(child);}
 });
 
 test("Grok prompt-complete extension settles an otherwise unanswered prompt; cancel stops an active turn",async({request})=>{

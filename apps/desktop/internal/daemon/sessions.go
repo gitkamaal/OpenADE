@@ -390,7 +390,7 @@ func (m *SessionManager) launchCommand(session Session, program string, args []s
 	live.generation = generation
 	live.turnID = turnID
 	if session.Mode == "chat" && isClaudeAgent(session.Agent) {
-		live.claude = newClaudeSubagents(m.store, m.dataDir, session.ID, generation)
+		live.claude = newClaudeSubagents(m.store, m.dataDir, session.ID, generation, session.Model, session.ProviderSessionID == "")
 		live.claude.attachInput(claudeInput, cmd.Process.Pid)
 	}
 	if err := m.store.UpdateRuntime(session.ID, "running", cmd.Process.Pid, nil); err != nil {
