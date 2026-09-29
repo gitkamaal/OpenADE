@@ -51,6 +51,16 @@ test('large file tree keeps rendered rows bounded and reveals the end on scroll'
  await expect(tree.getByRole('treeitem',{name:'file-1199.md',exact:true})).toHaveCount(0);
 });
 
+test('reopening files reads external changes without polling a hidden panel',async({page,request})=>{
+ const session=await create(request,'External file refresh');await expect.poll(()=>status(request,session.id)).toBe('completed');
+ await ready(page);await open(page,'External file refresh');await page.getByLabel('Toggle files panel').click();
+ const tree=page.getByRole('tree',{name:'Project files'});await expect(tree.getByRole('treeitem',{name:'README.md',exact:true})).toBeVisible();
+ fs.writeFileSync(path.join(session.worktree_path,'outside-change.md'),'# Added elsewhere\n');
+ await expect(tree.getByRole('treeitem',{name:'outside-change.md',exact:true})).toHaveCount(0);
+ await page.getByLabel('Toggle files panel').click();await page.getByLabel('Toggle files panel').click();
+ await expect(tree.getByRole('treeitem',{name:'outside-change.md',exact:true})).toBeVisible();
+});
+
 test('files tree uses the pinned source icon identities and loads their native assets',async({page,request})=>{
  const session=await create(request,'File identity icons');await expect.poll(()=>status(request,session.id)).toBe('completed');
  fs.mkdirSync(path.join(session.worktree_path,'src'),{recursive:true});
