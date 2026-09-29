@@ -8,6 +8,45 @@ import (
 	"strconv"
 )
 
+const transcriptPageBytes = 1024 * 1024
+
+type TranscriptPage struct {
+	Data    []byte `json:"data"`
+	Offset  int64  `json:"offset"`
+	Cursor  int64  `json:"cursor"`
+	HasMore bool   `json:"has_more"`
+}
+
+// readTranscriptPage returns one bounded byte range before a stable cursor.
+// Unlike the live replay, it does not discard incomplete edge lines: adjacent
+// pages can be joined without losing a provider event at the boundary.
+func readTranscriptPage(path string, before int64) (TranscriptPage, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return TranscriptPage{}, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return TranscriptPage{}, err
+	}
+	end := before
+	if end < 0 || end > info.Size() {
+		end = info.Size()
+	}
+	start := end - transcriptPageBytes
+	if start < 0 {
+		start = 0
+	}
+	data := make([]byte, end-start)
+	n, err := file.ReadAt(data, start)
+	if err != nil && err != io.EOF {
+		return TranscriptPage{}, err
+	}
+	data = data[:n]
+	return TranscriptPage{Data: data, Offset: start, Cursor: start + int64(n), HasMore: start > 0}, nil
+}
+
 type Replay struct {
 	Data   []byte
 	Offset int64

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -209,6 +210,7 @@ func (d *Daemon) routes() http.Handler {
 	mux.HandleFunc("GET /api/sessions/{id}/provider-state", d.handleProviderState)
 	mux.HandleFunc("POST /api/sessions/{id}/provider-requests/{requestID}", d.handleProviderReply)
 	mux.HandleFunc("GET /api/sessions/{id}/stream", d.handleStream)
+	mux.HandleFunc("GET /api/sessions/{id}/transcript-page", d.handleTranscriptPage)
 	mux.HandleFunc("GET /api/sessions/{id}/subagents", d.handleListSubagents)
 	mux.HandleFunc("GET /api/sessions/{id}/subagents/{docID}", d.handleGetSubagent)
 	mux.HandleFunc("POST /api/sessions/{id}/input", d.handleInput)
@@ -477,6 +479,39 @@ func (d *Daemon) handleStream(w http.ResponseWriter, r *http.Request) {
 	}
 	session, _ := d.store.GetSession(r.PathValue("id"))
 	_ = conn.WriteJSON(map[string]any{"type": "status", "status": session.Status, "exit_code": session.ExitCode})
+}
+
+func (d *Daemon) handleTranscriptPage(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	id := r.PathValue("id")
+	release, err := d.deletions.admit(id)
+	if err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	defer release()
+	if _, err := d.store.GetSession(id); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	before := int64(-1)
+	if value := r.URL.Query().Get("before"); value != "" {
+		before, err = strconv.ParseInt(value, 10, 64)
+		if err != nil || before < 0 {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("invalid transcript cursor"))
+			return
+		}
+	}
+	page, err := readTranscriptPage(filepath.Join(d.sessions.dataDir, "transcripts", id+".log"), before)
+	if errors.Is(err, os.ErrNotExist) {
+		writeJSON(w, http.StatusOK, TranscriptPage{Data: []byte{}})
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, page)
 }
 
 func (d *Daemon) handleInput(w http.ResponseWriter, r *http.Request) {

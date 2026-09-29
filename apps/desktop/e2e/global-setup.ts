@@ -79,12 +79,13 @@ if structured:
   sys.exit(0)
  if name=='claude' and 'sliding-transcript' in prompt:
   gate=os.path.join(os.environ['OPENADE_PROVIDER_HOME'],'sliding-transcript-'+sid)
-  for index in range(380):
+  historical=950 if 'sliding-transcript-stress' in prompt else 380
+  for index in range(historical):
    emit({'type':'openade.user_message','text':'Historical prompt '+str(index)})
    emit({'type':'assistant','message':{'content':[{'type':'text','text':'Historical answer '+str(index)+' '+('detail '*650)}]}})
   open(gate+'.ready','w').close()
   while not os.path.exists(gate+'.go'):time.sleep(.02)
-  for index in range(380,470):
+  for index in range(historical,historical+90):
    emit({'type':'openade.user_message','text':'Historical prompt '+str(index)})
    emit({'type':'assistant','message':{'content':[{'type':'text','text':'Historical answer '+str(index)+' '+('detail '*650)}]}})
    time.sleep(.02)
