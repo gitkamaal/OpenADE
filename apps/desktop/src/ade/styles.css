@@ -1110,8 +1110,8 @@ html[data-input-modality="pointer"] .ade[data-native-material="increased-contras
 .session-workspace.with-panel.with-files{grid-template-columns:minmax(300px,1fr) minmax(340px,min(var(--panel-width),45%,calc(100% - 520px))) clamp(200px,22%,286px)}
 .session-workspace.with-panel.with-files .panel-resizer{right:calc(max(340px,min(var(--panel-width),45%,calc(100% - 520px))) + clamp(200px,22%,286px) - 3px)}
 @container workspace (max-width:840px){
- .session-workspace.with-panel.with-files{grid-template-columns:0 minmax(0,1fr) clamp(200px,28%,230px)}
- .session-workspace.with-panel.with-files .conversation{visibility:hidden}
+ /* Zeron shares the shortage across the 300:360:220 panel minima. */
+ .session-workspace.with-panel.with-files{grid-template-columns:minmax(0,34.09%) minmax(0,40.91%) minmax(0,25%)}
  .session-workspace.with-panel.with-files .panel-resizer{opacity:0;pointer-events:none}
 }
 @container workspace (max-width:860px){
