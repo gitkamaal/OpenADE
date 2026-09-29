@@ -77,6 +77,21 @@ if structured:
   emit({'type':'assistant','message':{'model':'primary','content':[{'type':'text','text':'Claude context is available.'}],'usage':{'input_tokens':200,'cache_read_input_tokens':40000,'cache_creation_input_tokens':1800,'output_tokens':100}}})
   emit({'type':'result','result':'Claude context is available.','usage':{'input_tokens':999999},'modelUsage':{'primary-alias':{'canonicalModel':'primary','contextWindow':200000},'child':{'contextWindow':1000000}}})
   sys.exit(0)
+ if name=='claude' and 'sliding-transcript' in prompt:
+  gate=os.path.join(os.environ['OPENADE_PROVIDER_HOME'],'sliding-transcript-'+sid)
+  for index in range(380):
+   emit({'type':'openade.user_message','text':'Historical prompt '+str(index)})
+   emit({'type':'assistant','message':{'content':[{'type':'text','text':'Historical answer '+str(index)+' '+('detail '*650)}]}})
+  open(gate+'.ready','w').close()
+  while not os.path.exists(gate+'.go'):time.sleep(.02)
+  for index in range(380,470):
+   emit({'type':'openade.user_message','text':'Historical prompt '+str(index)})
+   emit({'type':'assistant','message':{'content':[{'type':'text','text':'Historical answer '+str(index)+' '+('detail '*650)}]}})
+   time.sleep(.02)
+  emit({'type':'stream_event','event':{'delta':{'type':'text_delta','text':'Latest visible answer.'}}})
+  emit({'type':'assistant','message':{'content':[{'type':'text','text':'Latest visible answer.'}]}})
+  emit({'type':'result','result':'Latest visible answer.'})
+  sys.exit(0)
  if name=='claude' and 'claude-interleaved-stream' in prompt:
   gate=os.path.join(os.environ['OPENADE_PROVIDER_HOME'],'claude-interleaved-live-'+sid)
   def wait_for(stage):
