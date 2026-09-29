@@ -40,7 +40,7 @@ export function FilesPanel({session,active,appearance,preferences,onPreferences,
  const rememberedFiles=useRef(filePanelMemory.get(session.id)).current;
  const [preview,setPreview]=useState(()=>rememberedFiles?.preview??false);const [imageRevision,setImageRevision]=useState(0);
  const [tabs,setTabs]=useState<string[]>(()=>rememberedFiles?.tabs??[]);const [collapsed,setCollapsed]=useState<Set<string>>(()=>new Set(rememberedFiles?.collapsed??[]));
- const [files,setFiles]=useState<string[]>([]);const [query,setQuery]=useState(()=>rememberedFiles?.query??"");const [searchActive,setSearchActive]=useState(0);const searchListRef=useRef<HTMLDivElement>(null);const [treeScrollTop,setTreeScrollTop]=useState(0);const [treeViewport,setTreeViewport]=useState(600);const [treeActivePath,setTreeActivePath]=useState(()=>rememberedFiles?.selected??"");const scrollFrame=useRef<number|null>(null),scrollFallback=useRef<number|null>(null),latestScrollTop=useRef(0);const [selected,setSelected]=useState(()=>rememberedFiles?.selected??"");const [content,setContent]=useState("");const [original,setOriginal]=useState("");const [error,setError]=useState("");const [loading,setLoading]=useState(()=>Boolean(rememberedFiles?.selected));const [saving,setSaving]=useState(false);const [version,setVersion]=useState(0);const [pending,setPending]=useState<string|null>(null);const dirty=content!==original;const imageFile=/\.(png|jpe?g|gif|webp|bmp|tiff?|ico|svg|avif|heic|heif)$/i.test(selected);const markdownFile=/\.(md|markdown|mdx)$/i.test(selected);const requestRef=useRef(0);
+ const [files,setFiles]=useState<string[]>([]);const [query,setQuery]=useState(()=>rememberedFiles?.query??"");const [searchActive,setSearchActive]=useState(0);const [searchCollapsed,setSearchCollapsed]=useState<Set<string>>(()=>new Set());const searchListRef=useRef<HTMLDivElement>(null);const [treeScrollTop,setTreeScrollTop]=useState(0);const [treeViewport,setTreeViewport]=useState(600);const [treeActivePath,setTreeActivePath]=useState(()=>rememberedFiles?.selected??"");const scrollFrame=useRef<number|null>(null),scrollFallback=useRef<number|null>(null),latestScrollTop=useRef(0);const [selected,setSelected]=useState(()=>rememberedFiles?.selected??"");const [content,setContent]=useState("");const [original,setOriginal]=useState("");const [error,setError]=useState("");const [loading,setLoading]=useState(()=>Boolean(rememberedFiles?.selected));const [saving,setSaving]=useState(false);const [version,setVersion]=useState(0);const [pending,setPending]=useState<string|null>(null);const dirty=content!==original;const imageFile=/\.(png|jpe?g|gif|webp|bmp|tiff?|ico|svg|avif|heic|heif)$/i.test(selected);const markdownFile=/\.(md|markdown|mdx)$/i.test(selected);const requestRef=useRef(0);
  const initializedTree=useRef(false);
  const searchTaskTimer=useRef<number|undefined>(undefined);
  const scheduleSearchTask=(task:()=>void)=>{if(searchTaskTimer.current!==undefined)window.clearTimeout(searchTaskTimer.current);searchTaskTimer.current=window.setTimeout(()=>{searchTaskTimer.current=undefined;task();},0);};
@@ -65,19 +65,21 @@ export function FilesPanel({session,active,appearance,preferences,onPreferences,
  useEffect(()=>{const onKey=(event:KeyboardEvent)=>{if(event.defaultPrevented||editorTarget?.closest("[hidden],[inert]"))return;if((event.metaKey||event.ctrlKey)&&event.key.toLowerCase()==="s"&&selected&&!imageFile){event.preventDefault();void save();}};window.addEventListener("keydown",onKey);return()=>window.removeEventListener("keydown",onKey);},[save,selected,imageFile]);
  const searchQuery=query.trim().toLowerCase();
  const visible=useMemo(()=>files.filter(path=>preferences.show_hidden||!path.split("/").some(part=>part.startsWith("."))),[files,preferences.show_hidden]);
- const matches=useMemo(()=>searchQuery?visible.map(path=>({path,rank:fileSearchRank(path,searchQuery)})).filter((item):item is {path:string;rank:number}=>item.rank!==null).sort((a,b)=>a.rank-b.rank||a.path.localeCompare(b.path)):[],[visible,searchQuery]);
- const tree=useMemo(()=>fileTree(searchQuery?matches.slice(0,200).map(item=>item.path):visible),[visible,matches,searchQuery]);
- const rows=useMemo(()=>tree.filter(item=>searchQuery||!item.path.split("/").slice(0,-1).some((_,i,parts)=>collapsed.has(parts.slice(0,i+1).join("/")))),[tree,searchQuery,collapsed]);
+ const matches=useMemo(()=>searchQuery?visible.map(path=>({path,score:fileSearchScore(path,searchQuery)})).filter((item):item is {path:string;score:number}=>item.score!==null).sort((a,b)=>b.score-a.score||compareFilePaths(a.path,b.path)):[],[visible,searchQuery]);
+ const tree=useMemo(()=>fileTree(visible),[visible]);
+ const rows=useMemo(()=>searchQuery?fileSearchTree(matches.slice(0,200),searchCollapsed):tree.filter(item=>!item.path.split("/").slice(0,-1).some((_,i,parts)=>collapsed.has(parts.slice(0,i+1).join("/")))),[tree,matches,searchQuery,collapsed,searchCollapsed]);
+ const activeSearchIndex=Math.min(searchActive,Math.max(0,rows.length-1));
  useEffect(()=>{if(!searchQuery&&rows.length&&!rows.some(item=>item.path===treeActivePath))setTreeActivePath(rows.find(item=>item.path===selected)?.path??rows[0].path);},[rows,searchQuery,selected,treeActivePath]);
  const virtualize=!searchQuery&&rows.length>300,rowHeight=27;
  const firstRow=virtualize?Math.max(0,Math.floor(treeScrollTop/rowHeight)-6):0;
  const lastRow=virtualize?Math.min(rows.length,firstRow+Math.ceil(treeViewport/rowHeight)+12):rows.length;
  const shownRows=rows.slice(firstRow,lastRow);
  const allFilesVisible=preferences.show_hidden&&preferences.show_ignored;
+ const updateQuery=(value:string)=>{setQuery(value);setSearchActive(0);setSearchCollapsed(new Set());};
  const openRow=(item:{path:string;directory:boolean})=>{
   setTreeActivePath(item.path);
-  if(item.directory){setCollapsed(current=>{const next=new Set(current);if(searchQuery){const parts=item.path.split("/");for(let i=1;i<=parts.length;i++)next.delete(parts.slice(0,i).join("/"));}else if(next.has(item.path))next.delete(item.path);else next.add(item.path);return next;});if(searchQuery){setQuery("");focusTree();}return;}
-  onOpenEditor();if(item.path!==selected){dirty?setPending(item.path):void load(item.path);}if(searchQuery){const parts=item.path.split("/");setCollapsed(current=>{const next=new Set(current);for(let i=1;i<parts.length;i++)next.delete(parts.slice(0,i).join("/"));return next;});setQuery("");}
+  if(item.directory){if(searchQuery){setSearchCollapsed(current=>{const next=new Set(current);if(next.has(item.path))next.delete(item.path);else next.add(item.path);return next;});}else setCollapsed(current=>{const next=new Set(current);if(next.has(item.path))next.delete(item.path);else next.add(item.path);return next;});return;}
+  onOpenEditor();if(item.path!==selected){dirty?setPending(item.path):void load(item.path);}if(searchQuery){const parts=item.path.split("/");setCollapsed(current=>{const next=new Set(current);for(let i=1;i<parts.length;i++)next.delete(parts.slice(0,i).join("/"));return next;});updateQuery("");}
  };
  const flushTreeScroll=()=>{if(scrollFrame.current!==null)cancelAnimationFrame(scrollFrame.current);if(scrollFallback.current!==null)window.clearTimeout(scrollFallback.current);scrollFrame.current=null;scrollFallback.current=null;setTreeScrollTop(latestScrollTop.current);};
  const scheduleTreeScroll=(top:number)=>{latestScrollTop.current=top;if(scrollFrame.current!==null||scrollFallback.current!==null)return;scrollFrame.current=requestAnimationFrame(flushTreeScroll);scrollFallback.current=window.setTimeout(flushTreeScroll,32);};
@@ -97,15 +99,15 @@ export function FilesPanel({session,active,appearance,preferences,onPreferences,
   }
   if(!handled)return;event.preventDefault();event.stopPropagation();if(next!==index){setTreeActivePath(rows[next].path);revealTreeRow(next);}
  };
- const onSearchKey=(event:ReactKeyboardEvent<HTMLInputElement>)=>{if(event.key==="Escape"){event.preventDefault();event.stopPropagation();setQuery("");setSearchActive(0);focusTree();return;}if(!searchQuery||!rows.length)return;if(event.key==="ArrowDown"||event.key==="ArrowUp"){event.preventDefault();const next=Math.max(0,Math.min(rows.length-1,searchActive+(event.key==="ArrowDown"?1:-1)));setSearchActive(next);scheduleSearchTask(()=>searchListRef.current?.querySelectorAll<HTMLButtonElement>('[role="treeitem"]')[next]?.scrollIntoView({block:"nearest"}));}else if(event.key==="Enter"){event.preventDefault();openRow(rows[Math.min(searchActive,rows.length-1)]);}};
+ const onSearchKey=(event:ReactKeyboardEvent<HTMLInputElement>)=>{if(event.key==="Escape"){event.preventDefault();event.stopPropagation();updateQuery("");focusTree();return;}if(!searchQuery||!rows.length)return;if(event.key==="ArrowDown"||event.key==="ArrowUp"){event.preventDefault();const next=Math.max(0,Math.min(rows.length-1,activeSearchIndex+(event.key==="ArrowDown"?1:-1)));setSearchActive(next);scheduleSearchTask(()=>searchListRef.current?.querySelectorAll<HTMLButtonElement>('[role="treeitem"]')[next]?.scrollIntoView({block:"nearest"}));}else if(event.key==="Enter"){event.preventDefault();openRow(rows[activeSearchIndex]);}};
  return <section className="files-panel"><div className="files-index"><header>
-  <div className="files-search-field"><MagnifyingGlass aria-hidden="true"/><input role="searchbox" aria-label="Search files" aria-controls="project-file-results" aria-activedescendant={searchQuery&&rows.length?`file-search-result-${Math.min(searchActive,rows.length-1)}`:undefined} placeholder="Search files" value={query} onChange={event=>{setQuery(event.target.value);setSearchActive(0);}} onKeyDown={onSearchKey}/></div>
+  <div className="files-search-field"><MagnifyingGlass aria-hidden="true"/><input role="searchbox" aria-label="Search files" aria-controls="project-file-results" aria-activedescendant={searchQuery&&rows.length?`file-search-result-${activeSearchIndex}`:undefined} placeholder="Search files" value={query} onChange={event=>updateQuery(event.target.value)} onKeyDown={onSearchKey}/></div>
   <button className="icon-button files-refresh" aria-label="Refresh files" title="Refresh files" onClick={()=>setVersion(value=>value+1)}><ArrowClockwise/></button>
   <button className="icon-button files-visibility" aria-label={allFilesVisible?"Hide hidden and ignored files":"Show all files (even hidden)"} title={allFilesVisible?"Hide hidden and ignored files":"Show all files (even hidden)"} aria-pressed={allFilesVisible} onClick={()=>onPreferences({...preferences,show_hidden:!allFilesVisible,show_ignored:!allFilesVisible})}>{allFilesVisible?<Eye/>:<EyeSlash/>}</button>
  </header><div className="file-list" id="project-file-results" ref={searchListRef} role="tree" tabIndex={0} aria-label={searchQuery?"Fuzzy workspace file results":"Project files"} onScroll={onListScroll} onKeyDown={onTreeKey}>
   {searchQuery&&matches.length>200&&<p className="file-search-count">Showing the first 200 matches</p>}
   {virtualize&&firstRow>0&&<div aria-hidden="true" style={{height:firstRow*rowHeight}}/>}
-  {shownRows.map((item,offset)=>{const index=firstRow+offset;return <button id={searchQuery?`file-search-result-${index}`:undefined} role="treeitem" aria-level={item.depth+1} aria-label={item.path} aria-selected={searchQuery?index===searchActive:treeActivePath===item.path} aria-expanded={item.directory?Boolean(searchQuery)||!collapsed.has(item.path):undefined} className={(searchQuery?index===searchActive:treeActivePath===item.path)?"active":""} style={{paddingLeft:8+item.depth*12}} title={item.path} key={item.path} onClick={()=>openRow(item)}>{item.directory?<><CaretRight className={searchQuery||!collapsed.has(item.path)?"folder-open":""}/><FileIdentityIcon path={item.path} directory appearance={appearance}/></>:<FileIdentityIcon path={item.path} appearance={appearance}/>}<span>{item.path.split('/').at(-1)}</span></button>;})}
+  {shownRows.map((item,offset)=>{const index=firstRow+offset,expanded=searchQuery?!searchCollapsed.has(item.path):!collapsed.has(item.path);return <button id={searchQuery?`file-search-result-${index}`:undefined} role="treeitem" aria-level={item.depth+1} aria-label={item.path} aria-selected={searchQuery?index===activeSearchIndex:treeActivePath===item.path} aria-expanded={item.directory?expanded:undefined} className={(searchQuery?index===activeSearchIndex:treeActivePath===item.path)?"active":""} style={{paddingLeft:8+item.depth*12}} title={item.path} key={item.path} onClick={()=>{if(searchQuery)setSearchActive(index);openRow(item);}}>{item.directory?<><CaretRight className={expanded?"folder-open":""}/><FileIdentityIcon path={item.path} directory appearance={appearance}/></>:<FileIdentityIcon path={item.path} appearance={appearance}/>}<span>{item.path.split('/').at(-1)}</span></button>;})}
   {virtualize&&lastRow<rows.length&&<div aria-hidden="true" style={{height:(rows.length-lastRow)*rowHeight}}/>}
   {rows.length===0&&<p>{searchQuery?"No files found.":"No matching files"}</p>}
  </div></div>{onOpenSideChat&&onNewSideChat&&onForkSideChat&&<SideChatsFooter chats={sideChats} busy={sideChatCreating} onOpen={onOpenSideChat} onNew={onNewSideChat} onFork={onForkSideChat}/>} {selected&&editorTarget&&createPortal(<div className="file-editor"><div className="editor-tabs" role="tablist" aria-label="Open files">{tabs.map(path=><div key={path}><button role="tab" aria-selected={path===selected} title={path} onClick={()=>{if(path!==selected)dirty?setPending(path):void load(path);}}><FileIdentityIcon path={path} appearance={appearance}/>{path.split('/').at(-1)}{path===selected&&dirty&&<span>•</span>}</button><button aria-label={`Close ${path}`} onClick={()=>{if(path===selected&&dirty){setError("Save or discard changes before closing this file.");return;}const next=tabs.filter(x=>x!==path);setTabs(next);if(path===selected){if(next.length)void load(next.at(-1)!);else setSelected("");}}}><X/></button></div>)}</div><header><FileIdentityIcon path={selected} appearance={appearance}/><strong title={selected}>{selected}</strong>{dirty&&<span aria-label="Unsaved changes">•</span>}{markdownFile&&<button aria-label={preview?"Edit Markdown":"Preview Markdown"} aria-pressed={preview} onClick={()=>setPreview(value=>!value)}>{preview?"Edit":"Preview"}</button>}<button aria-label="Reload file" className="icon-button" disabled={loading||saving} onClick={()=>dirty?setPending(selected):void load(selected)}><ArrowClockwise/></button><button aria-label="Save file" className="icon-button" disabled={!dirty||saving||loading} onClick={()=>void save()}><FloppyDisk/></button></header>{pending&&<div className="unsaved-prompt" role="alert"><span>Save your changes before opening another file?</span><button onClick={()=>void save().then(saved=>{if(saved){void load(pending);setPending(null);}})}>Save</button><button onClick={()=>{void load(pending);setPending(null);}}>Discard</button><button onClick={()=>setPending(null)}>Cancel</button></div>}{error&&<p className="inline-error" role="alert">{error}</p>}{loading?<p>Loading file…</p>:imageFile?<div className="file-image-preview" key={`${selected}:${imageRevision}`}><WorkspaceImage url={fileMediaURL(session.id,selected)} name={selected.split("/").at(-1)!}/></div>:<><div className="editor-code-surface" hidden={preview}><Suspense fallback={<p>Opening editor…</p>}><CodeEditor path={selected} value={content} onChange={setContent} wrap={preferences.word_wrap} disabled={saving||Boolean(error)&&!original} comments={comments.filter(comment=>comment.source==="file"&&comment.path===selected)} onComments={onComments}/></Suspense></div>{preview&&<div className="file-markdown-preview"><MarkdownMessage session={session} filePath={selected} reviewComments={comments} onReviewComments={onComments}>{content}</MarkdownMessage></div>}</>}</div>,editorTarget)}</section>;
@@ -118,13 +120,45 @@ function SideChatsFooter({chats,busy,onOpen,onNew,onFork}:{chats:Session[];busy:
 
 function fileTree(files:string[]){const entries=new Map<string,{path:string;directory:boolean;depth:number}>();for(const file of files){const parts=file.split("/");parts.forEach((_,i)=>{const path=parts.slice(0,i+1).join("/");entries.set(path,{path,directory:i<parts.length-1,depth:i});});}return [...entries.values()].sort((a,b)=>{const left=a.path.split("/"),right=b.path.split("/");for(let i=0;i<Math.min(left.length,right.length);i++){if(left[i]!==right[i]){const leftDir=i<left.length-1||a.directory,rightDir=i<right.length-1||b.directory;if(leftDir!==rightDir)return leftDir?-1:1;return left[i].localeCompare(right[i]);}}return left.length-right.length;});}
 
-function fileSearchRank(path:string,query:string):number|null{
+const fileSearchEncoder=new TextEncoder();
+const byteLength=(value:string)=>fileSearchEncoder.encode(value).length;
+const compareText=(left:string,right:string)=>left<right?-1:left>right?1:0;
+const compareFilePaths=(left:string,right:string)=>compareText(left.toLowerCase(),right.toLowerCase())||compareText(left,right);
+
+function fileSearchScore(path:string,query:string):number|null{
  const name=path.split("/").at(-1)!.toLowerCase(),full=path.toLowerCase();
- if(name===query)return 0;
- if(name.startsWith(query))return 10+name.length/1000;
- if(name.includes(query))return 20+name.indexOf(query)+name.length/1000;
- if(full.includes(query))return 40+full.indexOf(query)+full.length/1000;
- let previous=-1,gaps=0;
- for(const letter of query){const index=full.indexOf(letter,previous+1);if(index<0)return null;gaps+=index-previous-1;previous=index;}
- return 100+gaps+full.length/1000;
+ if(name===query)return 10000;
+ if(name.startsWith(query))return 8000-byteLength(name);
+ const nameIndex=name.indexOf(query);
+ if(nameIndex>=0)return 6000-byteLength(name.slice(0,nameIndex))-byteLength(name);
+ const pathIndex=full.indexOf(query);
+ if(pathIndex>=0)return 4000-byteLength(full.slice(0,pathIndex))-byteLength(full);
+ const wanted=[...query];let matched=0,gaps=0;
+ for(const character of full){if(character===wanted[matched]){matched++;if(matched===wanted.length)return 2000-gaps-byteLength(full);}else gaps++;}
+ return null;
+}
+
+function fileSearchTree(matches:{path:string;score:number}[],collapsed:Set<string>){
+ type Node={path:string;name:string;directory:boolean;score:number|null;bestScore:number;children:string[]};
+ const nodes=new Map<string,Node>(),roots:string[]=[];
+ for(const match of matches){
+  const parts=match.path.split("/").filter(Boolean);let parent="";
+  for(let index=0;index<parts.length;index++){
+   const path=parts.slice(0,index+1).join("/"),directory=index<parts.length-1;
+   let node=nodes.get(path);
+   if(!node){node={path,name:parts[index],directory,score:null,bestScore:match.score,children:[]};nodes.set(path,node);}
+   if(directory)node.directory=true;
+   if(!directory)node.score=Math.max(node.score??-Infinity,match.score);
+   const siblings=parent?nodes.get(parent)!.children:roots;
+   if(!siblings.includes(path))siblings.push(path);
+   parent=path;
+  }
+ }
+ const best=(path:string):number=>{const node=nodes.get(path)!;node.bestScore=Math.max(node.score??-Infinity,...node.children.map(best));return node.bestScore;};
+ roots.forEach(best);
+ const order=(left:string,right:string)=>{const a=nodes.get(left)!,b=nodes.get(right)!;return b.bestScore-a.bestScore||Number(b.directory)-Number(a.directory)||compareFilePaths(a.name,b.name)||compareText(a.path,b.path);};
+ const rows:{path:string;directory:boolean;depth:number}[]=[];
+ const append=(path:string,depth:number)=>{const node=nodes.get(path)!;rows.push({path,directory:node.directory,depth});if(node.directory&&!collapsed.has(path))node.children.sort(order).forEach(child=>append(child,depth+1));};
+ roots.sort(order).forEach(root=>append(root,0));
+ return rows;
 }

@@ -38,6 +38,22 @@ test('files search follows source keyboard reveal and the eye controls hidden an
  await expect(tree.getByRole('treeitem',{name:'ignored-secret.tmp',exact:true})).toHaveCount(0);
 });
 
+test('file search ranks matching branches and folds them without clearing the query',async({page,request})=>{
+ const session=await create(request,'Ranked search branches');await expect.poll(()=>status(request,session.id)).toBe('completed');
+ fs.mkdirSync(path.join(session.worktree_path,'aaa'),{recursive:true});
+ fs.mkdirSync(path.join(session.worktree_path,'zzz'),{recursive:true});
+ fs.writeFileSync(path.join(session.worktree_path,'aaa','long-name-with-needle.md'),'Lower-ranked match\n');
+ fs.writeFileSync(path.join(session.worktree_path,'zzz','needle.md'),'Top match\n');
+ await ready(page);await open(page,'Ranked search branches');await page.getByLabel('Toggle files panel').click();
+ const search=page.getByRole('searchbox',{name:'Search files'}),results=page.getByRole('tree',{name:'Fuzzy workspace file results'});
+ await search.fill('needle');
+ const top=results.getByRole('treeitem',{name:'zzz',exact:true}),child=results.getByRole('treeitem',{name:'zzz/needle.md',exact:true});
+ await expect(results.getByRole('treeitem').first()).toHaveAttribute('aria-label','zzz');
+ await search.press('Enter');await expect(search).toHaveValue('needle');await expect(top).toHaveAttribute('aria-expanded','false');await expect(child).toHaveCount(0);
+ await search.press('Enter');await expect(top).toHaveAttribute('aria-expanded','true');await expect(child).toBeVisible();
+ await search.press('ArrowDown');await search.press('Enter');await expect(page.getByRole('tab',{name:'needle.md',exact:true})).toHaveAttribute('aria-selected','true');await expect(search).toHaveValue('');
+});
+
 test('large file tree keeps rendered rows bounded and reveals the end on scroll',async({page,request})=>{
  const session=await create(request,'Large source file tree');await expect.poll(()=>status(request,session.id)).toBe('completed');
  for(let index=0;index<1200;index++)fs.writeFileSync(path.join(session.worktree_path,`file-${String(index).padStart(4,'0')}.md`),'# Fixture\n');
