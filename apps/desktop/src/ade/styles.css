@@ -633,6 +633,8 @@ select option{background:var(--surface);color:var(--text)}
 .messages.jump-layout :is(.chat-user-turn,.chat-assistant-turn){content-visibility:visible}
 .jump-latest{position:absolute;bottom:125px;left:50%;transform:translateX(-50%);border:1px solid var(--line);border-radius:16px;background:var(--surface);color:var(--text);font-size:12px;padding:7px 12px;cursor:pointer}
 .load-earlier{display:block;margin:0 auto 24px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--muted);padding:7px 12px;cursor:pointer;font-size:12px}
+.history-navigation{display:flex;justify-content:center;flex-wrap:wrap;gap:8px;margin:0 auto 20px}.history-navigation .load-earlier{margin:0}
+.load-earlier:disabled{cursor:wait;opacity:.65}.history-error{margin:0 auto;color:var(--red);font-size:12px;text-align:center}
 .opening-session{display:grid;place-items:center;height:100%;font-size:13px;color:var(--muted)}
 .zeron-diffs.commit-open{grid-template-rows:38px auto 36px minmax(0,1fr)}
 .commit-form{display:flex;gap:5px;flex-wrap:wrap;padding:9px;background:var(--surface);border-bottom:1px solid var(--line)}

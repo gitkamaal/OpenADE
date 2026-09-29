@@ -161,11 +161,14 @@ export function SessionWorkspace({ activeView=true, session, projectLabel, appea
   const outputRef = useRef<HTMLDivElement>(null);
   const reconnectStreamRef = useRef(false);
  const byteCursor=useRef(0);
+  const outputStart=useRef(0);
+  const outputText=useRef("");
   const followLatest=useRef(true);
+  const readingHistory=useRef(false);
   const pointerScroll=useRef<{id:number;startY:number;startTop:number}|null>(null);
   const [following,setFollowing]=useState(true);
   const releaseFollow=()=>{followLatest.current=false;setFollowing(false);};
-  const jumpToLatest=()=>{const scroll=outputRef.current;if(!scroll)return;followLatest.current=true;setFollowing(true);scroll.classList.add("jump-layout");scroll.scrollTop=scroll.scrollHeight;};
+  const jumpToLatest=()=>{const scroll=outputRef.current;if(!scroll)return;readingHistory.current=false;followLatest.current=true;setFollowing(true);scroll.classList.add("jump-layout");scroll.scrollTop=scroll.scrollHeight;};
   const mountedRef = useRef(false);
   const focusTimerRef = useRef<number | undefined>(undefined);
   const active = ["running", "starting", "waiting"].includes(session.status);
@@ -210,15 +213,15 @@ export function SessionWorkspace({ activeView=true, session, projectLabel, appea
     if (tuiMode || !chatCapable) return;
     let disposed = false;
     let reconnectTimer: number | undefined;
-    let pending="";let replay=false;let pendingCursor=byteCursor.current;let renderTimer:number|undefined;
-    const flush=()=>{renderTimer=undefined;const chunk=pending;const replace=replay;pending="";replay=false;if(!disposed){byteCursor.current=pendingCursor;setOutput(current=>(replace?chunk:current+chunk).slice(-2_000_000));}};
+    let pending="";let replay=false;let pendingOffset=outputStart.current;let pendingCursor=byteCursor.current;let renderTimer:number|undefined;
+    const flush=()=>{renderTimer=undefined;const chunk=pending;const replace=replay;pending="";replay=false;if(!disposed){byteCursor.current=pendingCursor;let next=replace?chunk:outputText.current+chunk;let start=replace?pendingOffset:outputStart.current;if(next.length>2_000_000){const newline=next.indexOf("\n",next.length-2_000_000);const discarded=newline<0?next:next.slice(0,newline+1);start+=new TextEncoder().encode(discarded).length;next=newline<0?"":next.slice(newline+1);}outputText.current=next;outputStart.current=start;setOutput(next);}};
     const socket = new WebSocket(streamURL(session.id,byteCursor.current));
     socket.onmessage = (event) => {
       if (disposed) return;
-      const message = JSON.parse(String(event.data)) as { type: string; data?: string; replay?:boolean; reset?:boolean; cursor?:number };
+      const message = JSON.parse(String(event.data)) as { type: string; data?: string; replay?:boolean; reset?:boolean; offset?:number; cursor?:number };
       if (message.type === "output") {
  pendingCursor=message.cursor??pendingCursor;
-        if(message.reset){pending=message.data??"";replay=true;}else pending+=message.data??"";
+        if(message.reset){pending=message.data??"";pendingOffset=message.offset??0;replay=true;}else pending+=message.data??"";
         if(renderTimer===undefined)renderTimer=window.setTimeout(flush,33);
       }
     };
@@ -239,7 +242,7 @@ export function SessionWorkspace({ activeView=true, session, projectLabel, appea
     };
   }, [chatCapable, session.id, streamVersion, tuiMode,session.generation]);
 
-  useEffect(() => {setOutput("");byteCursor.current=0;}, [session.id]);
+  useEffect(() => {setOutput("");outputText.current="";outputStart.current=0;byteCursor.current=0;readingHistory.current=false;}, [session.id]);
 
   useEffect(() => {
     if (!chatCapable) return;
@@ -253,6 +256,8 @@ export function SessionWorkspace({ activeView=true, session, projectLabel, appea
   useEffect(() => {
     if(followLatest.current)outputRef.current?.scrollTo({ top: outputRef.current.scrollHeight, behavior: "auto" });
   }, [output]);
+
+  useLayoutEffect(()=>{if(following&&followLatest.current){const scroll=outputRef.current;if(scroll){scroll.classList.add("jump-layout");scroll.scrollTop=scroll.scrollHeight;}}},[following]);
 
   useEffect(()=>{const scroll=outputRef.current;if(!scroll||!chatCapable)return;let width=scroll.clientWidth,height=scroll.clientHeight;const observer=new ResizeObserver(()=>{const nextWidth=scroll.clientWidth,nextHeight=scroll.clientHeight;if(nextWidth===width&&nextHeight===height)return;width=nextWidth;height=nextHeight;if(followLatest.current){scroll.classList.add("jump-layout");scroll.scrollTop=scroll.scrollHeight;}});observer.observe(scroll);return()=>observer.disconnect();},[chatCapable,session.id]);
 
@@ -434,8 +439,8 @@ export function SessionWorkspace({ activeView=true, session, projectLabel, appea
       {detailsEditor&&<div className="chat-details-overlay"><form role="dialog" aria-modal="true" onKeyDown={event=>{if(event.key!=="Tab")return;const controls=[...event.currentTarget.querySelectorAll<HTMLElement>("input,textarea,button:not(:disabled)")];const first=controls[0],last=controls.at(-1);if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus();}}} aria-label={detailsEditor==="title"?"Rename chat":"Chat instructions"} onSubmit={event=>{event.preventDefault();void updateSessionDetails(session.id,{[detailsEditor]:detailsValue}).then(onRefresh).then(()=>setDetailsEditor(null)).catch(reason=>setPanelError(String(reason)));}}>{panelError&&<p role="alert">{panelError}</p>}<h2>{detailsEditor==="title"?"Rename chat":"Chat instructions"}</h2>{detailsEditor==="title"?<input aria-label="Chat title" maxLength={240} value={detailsValue} onChange={e=>setDetailsValue(e.target.value)} autoFocus/>:<><textarea aria-label="Chat instructions" value={detailsValue} maxLength={16384} onChange={e=>setDetailsValue(e.target.value)} autoFocus/><p>Applied to your next message in this conversation.</p></>}<div><button type="button" onClick={()=>setDetailsEditor(null)}>Cancel</button><button disabled={detailsEditor==="title"&&!detailsValue.trim()}>Save</button></div></form></div>}
       <section className={`conversation ${tuiMode ? "tui-conversation" : ""}`}>
         {tuiMode ? <Suspense fallback={<div role="status">Opening terminal…</div>}><DirectTUIWorkspace session={session} onRefresh={onRefresh} preferences={preferences} /></Suspense> : <>
-        <div className="messages" ref={outputRef} onWheelCapture={event=>{if(event.deltaY<0)releaseFollow();}} onTouchStartCapture={releaseFollow} onPointerDownCapture={event=>{if(event.button===0)pointerScroll.current={id:event.pointerId,startY:event.clientY,startTop:event.currentTarget.scrollTop};}} onPointerMoveCapture={event=>{const gesture=pointerScroll.current;if(gesture?.id===event.pointerId&&(event.buttons&1)!==0&&event.clientY<gesture.startY-5)releaseFollow();}} onPointerUpCapture={()=>{pointerScroll.current=null;}} onPointerCancelCapture={()=>{pointerScroll.current=null;}} onKeyDownCapture={event=>{if(["ArrowUp","PageUp","Home"].includes(event.key)||(event.key===" "&&event.shiftKey))releaseFollow();}} onScroll={event=>{const el=event.currentTarget;if(pointerScroll.current&&el.scrollTop<pointerScroll.current.startTop-2)releaseFollow();if(el.scrollHeight-el.scrollTop-el.clientHeight<80){followLatest.current=true;setFollowing(true);}else if(!followLatest.current)setFollowing(false);}}>
-          {chatCapable ? <ChatTimeline session={session} output={output} activityExpanded={preferences.activity_detail === "expanded"} onOpenSubagent={openSubagent} onNavigate={()=>{releaseFollow();outputRef.current?.classList.remove("jump-layout");}} /> : <div className="shell-session-note"><TerminalWindow /><div><strong>Terminal run</strong><p>This run stays in the terminal so command output never gets mixed into chat.</p></div></div>}
+        <div className="messages" ref={outputRef} onWheelCapture={event=>{if(event.deltaY<0)releaseFollow();}} onTouchStartCapture={releaseFollow} onPointerDownCapture={event=>{if(event.button===0)pointerScroll.current={id:event.pointerId,startY:event.clientY,startTop:event.currentTarget.scrollTop};}} onPointerMoveCapture={event=>{const gesture=pointerScroll.current;if(gesture?.id===event.pointerId&&(event.buttons&1)!==0&&event.clientY<gesture.startY-5)releaseFollow();}} onPointerUpCapture={()=>{pointerScroll.current=null;}} onPointerCancelCapture={()=>{pointerScroll.current=null;}} onKeyDownCapture={event=>{if(["ArrowUp","PageUp","Home"].includes(event.key)||(event.key===" "&&event.shiftKey))releaseFollow();}} onScroll={event=>{const el=event.currentTarget;if(pointerScroll.current&&el.scrollTop<pointerScroll.current.startTop-2)releaseFollow();if(!readingHistory.current&&el.scrollHeight-el.scrollTop-el.clientHeight<80){followLatest.current=true;setFollowing(true);}else if(!followLatest.current)setFollowing(false);}}>
+          {chatCapable ? <ChatTimeline key={session.id} session={session} output={output} outputOffset={outputStart.current} outputCursor={byteCursor.current} following={following} activityExpanded={preferences.activity_detail === "expanded"} onOpenSubagent={openSubagent} onNavigate={()=>{readingHistory.current=true;releaseFollow();outputRef.current?.classList.remove("jump-layout");}} /> : <div className="shell-session-note"><TerminalWindow /><div><strong>Terminal run</strong><p>This run stays in the terminal so command output never gets mixed into chat.</p></div></div>}
         </div>
         {!following&&<button className="jump-latest" onClick={jumpToLatest}>Jump to latest</button>}
         {canMessage ? <div className={`session-composer-dock ${queuedMessages.length ? "with-queue" : ""}`}>

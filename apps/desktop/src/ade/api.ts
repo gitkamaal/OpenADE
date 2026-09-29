@@ -179,6 +179,10 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+export interface TranscriptPage {data:string;offset:number;cursor:number;has_more:boolean}
+export const getTranscriptPage=(id:string,before:number)=>
+  request<TranscriptPage>(`/api/sessions/${encodeURIComponent(id)}/transcript-page?before=${before}`);
+
 export async function health(): Promise<boolean> {
   try {
     await request<{ ok: boolean }>("/api/health");
