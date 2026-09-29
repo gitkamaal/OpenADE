@@ -618,6 +618,7 @@ select option{background:var(--surface);color:var(--text)}
 .file-list button{width:100%;min-height:27px;display:flex;align-items:center;gap:7px;border:0;border-radius:5px;background:transparent;color:var(--muted);font-size:11px;text-align:left;cursor:pointer;padding:0 7px}
 .file-list button:hover,.file-list button.active{background:var(--surface-3);color:var(--text)}
 .file-list svg{width:13px;flex:0 0 auto}.file-list span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.file-list .file-caret-placeholder{display:block;width:13px;height:13px;flex:0 0 13px}
 .files-panel.with-editor .files-index{flex:0 1 32%;min-height:85px}
 .file-editor{display:flex;flex-direction:column;min-height:0;flex:1;border-top:1px solid var(--line)}
 .file-editor header{min-height:38px;padding:0 7px;display:flex;align-items:center;gap:5px}

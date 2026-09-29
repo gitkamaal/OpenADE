@@ -1,6 +1,7 @@
 import {test,create,ready,open,daemon,status} from './helpers';
 import {expect} from '@playwright/test';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 const png=fs.readFileSync(new URL('./fixtures/preview-grid.png',import.meta.url));
@@ -46,12 +47,38 @@ test('file search ranks matching branches and folds them without clearing the qu
  fs.writeFileSync(path.join(session.worktree_path,'zzz','needle.md'),'Top match\n');
  await ready(page);await open(page,'Ranked search branches');await page.getByLabel('Toggle files panel').click();
  const search=page.getByRole('searchbox',{name:'Search files'}),results=page.getByRole('tree',{name:'Fuzzy workspace file results'});
- await search.fill('needle');
+ const searches:string[]=[];await page.route('**/files/search?*',route=>{searches.push(new URL(route.request().url()).searchParams.get('query')??'');return route.continue();});
+ for(const partial of ['n','ne','nee','need','needle'])await search.fill(partial);
  const top=results.getByRole('treeitem',{name:'zzz',exact:true}),child=results.getByRole('treeitem',{name:'zzz/needle.md',exact:true});
  await expect(results.getByRole('treeitem').first()).toHaveAttribute('aria-label','zzz');
+ expect(searches.length).toBeGreaterThan(0);expect(searches.every(query=>query==='needle')).toBe(true);
  await search.press('Enter');await expect(search).toHaveValue('needle');await expect(top).toHaveAttribute('aria-expanded','false');await expect(child).toHaveCount(0);
  await search.press('Enter');await expect(top).toHaveAttribute('aria-expanded','true');await expect(child).toBeVisible();
  await search.press('ArrowDown');await search.press('Enter');await expect(page.getByRole('tab',{name:'needle.md',exact:true})).toHaveAttribute('aria-selected','true');await expect(search).toHaveValue('');
+});
+
+test('workspace search reaches files after the plain-folder list cap and finds empty directories',async({page,request})=>{
+ const folder=fs.mkdtempSync(path.join(os.tmpdir(),'openade-plain-search-'));
+ try{
+ for(let index=0;index<5001;index++)fs.writeFileSync(path.join(folder,`file-${String(index).padStart(4,'0')}.txt`),'');
+ fs.mkdirSync(path.join(folder,'needle-empty-folder'));fs.writeFileSync(path.join(folder,'zzzz-needle.txt'),'Target\n');
+ const session=await create(request,'Plain folder search beyond list',{repo_root:folder,checkout:'current'});await expect.poll(()=>status(request,session.id)).toBe('completed');
+ expect((await page.request.get(`${daemon}/api/sessions/${session.id}/files/search?query=needle`)).status()).toBe(401);
+ const response=await request.get(`${daemon}/api/sessions/${session.id}/files/search?query=needle`);expect(response.status(),await response.text()).toBe(200);
+ const found=(await response.json()) as {results:{path:string;kind:string;score:number}[]};
+ expect(found.results.map(item=>item.path)).toEqual(expect.arrayContaining(['needle-empty-folder','zzzz-needle.txt']));
+ expect(found.results.find(item=>item.path==='needle-empty-folder')?.kind).toBe('directory');
+ await ready(page);await open(page,'Plain folder search beyond list');await page.getByLabel('Toggle files panel').click();
+ const search=page.getByRole('searchbox',{name:'Search files'});await search.fill('needle');
+ const results=page.getByRole('tree',{name:'Fuzzy workspace file results'});
+ await expect(results.getByRole('treeitem',{name:'needle-empty-folder',exact:true})).toBeVisible();
+ await expect(results.getByRole('treeitem',{name:'zzzz-needle.txt',exact:true})).toBeVisible();
+ await results.getByRole('treeitem',{name:'needle-empty-folder',exact:true}).click();await expect(search).toHaveValue('');
+ const tree=page.getByRole('tree',{name:'Project files'});await expect(tree.getByRole('treeitem',{name:'needle-empty-folder',exact:true})).toBeVisible();
+ await search.fill('needle');await results.getByRole('treeitem',{name:'zzzz-needle.txt',exact:true}).click();
+ await expect(page.getByRole('tab',{name:'zzzz-needle.txt',exact:true})).toHaveAttribute('aria-selected','true');
+ await expect(tree.getByRole('treeitem',{name:'zzzz-needle.txt',exact:true})).toBeVisible();
+ }finally{await page.close().catch(()=>{});fs.rmSync(folder,{recursive:true,force:true});}
 });
 
 test('large file tree keeps rendered rows bounded and reveals the end on scroll',async({page,request})=>{
