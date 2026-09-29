@@ -17,6 +17,8 @@ type claudePendingQuestion struct {
 	input   map[string]any
 }
 
+var errClaudeInputClosed = errors.New("Claude input is closed")
+
 func (s *claudeSubagents) attachInput(input *os.File, pid int) {
 	s.input = input
 	s.pid = pid
@@ -38,7 +40,7 @@ func (s *claudeSubagents) writeFrame(value any) error {
 	s.inputMu.Lock()
 	defer s.inputMu.Unlock()
 	if s.inputClosed || s.input == nil {
-		return errors.New("Claude input is closed")
+		return errClaudeInputClosed
 	}
 	if err := s.input.SetWriteDeadline(time.Now().Add(3 * time.Second)); err != nil {
 		return err

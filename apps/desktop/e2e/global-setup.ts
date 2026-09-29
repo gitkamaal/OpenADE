@@ -9,7 +9,7 @@ export default function prepareWorld(){
  for(const folder of ["fixture-repo","other/fixture-repo"]){const repo=path.join(tmp,folder);fs.mkdirSync(repo,{recursive:true});git(repo,"init","-b","main");git(repo,"config","user.name","E2E");git(repo,"config","user.email","e2e@example.com");fs.writeFileSync(path.join(repo,"README.md"),`# ${folder}\nfixture\n`);fs.writeFileSync(path.join(repo,"remove.txt"),"delete me\n");fs.mkdirSync(path.join(repo,".agents/skills/fix-ci"),{recursive:true});fs.writeFileSync(path.join(repo,".agents/skills/fix-ci/SKILL.md"),"---\ndescription: Fix failing CI\n---\nUse end-to-end tests.");fs.mkdirSync(path.join(repo,".claude/commands"),{recursive:true});fs.writeFileSync(path.join(repo,".claude/commands/ship.md"),"---\ndescription: Prepare review\n---\nPrepare review.");git(repo,"add",".");git(repo,"commit","-m","Initial fixture");const remote=path.join(tmp,folder.replaceAll("/","-")+".git");fs.mkdirSync(remote,{recursive:true});git(remote,"init","--bare");git(repo,"remote","add","origin",remote);git(repo,"push","-u","origin","main");}
  fs.mkdirSync(path.join(tmp,"data"));const bin=path.join(tmp,"bin");fs.mkdirSync(bin);
  const protocol=`#!/usr/bin/env python3
-import json,os,sys,time,signal,base64
+import json,os,sys,time,signal,base64,select
 name=os.path.basename(sys.argv[0]);args=sys.argv[1:];sid=os.environ.get('OPENADE_SESSION_ID','fixture');prompt=args[-1] if args else ''
 structured='--json' in args or '--output-format' in args
 signal.signal(signal.SIGTERM,lambda *_:sys.exit(0))
@@ -84,6 +84,33 @@ if structured:
   emit({'type':'assistant','parent_tool_use_id':'child-only','message':{'model':'child','content':[],'usage':{'input_tokens':999999}}})
   emit({'type':'assistant','message':{'model':'primary','content':[{'type':'text','text':'Claude context is available.'}],'usage':{'input_tokens':200,'cache_read_input_tokens':40000,'cache_creation_input_tokens':1800,'output_tokens':100}}})
   emit({'type':'result','result':'Claude context is available.','usage':{'input_tokens':999999},'modelUsage':{'primary-alias':{'canonicalModel':'primary','contextWindow':200000},'child':{'contextWindow':1000000}}})
+  sys.exit(0)
+ if name=='claude' and 'claude-steer-' in prompt:
+  gate=os.path.join(os.environ['OPENADE_PROVIDER_HOME'],'claude-steer-'+sid)
+  if 'tool' in prompt:
+   emit({'type':'assistant','message':{'content':[{'type':'tool_use','id':'open-tool','name':'Bash','input':{'command':'printf working'}}]}})
+  else:emit({'type':'stream_event','event':{'type':'content_block_delta','delta':{'type':'text_delta','text':'Before steering. '}}})
+  open(gate+'.ready','w').close()
+  steers=[]
+  for index in range(2 if 'rapid' in prompt else 1):
+   if not select.select([sys.stdin],[],[],10)[0]:sys.exit(9)
+   steer=json.loads(sys.stdin.readline());steers.append(steer)
+   with open(gate+'.jsonl','a') as log:log.write(json.dumps(steer)+'\\n')
+  open(gate+'.seen','w').close()
+  if 'boundary' in prompt or 'lost' in prompt or 'timeout' in prompt:emit({'type':'result','result':'Before steering.'})
+  if 'timeout' in prompt:
+   if not select.select([sys.stdin],[],[],10)[0]:sys.exit(10)
+   if sys.stdin.readline():sys.exit(11)
+   open(gate+'.input-closed','w').close();sys.exit(0)
+  deadline=time.monotonic()+10
+  while not os.path.exists(gate+'.go') and time.monotonic()<deadline:time.sleep(.02)
+  if 'lost' in prompt:sys.exit(0)
+  if 'tool' in prompt:emit({'type':'user','parent_tool_use_id':None,'message':{'content':[{'type':'tool_result','tool_use_id':'open-tool','content':'done'}]}})
+  last=steers[-1]
+  emit({'type':'user','uuid':last.get('uuid'),'message':last.get('message'),'parent_tool_use_id':None})
+  emit({'type':'stream_event','event':{'type':'content_block_delta','delta':{'type':'text_delta','text':'After steering.'}}})
+  emit({'type':'assistant','message':{'content':[{'type':'text','text':'After steering.'}]}})
+  emit({'type':'result','result':'After steering.'})
   sys.exit(0)
  if name=='claude' and 'sliding-transcript' in prompt:
   gate=os.path.join(os.environ['OPENADE_PROVIDER_HOME'],'sliding-transcript-'+sid)

@@ -18,26 +18,32 @@ import (
 // bounded document. The same document API and chat renderer serve Codex.
 type claudeSubagents struct {
 	*codexSubagents
-	generation  int64
-	carry       []byte
-	tasks       map[string]string // Claude task ID -> Agent/Task tool_use ID
-	pending     map[string][][]byte
-	pendingLen  int
-	lastModel   string
-	context     ProviderContext
-	inputMu     sync.Mutex
-	input       *os.File
-	inputClosed bool
-	pid         int
-	requestsMu  sync.Mutex
-	requests    map[string]*claudePendingQuestion
-	nextRequest uint64
-	live        *liveSession
-	transcript  *os.File
+	generation    int64
+	carry         []byte
+	tasks         map[string]string // Claude task ID -> Agent/Task tool_use ID
+	pending       map[string][][]byte
+	pendingLen    int
+	lastModel     string
+	context       ProviderContext
+	inputMu       sync.Mutex
+	input         *os.File
+	inputClosed   bool
+	pid           int
+	requestsMu    sync.Mutex
+	requests      map[string]*claudePendingQuestion
+	nextRequest   uint64
+	steerMu       sync.Mutex
+	steers        []claudeSteer
+	openTools     map[string]struct{}
+	toolsOverflow bool
+	heldResult    []byte
+	heldTimer     *time.Timer
+	live          *liveSession
+	transcript    *os.File
 }
 
 func newClaudeSubagents(store *Store, dataDir, sessionID string, generation int64, selectedModel string, fresh bool) *claudeSubagents {
-	s := &claudeSubagents{codexSubagents: newCodexSubagents(store, dataDir, sessionID, ""), generation: generation, tasks: map[string]string{}, pending: map[string][][]byte{}, requests: map[string]*claudePendingQuestion{}}
+	s := &claudeSubagents{codexSubagents: newCodexSubagents(store, dataDir, sessionID, ""), generation: generation, tasks: map[string]string{}, pending: map[string][][]byte{}, requests: map[string]*claudePendingQuestion{}, openTools: map[string]struct{}{}}
 	var saved string
 	if store.db.QueryRow(`SELECT state FROM provider_context WHERE session_id=?`, sessionID).Scan(&saved) == nil {
 		_ = json.Unmarshal([]byte(saved), &s.context)
@@ -59,9 +65,9 @@ type claudeWireBlock struct {
 }
 
 type claudeWireFrame struct {
-	Type, Subtype, Parent, ToolUseID, TaskID, SubagentType, Status string
-	RequestID                                                      string `json:"request_id"`
-	Message                                                        struct {
+	Type, Subtype, Parent, ToolUseID, TaskID, SubagentType, Status, UUID string
+	RequestID                                                            string `json:"request_id"`
+	Message                                                              struct {
 		Content json.RawMessage            `json:"content"`
 		Model   string                     `json:"model"`
 		Usage   map[string]json.RawMessage `json:"usage"`
@@ -176,12 +182,14 @@ func (s *claudeSubagents) consume(chunk []byte) []byte {
 }
 
 func (s *claudeSubagents) flush() []byte {
-	if len(s.carry) == 0 {
-		return nil
+	var out []byte
+	if len(s.carry) > 0 {
+		line := s.carry
+		s.carry = nil
+		out = s.line(line)
 	}
-	line := s.carry
-	s.carry = nil
-	return s.line(line)
+	out = append(out, s.releaseHeldResult()...)
+	return out
 }
 
 func (s *claudeSubagents) line(raw []byte) []byte {
@@ -203,6 +211,7 @@ func (s *claudeSubagents) line(raw []byte) []byte {
 	_ = json.Unmarshal(envelope["tool_use_id"], &frame.ToolUseID)
 	_ = json.Unmarshal(envelope["task_id"], &frame.TaskID)
 	_ = json.Unmarshal(envelope["subagent_type"], &frame.SubagentType)
+	s.touchHeldResult()
 	if frame.Type == "system" {
 		if frame.Subtype == "task_started" && frame.SubagentType != "" && frame.TaskID != "" && frame.ToolUseID != "" {
 			s.tasks[frame.TaskID] = frame.ToolUseID
@@ -227,11 +236,20 @@ func (s *claudeSubagents) line(raw []byte) []byte {
 		}
 		return nil
 	}
+	s.trackSteeringTools(&frame)
 	if frame.Type == "control_request" {
 		return s.handleControlRequest(&frame)
 	}
+	if frame.Type == "user" && frame.UUID != "" {
+		if confirmed := s.confirmSteerReplay(frame.UUID); confirmed != nil {
+			return confirmed
+		}
+	}
 	s.recordContext(&frame)
 	if frame.Type == "result" {
+		if s.holdResultIfSteering(raw) {
+			return nil
+		}
 		s.closeInput()
 	}
 	out := append(raw, '\n')
@@ -399,6 +417,7 @@ func (s *claudeSubagents) finish(doc *subagentDoc, status string) {
 
 func (s *claudeSubagents) finishProcess() {
 	s.closeInput()
+	s.finishSteering()
 	s.dismissQuestions()
 	for _, doc := range s.bySpawn {
 		if doc.Status == "running" {
