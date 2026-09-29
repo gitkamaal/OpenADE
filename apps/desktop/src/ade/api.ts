@@ -344,6 +344,11 @@ export async function getFiles(id: string,ignored=false): Promise<string[]> {
   return (await request<{ files: string[] }>(`/api/sessions/${id}/files?ignored=${ignored?"1":"0"}`)).files;
 }
 
+export interface WorkspaceFileSearchMatch {path:string;name:string;kind:"file"|"directory"|"symlink";score:number}
+export interface WorkspaceFileSearchResults {results:WorkspaceFileSearchMatch[];truncated:boolean}
+export const searchWorkspaceFiles=(id:string,query:string,hidden:boolean,ignored:boolean,signal?:AbortSignal)=>
+  request<WorkspaceFileSearchResults>(`/api/sessions/${encodeURIComponent(id)}/files/search?${new URLSearchParams({query,hidden:hidden?"1":"0",ignored:ignored?"1":"0"})}`,{signal});
+
 export const fileWatchURL=(id:string)=>`${DAEMON_URL.replace(/^http/,"ws")}/api/sessions/${id}/files/watch?token=${encodeURIComponent(authToken)}`;
 
 export async function listPullRequests(repo: string): Promise<PullRequest[]> {

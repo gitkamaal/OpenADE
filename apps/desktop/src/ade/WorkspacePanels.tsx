@@ -1,7 +1,7 @@
 import { ArrowClockwise, ArrowSquareOut, ChatCircleDots, CaretRight, CaretDown, X, ArrowLeft, ArrowRight, GitBranch, Globe, FloppyDisk, Plus, Eye, EyeSlash, MagnifyingGlass } from "@phosphor-icons/react";
 import { createPortal } from "react-dom";
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { fileMediaURL, fileWatchURL, getFile, getFiles, getPreviewServers, saveFile, Session } from "./api";
+import { fileMediaURL, fileWatchURL, getFile, getFiles, getPreviewServers, saveFile, searchWorkspaceFiles, Session, WorkspaceFileSearchMatch } from "./api";
 import {WorkspaceImage} from "./Attachments";
 import {MarkdownMessage} from "./MarkdownMessage";
 import { Preferences } from "./preferences";
@@ -9,7 +9,10 @@ import {FileIdentityIcon} from "./FileIdentityIcon";
 import { ReviewComment } from "./ReviewComments";
 import { Dispatch, KeyboardEvent as ReactKeyboardEvent, SetStateAction, UIEvent as ReactUIEvent } from "react";
 const CodeEditor=lazy(()=>import("./CodeEditor"));
-type FilePanelMemory={tabs:string[];selected:string;preview:boolean;query:string;collapsed:string[]};
+type FilePanelMemory={tabs:string[];selected:string;preview:boolean;query:string;collapsed:string[];revealed?:[string,boolean][]};
+type FileSearchView={sessionId:string;query:string;results:WorkspaceFileSearchMatch[];truncated:boolean;loading:boolean;error:string|null};
+type FileTreeRow={path:string;directory:boolean;depth:number;hasChildren?:boolean};
+const emptySearchMatches:WorkspaceFileSearchMatch[]=[];
 const filePanelMemory=new Map<string,FilePanelMemory>(),forgottenFileOwners=new Set<string>();
 export function forgetFilesPanel(sessionId:string){forgottenFileOwners.add(sessionId);filePanelMemory.delete(sessionId);}
 type NativeBrowserBridge={BrowserOpenTab?:(id:string,url:string,x:number,y:number,width:number,height:number)=>Promise<void>;BrowserNavigateTab?:(id:string,url:string)=>Promise<void>;BrowserBoundsTab?:(id:string,x:number,y:number,width:number,height:number)=>Promise<void>;BrowserActionTab?:(id:string,action:string)=>Promise<void>};
@@ -40,12 +43,14 @@ export function FilesPanel({session,active,appearance,preferences,onPreferences,
  const rememberedFiles=useRef(filePanelMemory.get(session.id)).current;
  const [preview,setPreview]=useState(()=>rememberedFiles?.preview??false);const [imageRevision,setImageRevision]=useState(0);
  const [tabs,setTabs]=useState<string[]>(()=>rememberedFiles?.tabs??[]);const [collapsed,setCollapsed]=useState<Set<string>>(()=>new Set(rememberedFiles?.collapsed??[]));
- const [files,setFiles]=useState<string[]>([]);const [query,setQuery]=useState(()=>rememberedFiles?.query??"");const [searchActive,setSearchActive]=useState(0);const [searchCollapsed,setSearchCollapsed]=useState<Set<string>>(()=>new Set());const searchListRef=useRef<HTMLDivElement>(null);const [treeScrollTop,setTreeScrollTop]=useState(0);const [treeViewport,setTreeViewport]=useState(600);const [treeActivePath,setTreeActivePath]=useState(()=>rememberedFiles?.selected??"");const scrollFrame=useRef<number|null>(null),scrollFallback=useRef<number|null>(null),latestScrollTop=useRef(0);const [selected,setSelected]=useState(()=>rememberedFiles?.selected??"");const [content,setContent]=useState("");const [original,setOriginal]=useState("");const [error,setError]=useState("");const [loading,setLoading]=useState(()=>Boolean(rememberedFiles?.selected));const [saving,setSaving]=useState(false);const [version,setVersion]=useState(0);const [pending,setPending]=useState<string|null>(null);const dirty=content!==original;const imageFile=/\.(png|jpe?g|gif|webp|bmp|tiff?|ico|svg|avif|heic|heif)$/i.test(selected);const markdownFile=/\.(md|markdown|mdx)$/i.test(selected);const requestRef=useRef(0);
+ const [revealedPaths,setRevealedPaths]=useState<Map<string,boolean>>(()=>new Map(rememberedFiles?.revealed??[]));
+ const [pendingReveal,setPendingReveal]=useState<string|null>(null);
+ const [files,setFiles]=useState<string[]>([]);const [query,setQuery]=useState(()=>rememberedFiles?.query??"");const [searchView,setSearchView]=useState<FileSearchView>({sessionId:"",query:"",results:emptySearchMatches,truncated:false,loading:false,error:null});const [searchActive,setSearchActive]=useState(0);const [searchCollapsed,setSearchCollapsed]=useState<Set<string>>(()=>new Set());const searchListRef=useRef<HTMLDivElement>(null);const [treeScrollTop,setTreeScrollTop]=useState(0);const [treeViewport,setTreeViewport]=useState(600);const [treeActivePath,setTreeActivePath]=useState(()=>rememberedFiles?.selected??"");const scrollFrame=useRef<number|null>(null),scrollFallback=useRef<number|null>(null),latestScrollTop=useRef(0);const [selected,setSelected]=useState(()=>rememberedFiles?.selected??"");const [content,setContent]=useState("");const [original,setOriginal]=useState("");const [error,setError]=useState("");const [loading,setLoading]=useState(()=>Boolean(rememberedFiles?.selected));const [saving,setSaving]=useState(false);const [version,setVersion]=useState(0);const [pending,setPending]=useState<string|null>(null);const dirty=content!==original;const imageFile=/\.(png|jpe?g|gif|webp|bmp|tiff?|ico|svg|avif|heic|heif)$/i.test(selected);const markdownFile=/\.(md|markdown|mdx)$/i.test(selected);const requestRef=useRef(0);
  const initializedTree=useRef(false);
  const searchTaskTimer=useRef<number|undefined>(undefined);
  const scheduleSearchTask=(task:()=>void)=>{if(searchTaskTimer.current!==undefined)window.clearTimeout(searchTaskTimer.current);searchTaskTimer.current=window.setTimeout(()=>{searchTaskTimer.current=undefined;task();},0);};
  const focusTree=()=>scheduleSearchTask(()=>searchListRef.current?.focus({preventScroll:true}));
- useLayoutEffect(()=>{if(!forgottenFileOwners.has(session.id))filePanelMemory.set(session.id,{tabs,selected,preview,query,collapsed:[...collapsed]});},[session.id,tabs,selected,preview,query,collapsed]);
+ useLayoutEffect(()=>{if(!forgottenFileOwners.has(session.id))filePanelMemory.set(session.id,{tabs,selected,preview,query,collapsed:[...collapsed],revealed:[...revealedPaths]});},[session.id,tabs,selected,preview,query,collapsed,revealedPaths]);
  useLayoutEffect(()=>{const list=searchListRef.current;if(!list)return;const measure=()=>setTreeViewport(list.clientHeight);measure();const observer=new ResizeObserver(measure);observer.observe(list);return()=>observer.disconnect();},[]);
  useEffect(()=>{onDirtyChange(dirty);return()=>onDirtyChange(false);},[dirty,onDirtyChange]);
  useEffect(()=>()=>{if(scrollFrame.current!==null)cancelAnimationFrame(scrollFrame.current);if(scrollFallback.current!==null)window.clearTimeout(scrollFallback.current);},[]);
@@ -64,10 +69,22 @@ export function FilesPanel({session,active,appearance,preferences,onPreferences,
  useEffect(()=>{if(!dirty||!preferences.autosave||saving||error)return;const timer=window.setTimeout(()=>void save(),preferences.autosave_delay_ms);return()=>window.clearTimeout(timer);},[dirty,preferences.autosave,preferences.autosave_delay_ms,save,saving,error]);
  useEffect(()=>{const onKey=(event:KeyboardEvent)=>{if(event.defaultPrevented||editorTarget?.closest("[hidden],[inert]"))return;if((event.metaKey||event.ctrlKey)&&event.key.toLowerCase()==="s"&&selected&&!imageFile){event.preventDefault();void save();}};window.addEventListener("keydown",onKey);return()=>window.removeEventListener("keydown",onKey);},[save,selected,imageFile]);
  const searchQuery=query.trim().toLowerCase();
+ useEffect(()=>{
+  if(!active)return;
+  if(!searchQuery){setSearchView(current=>current.sessionId===session.id&&current.query===""&&!current.loading&&!current.error?current:{sessionId:session.id,query:"",results:emptySearchMatches,truncated:false,loading:false,error:null});return;}
+  const controller=new AbortController();let stale=false;
+  setSearchView(current=>({...current,loading:true,error:null}));
+  const timer=window.setTimeout(()=>{void searchWorkspaceFiles(session.id,searchQuery,preferences.show_hidden,preferences.show_ignored,controller.signal).then(result=>{
+   if(stale)return;setSearchView({sessionId:session.id,query:searchQuery,...result,loading:false,error:null});setSearchActive(0);setSearchCollapsed(new Set());
+  }).catch(reason=>{if(!stale)setSearchView({sessionId:session.id,query:searchQuery,results:emptySearchMatches,truncated:false,loading:false,error:String(reason)});});},200);
+  return()=>{stale=true;window.clearTimeout(timer);controller.abort();};
+ },[session.id,active,searchQuery,preferences.show_hidden,preferences.show_ignored,version]);
  const visible=useMemo(()=>files.filter(path=>preferences.show_hidden||!path.split("/").some(part=>part.startsWith("."))),[files,preferences.show_hidden]);
- const matches=useMemo(()=>searchQuery?visible.map(path=>({path,score:fileSearchScore(path,searchQuery)})).filter((item):item is {path:string;score:number}=>item.score!==null).sort((a,b)=>b.score-a.score||compareFilePaths(a.path,b.path)):[],[visible,searchQuery]);
- const tree=useMemo(()=>fileTree(visible),[visible]);
- const rows=useMemo(()=>searchQuery?fileSearchTree(matches.slice(0,200),searchCollapsed):tree.filter(item=>!item.path.split("/").slice(0,-1).some((_,i,parts)=>collapsed.has(parts.slice(0,i+1).join("/")))),[tree,matches,searchQuery,collapsed,searchCollapsed]);
+ const searchReady=searchView.sessionId===session.id&&searchView.query===searchQuery;
+ const matches=searchReady?searchView.results:emptySearchMatches;
+ const visibleRevealed=useMemo(()=>new Map([...revealedPaths].filter(([path])=>preferences.show_hidden||!path.split("/").some(part=>part.startsWith(".")))),[revealedPaths,preferences.show_hidden]);
+ const tree=useMemo(()=>fileTree(visible,visibleRevealed),[visible,visibleRevealed]);
+ const rows=useMemo<FileTreeRow[]>(()=>searchQuery?fileSearchTree(matches,searchCollapsed):tree.filter(item=>!item.path.split("/").slice(0,-1).some((_,i,parts)=>collapsed.has(parts.slice(0,i+1).join("/")))),[tree,matches,searchQuery,collapsed,searchCollapsed]);
  const activeSearchIndex=Math.min(searchActive,Math.max(0,rows.length-1));
  useEffect(()=>{if(!searchQuery&&rows.length&&!rows.some(item=>item.path===treeActivePath))setTreeActivePath(rows.find(item=>item.path===selected)?.path??rows[0].path);},[rows,searchQuery,selected,treeActivePath]);
  const virtualize=!searchQuery&&rows.length>300,rowHeight=27;
@@ -76,15 +93,21 @@ export function FilesPanel({session,active,appearance,preferences,onPreferences,
  const shownRows=rows.slice(firstRow,lastRow);
  const allFilesVisible=preferences.show_hidden&&preferences.show_ignored;
  const updateQuery=(value:string)=>{setQuery(value);setSearchActive(0);setSearchCollapsed(new Set());};
- const openRow=(item:{path:string;directory:boolean})=>{
+ const revealSearchPath=(path:string,directory:boolean)=>{
+  setRevealedPaths(current=>{const next=new Map(current);next.delete(path);next.set(path,directory);if(next.size>200)next.delete(next.keys().next().value!);return next;});
+  const parts=path.split("/");setCollapsed(current=>{const next=new Set(current);for(let index=1;index<=parts.length;index++)next.delete(parts.slice(0,index).join("/"));return next;});
+  setPendingReveal(path);updateQuery("");focusTree();
+ };
+ const openRow=(item:{path:string;directory:boolean;hasChildren?:boolean})=>{
   setTreeActivePath(item.path);
-  if(item.directory){if(searchQuery){setSearchCollapsed(current=>{const next=new Set(current);if(next.has(item.path))next.delete(item.path);else next.add(item.path);return next;});}else setCollapsed(current=>{const next=new Set(current);if(next.has(item.path))next.delete(item.path);else next.add(item.path);return next;});return;}
-  onOpenEditor();if(item.path!==selected){dirty?setPending(item.path):void load(item.path);}if(searchQuery){const parts=item.path.split("/");setCollapsed(current=>{const next=new Set(current);for(let i=1;i<parts.length;i++)next.delete(parts.slice(0,i).join("/"));return next;});updateQuery("");}
+  if(item.directory){if(searchQuery){if(item.hasChildren)setSearchCollapsed(current=>{const next=new Set(current);if(next.has(item.path))next.delete(item.path);else next.add(item.path);return next;});else revealSearchPath(item.path,true);}else setCollapsed(current=>{const next=new Set(current);if(next.has(item.path))next.delete(item.path);else next.add(item.path);return next;});return;}
+  onOpenEditor();if(item.path!==selected){dirty?setPending(item.path):void load(item.path);}if(searchQuery)revealSearchPath(item.path,false);
  };
  const flushTreeScroll=()=>{if(scrollFrame.current!==null)cancelAnimationFrame(scrollFrame.current);if(scrollFallback.current!==null)window.clearTimeout(scrollFallback.current);scrollFrame.current=null;scrollFallback.current=null;setTreeScrollTop(latestScrollTop.current);};
  const scheduleTreeScroll=(top:number)=>{latestScrollTop.current=top;if(scrollFrame.current!==null||scrollFallback.current!==null)return;scrollFrame.current=requestAnimationFrame(flushTreeScroll);scrollFallback.current=window.setTimeout(flushTreeScroll,32);};
  const onListScroll=(event:ReactUIEvent<HTMLDivElement>)=>scheduleTreeScroll(event.currentTarget.scrollTop);
  const revealTreeRow=(index:number)=>{const list=searchListRef.current;if(!list)return;const top=index*rowHeight,bottom=top+rowHeight;if(top<list.scrollTop)list.scrollTop=top;else if(bottom>list.scrollTop+list.clientHeight)list.scrollTop=bottom-list.clientHeight;scheduleTreeScroll(list.scrollTop);};
+ useLayoutEffect(()=>{if(!pendingReveal||searchQuery)return;const index=rows.findIndex(item=>item.path===pendingReveal);if(index>=0){revealTreeRow(index);setPendingReveal(null);}},[pendingReveal,searchQuery,rows]);
  const onTreeKey=(event:ReactKeyboardEvent<HTMLDivElement>)=>{
   if(searchQuery||event.metaKey||event.ctrlKey||event.altKey||!rows.length)return;
   const index=Math.max(0,rows.findIndex(item=>item.path===treeActivePath)),item=rows[index];
@@ -101,15 +124,15 @@ export function FilesPanel({session,active,appearance,preferences,onPreferences,
  };
  const onSearchKey=(event:ReactKeyboardEvent<HTMLInputElement>)=>{if(event.key==="Escape"){event.preventDefault();event.stopPropagation();updateQuery("");focusTree();return;}if(!searchQuery||!rows.length)return;if(event.key==="ArrowDown"||event.key==="ArrowUp"){event.preventDefault();const next=Math.max(0,Math.min(rows.length-1,activeSearchIndex+(event.key==="ArrowDown"?1:-1)));setSearchActive(next);scheduleSearchTask(()=>searchListRef.current?.querySelectorAll<HTMLButtonElement>('[role="treeitem"]')[next]?.scrollIntoView({block:"nearest"}));}else if(event.key==="Enter"){event.preventDefault();openRow(rows[activeSearchIndex]);}};
  return <section className="files-panel"><div className="files-index"><header>
-  <div className="files-search-field"><MagnifyingGlass aria-hidden="true"/><input role="searchbox" aria-label="Search files" aria-controls="project-file-results" aria-activedescendant={searchQuery&&rows.length?`file-search-result-${activeSearchIndex}`:undefined} placeholder="Search files" value={query} onChange={event=>updateQuery(event.target.value)} onKeyDown={onSearchKey}/></div>
+  <div className="files-search-field"><MagnifyingGlass aria-hidden="true"/><input role="searchbox" aria-label="Search files" aria-controls="project-file-results" aria-activedescendant={searchQuery&&rows.length?`file-search-result-${activeSearchIndex}`:undefined} placeholder="Search files" maxLength={256} value={query} onChange={event=>updateQuery(event.target.value)} onKeyDown={onSearchKey}/></div>
   <button className="icon-button files-refresh" aria-label="Refresh files" title="Refresh files" onClick={()=>setVersion(value=>value+1)}><ArrowClockwise/></button>
   <button className="icon-button files-visibility" aria-label={allFilesVisible?"Hide hidden and ignored files":"Show all files (even hidden)"} title={allFilesVisible?"Hide hidden and ignored files":"Show all files (even hidden)"} aria-pressed={allFilesVisible} onClick={()=>onPreferences({...preferences,show_hidden:!allFilesVisible,show_ignored:!allFilesVisible})}>{allFilesVisible?<Eye/>:<EyeSlash/>}</button>
  </header><div className="file-list" id="project-file-results" ref={searchListRef} role="tree" tabIndex={0} aria-label={searchQuery?"Fuzzy workspace file results":"Project files"} onScroll={onListScroll} onKeyDown={onTreeKey}>
-  {searchQuery&&matches.length>200&&<p className="file-search-count">Showing the first 200 matches</p>}
+  {searchQuery&&searchReady&&(searchView.truncated||matches.length>=200)&&<p className="file-search-count">Showing the first 200 matches</p>}
   {virtualize&&firstRow>0&&<div aria-hidden="true" style={{height:firstRow*rowHeight}}/>}
-  {shownRows.map((item,offset)=>{const index=firstRow+offset,expanded=searchQuery?!searchCollapsed.has(item.path):!collapsed.has(item.path);return <button id={searchQuery?`file-search-result-${index}`:undefined} role="treeitem" aria-level={item.depth+1} aria-label={item.path} aria-selected={searchQuery?index===activeSearchIndex:treeActivePath===item.path} aria-expanded={item.directory?expanded:undefined} className={(searchQuery?index===activeSearchIndex:treeActivePath===item.path)?"active":""} style={{paddingLeft:8+item.depth*12}} title={item.path} key={item.path} onClick={()=>{if(searchQuery)setSearchActive(index);openRow(item);}}>{item.directory?<><CaretRight className={expanded?"folder-open":""}/><FileIdentityIcon path={item.path} directory appearance={appearance}/></>:<FileIdentityIcon path={item.path} appearance={appearance}/>}<span>{item.path.split('/').at(-1)}</span></button>;})}
+  {shownRows.map((item,offset)=>{const index=firstRow+offset,expanded=searchQuery?!searchCollapsed.has(item.path):!collapsed.has(item.path),expandable=item.directory&&(!searchQuery||item.hasChildren);return <button id={searchQuery?`file-search-result-${index}`:undefined} role="treeitem" aria-level={item.depth+1} aria-label={item.path} aria-selected={searchQuery?index===activeSearchIndex:treeActivePath===item.path} aria-expanded={expandable?expanded:undefined} className={(searchQuery?index===activeSearchIndex:treeActivePath===item.path)?"active":""} style={{paddingLeft:8+item.depth*12}} title={item.path} key={item.path} onClick={()=>{if(searchQuery)setSearchActive(index);openRow(item);}}>{item.directory?<>{expandable?<CaretRight className={expanded?"folder-open":""}/>:<span className="file-caret-placeholder" aria-hidden="true"/>}<FileIdentityIcon path={item.path} directory appearance={appearance}/></>:<FileIdentityIcon path={item.path} appearance={appearance}/>}<span>{item.path.split('/').at(-1)}</span></button>;})}
   {virtualize&&lastRow<rows.length&&<div aria-hidden="true" style={{height:(rows.length-lastRow)*rowHeight}}/>}
-  {rows.length===0&&<p>{searchQuery?"No files found.":"No matching files"}</p>}
+  {rows.length===0&&<p role={searchQuery&&searchReady&&searchView.error?"alert":undefined}>{searchQuery?!searchReady||searchView.loading?"Searching files…":searchView.error??"No files found.":"No matching files"}</p>}
  </div></div>{onOpenSideChat&&onNewSideChat&&onForkSideChat&&<SideChatsFooter chats={sideChats} busy={sideChatCreating} onOpen={onOpenSideChat} onNew={onNewSideChat} onFork={onForkSideChat}/>} {selected&&editorTarget&&createPortal(<div className="file-editor"><div className="editor-tabs" role="tablist" aria-label="Open files">{tabs.map(path=><div key={path}><button role="tab" aria-selected={path===selected} title={path} onClick={()=>{if(path!==selected)dirty?setPending(path):void load(path);}}><FileIdentityIcon path={path} appearance={appearance}/>{path.split('/').at(-1)}{path===selected&&dirty&&<span>•</span>}</button><button aria-label={`Close ${path}`} onClick={()=>{if(path===selected&&dirty){setError("Save or discard changes before closing this file.");return;}const next=tabs.filter(x=>x!==path);setTabs(next);if(path===selected){if(next.length)void load(next.at(-1)!);else setSelected("");}}}><X/></button></div>)}</div><header><FileIdentityIcon path={selected} appearance={appearance}/><strong title={selected}>{selected}</strong>{dirty&&<span aria-label="Unsaved changes">•</span>}{markdownFile&&<button aria-label={preview?"Edit Markdown":"Preview Markdown"} aria-pressed={preview} onClick={()=>setPreview(value=>!value)}>{preview?"Edit":"Preview"}</button>}<button aria-label="Reload file" className="icon-button" disabled={loading||saving} onClick={()=>dirty?setPending(selected):void load(selected)}><ArrowClockwise/></button><button aria-label="Save file" className="icon-button" disabled={!dirty||saving||loading} onClick={()=>void save()}><FloppyDisk/></button></header>{pending&&<div className="unsaved-prompt" role="alert"><span>Save your changes before opening another file?</span><button onClick={()=>void save().then(saved=>{if(saved){void load(pending);setPending(null);}})}>Save</button><button onClick={()=>{void load(pending);setPending(null);}}>Discard</button><button onClick={()=>setPending(null)}>Cancel</button></div>}{error&&<p className="inline-error" role="alert">{error}</p>}{loading?<p>Loading file…</p>:imageFile?<div className="file-image-preview" key={`${selected}:${imageRevision}`}><WorkspaceImage url={fileMediaURL(session.id,selected)} name={selected.split("/").at(-1)!}/></div>:<><div className="editor-code-surface" hidden={preview}><Suspense fallback={<p>Opening editor…</p>}><CodeEditor path={selected} value={content} onChange={setContent} wrap={preferences.word_wrap} disabled={saving||Boolean(error)&&!original} comments={comments.filter(comment=>comment.source==="file"&&comment.path===selected)} onComments={onComments}/></Suspense></div>{preview&&<div className="file-markdown-preview"><MarkdownMessage session={session} filePath={selected} reviewComments={comments} onReviewComments={onComments}>{content}</MarkdownMessage></div>}</>}</div>,editorTarget)}</section>;
 }
 
@@ -118,37 +141,27 @@ function SideChatsFooter({chats,busy,onOpen,onNew,onFork}:{chats:Session[];busy:
  return <section className="files-side-chats" aria-label="Side chats"><header><button className="files-side-toggle" aria-expanded={open} onClick={()=>setOpen(value=>!value)}>{open?<CaretDown/>:<CaretRight/>}<strong>Chats</strong><span>{chats.length}</span></button><button aria-label="New side chat" title="New side chat" disabled={busy} onClick={onNew}><Plus/></button><button aria-label="Fork this chat" title="Fork this chat" disabled={busy} onClick={onFork}><GitBranch/></button></header>{open&&<div className="files-side-chat-list">{chats.length?chats.map(chat=><button key={chat.id} onClick={()=>onOpen(chat.id)} aria-label={`Open side chat ${chat.title}`}><span className={`status-dot ${chat.status}`}/><span>{chat.title}</span></button>):<div className="files-side-empty"><ChatCircleDots/><p>Side chats will appear here when they are created</p><div><button disabled={busy} onClick={onFork}><GitBranch/>Fork</button><button disabled={busy} onClick={onNew}><Plus/>New side chat</button></div></div>}</div>}</section>;
 }
 
-function fileTree(files:string[]){const entries=new Map<string,{path:string;directory:boolean;depth:number}>();for(const file of files){const parts=file.split("/");parts.forEach((_,i)=>{const path=parts.slice(0,i+1).join("/");entries.set(path,{path,directory:i<parts.length-1,depth:i});});}return [...entries.values()].sort((a,b)=>{const left=a.path.split("/"),right=b.path.split("/");for(let i=0;i<Math.min(left.length,right.length);i++){if(left[i]!==right[i]){const leftDir=i<left.length-1||a.directory,rightDir=i<right.length-1||b.directory;if(leftDir!==rightDir)return leftDir?-1:1;return left[i].localeCompare(right[i]);}}return left.length-right.length;});}
+function fileTree(files:string[],revealed:Map<string,boolean>):FileTreeRow[]{
+ const entries=new Map<string,FileTreeRow>();
+ const add=(value:string,directory:boolean)=>{const parts=value.split("/");parts.forEach((_,index)=>{const path=parts.slice(0,index+1).join("/"),existing=entries.get(path);entries.set(path,{path,directory:Boolean(existing?.directory)||index<parts.length-1||directory,depth:index});});};
+ files.forEach(path=>add(path,false));for(const [path,directory] of revealed)add(path,directory);
+ return [...entries.values()].sort((a,b)=>{const left=a.path.split("/"),right=b.path.split("/");for(let i=0;i<Math.min(left.length,right.length);i++){if(left[i]!==right[i]){const leftDir=i<left.length-1||a.directory,rightDir=i<right.length-1||b.directory;if(leftDir!==rightDir)return leftDir?-1:1;return left[i].localeCompare(right[i]);}}return left.length-right.length;});
+}
 
-const fileSearchEncoder=new TextEncoder();
-const byteLength=(value:string)=>fileSearchEncoder.encode(value).length;
 const compareText=(left:string,right:string)=>left<right?-1:left>right?1:0;
 const compareFilePaths=(left:string,right:string)=>compareText(left.toLowerCase(),right.toLowerCase())||compareText(left,right);
 
-function fileSearchScore(path:string,query:string):number|null{
- const name=path.split("/").at(-1)!.toLowerCase(),full=path.toLowerCase();
- if(name===query)return 10000;
- if(name.startsWith(query))return 8000-byteLength(name);
- const nameIndex=name.indexOf(query);
- if(nameIndex>=0)return 6000-byteLength(name.slice(0,nameIndex))-byteLength(name);
- const pathIndex=full.indexOf(query);
- if(pathIndex>=0)return 4000-byteLength(full.slice(0,pathIndex))-byteLength(full);
- const wanted=[...query];let matched=0,gaps=0;
- for(const character of full){if(character===wanted[matched]){matched++;if(matched===wanted.length)return 2000-gaps-byteLength(full);}else gaps++;}
- return null;
-}
-
-function fileSearchTree(matches:{path:string;score:number}[],collapsed:Set<string>){
+function fileSearchTree(matches:WorkspaceFileSearchMatch[],collapsed:Set<string>):FileTreeRow[]{
  type Node={path:string;name:string;directory:boolean;score:number|null;bestScore:number;children:string[]};
  const nodes=new Map<string,Node>(),roots:string[]=[];
  for(const match of matches){
   const parts=match.path.split("/").filter(Boolean);let parent="";
   for(let index=0;index<parts.length;index++){
-   const path=parts.slice(0,index+1).join("/"),directory=index<parts.length-1;
+   const path=parts.slice(0,index+1).join("/"),last=index===parts.length-1,directory=!last||match.kind==="directory";
    let node=nodes.get(path);
    if(!node){node={path,name:parts[index],directory,score:null,bestScore:match.score,children:[]};nodes.set(path,node);}
    if(directory)node.directory=true;
-   if(!directory)node.score=Math.max(node.score??-Infinity,match.score);
+   if(last)node.score=Math.max(node.score??-Infinity,match.score);
    const siblings=parent?nodes.get(parent)!.children:roots;
    if(!siblings.includes(path))siblings.push(path);
    parent=path;
@@ -157,8 +170,8 @@ function fileSearchTree(matches:{path:string;score:number}[],collapsed:Set<strin
  const best=(path:string):number=>{const node=nodes.get(path)!;node.bestScore=Math.max(node.score??-Infinity,...node.children.map(best));return node.bestScore;};
  roots.forEach(best);
  const order=(left:string,right:string)=>{const a=nodes.get(left)!,b=nodes.get(right)!;return b.bestScore-a.bestScore||Number(b.directory)-Number(a.directory)||compareFilePaths(a.name,b.name)||compareText(a.path,b.path);};
- const rows:{path:string;directory:boolean;depth:number}[]=[];
- const append=(path:string,depth:number)=>{const node=nodes.get(path)!;rows.push({path,directory:node.directory,depth});if(node.directory&&!collapsed.has(path))node.children.sort(order).forEach(child=>append(child,depth+1));};
+ const rows:FileTreeRow[]=[];
+ const append=(path:string,depth:number)=>{const node=nodes.get(path)!;rows.push({path,directory:node.directory,depth,hasChildren:node.children.length>0});if(node.directory&&!collapsed.has(path))node.children.sort(order).forEach(child=>append(child,depth+1));};
  roots.sort(order).forEach(root=>append(root,0));
  return rows;
 }
