@@ -766,7 +766,7 @@ func (d *Daemon) handleFilesWatch(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	changes, cancel, err := d.fileWatches.subscribe(session.WorktreePath)
+	changes, cancel, err := d.fileWatches.subscribe(r.Context(), session.WorktreePath)
 	if err != nil {
 		writeError(w, http.StatusConflict, err)
 		return

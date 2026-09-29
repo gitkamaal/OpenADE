@@ -1,10 +1,12 @@
 package daemon
 
 import (
+	"context"
 	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -30,6 +32,7 @@ type fileWatchHub struct {
 
 type fileWatch struct {
 	root         string
+	ignored      map[string]struct{} // owned by run after startup
 	watcher      *fsnotify.Watcher
 	nativeActive bool                       // owned by run after startup
 	dirs         map[string]struct{}        // owned by run after startup
@@ -41,9 +44,33 @@ func newFileWatchHub() *fileWatchHub {
 	return &fileWatchHub{watches: make(map[string]*fileWatch)}
 }
 
-func watchDirectories(root string) ([]string, error) {
+func ignoredWatchEntries(ctx context.Context, root string) map[string]struct{} {
+	lookup, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	out, err := gitOutput(lookup, root, "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z")
+	if err != nil {
+		return nil
+	}
+	ignored := make(map[string]struct{})
+	for _, entry := range strings.Split(out, "\x00") {
+		entry = strings.TrimSuffix(entry, "/")
+		if entry == "" || filepath.IsAbs(entry) {
+			continue
+		}
+		path := filepath.Join(root, filepath.FromSlash(entry))
+		relative, err := filepath.Rel(root, path)
+		if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			continue
+		}
+		ignored[path] = struct{}{}
+	}
+	return ignored
+}
+
+func watchDirectories(root string, ignored map[string]struct{}) ([]string, error) {
 	dirs := make([]string, 0, 32)
 	entries := 0
+	plain := plainProjectFolder(root)
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			if path == root {
@@ -51,12 +78,32 @@ func watchDirectories(root string) ([]string, error) {
 			}
 			return nil
 		}
+		if path != root && entry.IsDir() && entry.Name() == ".git" {
+			return filepath.SkipDir
+		}
+		if plain {
+			if entry.Type()&os.ModeSymlink != 0 {
+				return nil
+			}
+			if path != root && entry.IsDir() {
+				relative, err := filepath.Rel(root, path)
+				if err != nil {
+					return err
+				}
+				if entry.Name() == "node_modules" || entry.Name() == "target" || len(strings.Split(relative, string(filepath.Separator))) > 16 {
+					return filepath.SkipDir
+				}
+			}
+		}
+		if _, skip := ignored[path]; skip {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
 		entries++
 		if entries > fileWatchEntryLimit {
 			return errFileWatchBudget
-		}
-		if path != root && entry.IsDir() && entry.Name() == ".git" {
-			return filepath.SkipDir
 		}
 		if !entry.IsDir() {
 			return nil
@@ -70,9 +117,9 @@ func watchDirectories(root string) ([]string, error) {
 	return dirs, err
 }
 
-func newFileWatch(root string) *fileWatch {
-	watch := &fileWatch{root: root, dirs: make(map[string]struct{}), subscribers: make(map[chan struct{}]struct{}), stop: make(chan struct{})}
-	dirs, err := watchDirectories(root)
+func newFileWatch(root string, ignored map[string]struct{}) *fileWatch {
+	watch := &fileWatch{root: root, ignored: ignored, dirs: make(map[string]struct{}), subscribers: make(map[chan struct{}]struct{}), stop: make(chan struct{})}
+	dirs, err := watchDirectories(root, ignored)
 	if err != nil || len(dirs) > fileWatchDirLimit {
 		return watch
 	}
@@ -92,7 +139,7 @@ func newFileWatch(root string) *fileWatch {
 	return watch
 }
 
-func (h *fileWatchHub) subscribe(root string) (<-chan struct{}, func(), error) {
+func (h *fileWatchHub) subscribe(ctx context.Context, root string) (<-chan struct{}, func(), error) {
 	canonical, err := filepath.EvalSymlinks(root)
 	if err != nil {
 		return nil, nil, err
@@ -111,15 +158,51 @@ func (h *fileWatchHub) subscribe(root string) (<-chan struct{}, func(), error) {
 	}
 	watch := h.watches[canonical]
 	if watch == nil {
-		watch = newFileWatch(canonical)
-		h.watches[canonical] = watch
-		go watch.run(h)
+		h.mu.Unlock()
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
+		candidate := newFileWatch(canonical, ignoredWatchEntries(ctx, canonical))
+		if err := ctx.Err(); err != nil {
+			if candidate.watcher != nil {
+				_ = candidate.watcher.Close()
+			}
+			return nil, nil, err
+		}
+		h.mu.Lock()
+		if h.closed {
+			h.mu.Unlock()
+			if candidate.watcher != nil {
+				_ = candidate.watcher.Close()
+			}
+			return nil, nil, errors.New("file watcher is shutting down")
+		}
+		watch = h.watches[canonical]
+		var discard *fsnotify.Watcher
+		if watch == nil {
+			watch = candidate
+			h.watches[canonical] = watch
+			go watch.run(h)
+		} else {
+			discard = candidate.watcher
+		}
+		changes := make(chan struct{}, 1)
+		watch.subscribers[changes] = struct{}{}
+		h.mu.Unlock()
+		if discard != nil {
+			_ = discard.Close()
+		}
+		return changes, h.cancel(canonical, watch, changes), nil
 	}
 	changes := make(chan struct{}, 1)
 	watch.subscribers[changes] = struct{}{}
 	h.mu.Unlock()
+	return changes, h.cancel(canonical, watch, changes), nil
+}
+
+func (h *fileWatchHub) cancel(canonical string, watch *fileWatch, changes chan struct{}) func() {
 	var once sync.Once
-	cancel := func() {
+	return func() {
 		once.Do(func() {
 			var native *fsnotify.Watcher
 			h.mu.Lock()
@@ -138,7 +221,6 @@ func (h *fileWatchHub) subscribe(root string) (<-chan struct{}, func(), error) {
 			}
 		})
 	}
-	return changes, cancel, nil
 }
 
 func (h *fileWatchHub) publish(watch *fileWatch) {
@@ -192,7 +274,11 @@ func (watch *fileWatch) syncDirs() {
 	if !watch.nativeActive {
 		return
 	}
-	dirs, err := watchDirectories(watch.root)
+	dirs, err := watchDirectories(watch.root, watch.ignored)
+	if err != nil || len(dirs) > fileWatchDirLimit {
+		watch.ignored = ignoredWatchEntries(context.Background(), watch.root)
+		dirs, err = watchDirectories(watch.root, watch.ignored)
+	}
 	if err != nil || len(dirs) > fileWatchDirLimit {
 		_ = watch.watcher.Close()
 		watch.nativeActive = false

@@ -87,6 +87,20 @@ test('visible files follow nested external changes and release their watcher on 
  if(activeDescriptors!==null)expect(descriptors()!).toBeLessThanOrEqual(activeDescriptors);
 });
 
+test('ignored dependency trees do not disable live updates for visible files',async({page,request})=>{
+ const session=await create(request,'Ignored dependency watch');await expect.poll(()=>status(request,session.id)).toBe('completed');
+ fs.writeFileSync(path.join(session.worktree_path,'.gitignore'),'node_modules/\n');
+ const ignored=path.join(session.worktree_path,'node_modules');fs.mkdirSync(ignored);
+ for(let index=0;index<=4096;index++)fs.writeFileSync(path.join(ignored,`dependency-${index}`),'');
+ const src=path.join(session.worktree_path,'src');fs.mkdirSync(src);fs.writeFileSync(path.join(src,'baseline.md'),'before');
+ await ready(page);await open(page,'Ignored dependency watch');await page.getByLabel('Toggle files panel').click();
+ const tree=page.getByRole('tree',{name:'Project files'});await expect(tree.getByRole('treeitem',{name:'src',exact:true})).toBeVisible();
+ const diagnostics=async()=>(await(await request.get(`${daemon}/api/diagnostics`)).json()) as {file_watch_dirs:number;file_watch_subscribers:number};
+ await expect.poll(async()=>(await diagnostics()).file_watch_dirs).toBeGreaterThanOrEqual(2);
+ fs.writeFileSync(path.join(src,'external.md'),'visible');await tree.getByRole('treeitem',{name:'src',exact:true}).click();await expect(tree.getByRole('treeitem',{name:'src/external.md',exact:true})).toBeVisible();
+ await page.getByLabel('Toggle files panel').click();await expect.poll(async()=>(await diagnostics()).file_watch_subscribers).toBe(0);
+});
+
 test('files tree uses the pinned source icon identities and loads their native assets',async({page,request})=>{
  const session=await create(request,'File identity icons');await expect.poll(()=>status(request,session.id)).toBe('completed');
  fs.mkdirSync(path.join(session.worktree_path,'src'),{recursive:true});
