@@ -875,6 +875,14 @@ func (c *codexConversation) handle(frame providerRPCFrame) {
 			phase = "item.completed"
 		}
 		switch p.Item.Type {
+		case "contextCompaction", "context_compaction":
+			if phase == "item.completed" {
+				id := p.Item.ID
+				if id == "" || len(id) > 256 {
+					id = uuid.NewString()
+				}
+				c.emit(map[string]any{"type": "openade.agent_message", "id": "context-compaction-" + id, "text": "Context compacted."})
+			}
 		case "imageGeneration", "image_generation":
 			if p.TurnID == "" || p.TurnID != c.providerTurn || p.Item.ID == "" || len(p.Item.ID) > 256 {
 				return

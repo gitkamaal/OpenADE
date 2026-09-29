@@ -80,6 +80,26 @@ test('known context capacity remains visible while token use is unavailable',asy
  await page.reload();await expect(ring).toBeVisible();
 });
 
+test('Codex compaction appears once and replaces the measured token count without losing capacity',async({request,page})=>{
+ const session=await create(request,'Compaction context',{agent:'codex',prompt:'context-compaction-hold'});
+ const gate=path.join(tmp,'provider-home','context-compaction-'+session.id);
+ try{
+  await expect.poll(()=>fs.existsSync(gate+'.ready')).toBe(true);
+  await expect.poll(async()=>{const context=(await state(request,session.id)).context;return [context.tokens,context.window];}).toEqual([120000,200000]);
+  await ready(page);await open(page,'Compaction context');
+  await expect(page.getByRole('button',{name:'Context usage 60%'})).toBeVisible();
+  await expect(page.getByText('Context compacted.',{exact:true})).toHaveCount(0);
+  fs.writeFileSync(gate+'.go','');
+  await expect.poll(()=>status(request,session.id)).toBe('completed');
+  await expect.poll(async()=>{const context=(await state(request,session.id)).context;return [context.tokens,context.window];}).toEqual([32000,200000]);
+  await expect(page.getByText('Context compacted.',{exact:true})).toHaveCount(1);
+  await expect(page.getByRole('button',{name:'Context usage 16%'})).toBeVisible();
+  await page.reload();
+  await expect(page.getByText('Context compacted.',{exact:true})).toHaveCount(1);
+  await expect(page.getByRole('button',{name:'Context usage 16%'})).toBeVisible();
+ }finally{fs.writeFileSync(gate+'.go','');await request.post(`${daemon}/api/sessions/${session.id}/stop`);}
+});
+
 test('Codex snake case usage and zero-token reset keep the context meter accurate',async({request,page})=>{
  const session=await create(request,'Snake case context',{agent:'codex',prompt:'context-snake-usage'});
  await expect.poll(()=>status(request,session.id)).toBe('completed');await expect.poll(async()=>(await state(request,session.id)).context).toEqual({tokens:64000,window:256000});

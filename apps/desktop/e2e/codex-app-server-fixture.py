@@ -32,6 +32,20 @@ def work(turn,prompt):
   notify('thread/tokenUsage/updated',{'threadId':thread,'turnId':turn,'tokenUsage':{'last':{},'modelContextWindow':200000}})
   notify('turn/completed',{'threadId':thread,'turn':{'id':turn,'status':'completed'}})
   return
+ if 'context-compaction-hold' in prompt:
+  gate=os.path.join(os.environ['OPENADE_PROVIDER_HOME'],'context-compaction-'+sid)
+  notify('thread/tokenUsage/updated',{'threadId':thread,'turnId':turn,'tokenUsage':{'last':{'totalTokens':120000},'modelContextWindow':200000}})
+  open(gate+'.ready','w').close()
+  deadline=time.monotonic()+10
+  while not os.path.exists(gate+'.go') and time.monotonic()<deadline and state.get(turn,{}).get('active'):time.sleep(.02)
+  if not state.get(turn,{}).get('active'):return
+  state[turn]['active']=False
+  item={'id':'compact-1','type':'contextCompaction','status':'completed'}
+  notify('item/started',{'threadId':thread,'turnId':turn,'item':{**item,'status':'inProgress'}})
+  notify('item/completed',{'threadId':thread,'turnId':turn,'item':item})
+  notify('thread/tokenUsage/updated',{'threadId':thread,'turnId':turn,'tokenUsage':{'last':{'totalTokens':32000},'modelContextWindow':0}})
+  notify('turn/completed',{'threadId':thread,'turn':{'id':turn,'status':'completed'}})
+  return
  if 'context-snake-usage' in prompt or 'context-snake-reset' in prompt:
   state[turn]['active']=False
   reset='context-snake-reset' in prompt
