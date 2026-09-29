@@ -17,7 +17,7 @@ export function SideChatPane({session,sourceTitle,preferences,onRefresh,onForkSi
   const active=["starting","running","waiting"].includes(session.status);
   const provider=useProviderState(session.id,active,["codex","codex-cli","grok","devin","hermes","pi","antigravity"].includes(session.agent));
   const [output,setOutput]=useState("");
-  const cursor=useRef(0);
+  const outputText=useRef(""),outputStart=useRef(0),cursor=useRef(0);
   const [streamVersion,setStreamVersion]=useState(0);
   const [input,setInput]=useState(()=>drafts.get(session.id)??"");
   const [error,setError]=useState("");
@@ -35,12 +35,24 @@ export function SideChatPane({session,sourceTitle,preferences,onRefresh,onForkSi
   useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;};},[]);
   useEffect(()=>{if(input)drafts.set(session.id,input);else drafts.delete(session.id);},[session.id,input]);
   useEffect(()=>{setQueue(engine.queues[session.id]??[]);},[engine.queues,session.id]);
-  useEffect(()=>{setOutput("");cursor.current=0;setInput(drafts.get(session.id)??"");},[session.id]);
+  useEffect(()=>{setOutput("");outputText.current="";outputStart.current=0;cursor.current=0;setInput(drafts.get(session.id)??"");},[session.id]);
   useEffect(()=>{
-    let disposed=false,retry:number|undefined,render:number|undefined,pending="",replace=false,nextCursor=cursor.current;
-    const flush=()=>{render=undefined;if(disposed)return;cursor.current=nextCursor;const text=pending;pending="";setOutput(current=>(replace?text:current+text).slice(-2_000_000));replace=false;};
+    let disposed=false,retry:number|undefined,render:number|undefined,pending="",replace=false,nextCursor=cursor.current,pendingOffset=outputStart.current;
+    const flush=()=>{
+      render=undefined;if(disposed)return;
+      cursor.current=nextCursor;
+      let next=replace?pending:outputText.current+pending,start=replace?pendingOffset:outputStart.current;
+      pending="";replace=false;
+      if(next.length>2_000_000){
+        const newline=next.indexOf("\n",next.length-2_000_000);
+        const discarded=newline<0?next:next.slice(0,newline+1);
+        start+=new TextEncoder().encode(discarded).length;
+        next=newline<0?"":next.slice(newline+1);
+      }
+      outputText.current=next;outputStart.current=start;setOutput(next);
+    };
     const socket=new WebSocket(streamURL(session.id,cursor.current));
-    socket.onmessage=event=>{if(disposed)return;let message:{type:string;data?:string;reset?:boolean;cursor?:number};try{message=JSON.parse(String(event.data));}catch{return;}if(message.type!=="output")return;nextCursor=message.cursor??nextCursor;if(message.reset){pending=message.data??"";replace=true;}else pending+=message.data??"";if(render===undefined)render=window.setTimeout(flush,33);};
+    socket.onmessage=event=>{if(disposed)return;let message:{type:string;data?:string;reset?:boolean;offset?:number;cursor?:number};try{message=JSON.parse(String(event.data));}catch{return;}if(message.type!=="output")return;nextCursor=message.cursor??nextCursor;if(message.reset){pending=message.data??"";pendingOffset=message.offset??0;replace=true;}else pending+=message.data??"";if(render===undefined)render=window.setTimeout(flush,33);};
     socket.onclose=()=>{if(!disposed&&activeRef.current)retry=window.setTimeout(()=>setStreamVersion(value=>value+1),300);};
     return()=>{disposed=true;if(retry!==undefined)clearTimeout(retry);if(render!==undefined)clearTimeout(render);socket.close();};
   },[session.id,session.generation,streamVersion]);
@@ -63,7 +75,7 @@ export function SideChatPane({session,sourceTitle,preferences,onRefresh,onForkSi
   return <section className="side-chat-pane" aria-label={`Side chat ${session.title}`}>
     <header className="side-chat-heading"><div><strong>{session.title}</strong><small>{session.fork_source_id?`Forked from ${sourceTitle}`:"New side chat"}</small></div><button title="New side chat" aria-label="New sibling side chat" onClick={onNewSibling}><Plus/></button><button title="Fork this chat" aria-label="Fork this side chat" onClick={onForkSibling}><GitBranch/></button></header>
     {error&&<p className="inline-error" role="alert">{error}</p>}
-    <div className="side-chat-messages messages" ref={messages} onScroll={event=>{const node=event.currentTarget;following.current=node.scrollHeight-node.scrollTop-node.clientHeight<80;}}><ChatTimeline session={session} output={output} activityExpanded={preferences.activity_detail==="expanded"}/></div>
+    <div className="side-chat-messages messages" ref={messages} onScroll={event=>{const node=event.currentTarget;following.current=node.scrollHeight-node.scrollTop-node.clientHeight<80;}}><ChatTimeline session={session} output={output} outputOffset={outputStart.current} outputCursor={cursor.current} activityExpanded={preferences.activity_detail==="expanded"} onNavigate={()=>{following.current=false;}}/></div>
     <div className="side-chat-composer session-composer-dock">
       {queue.length>0&&<MessageQueue steering={provider.state.steering} messages={queue} sendingId={queue.find(item=>item.status==="dispatching")?.id??null} onSteer={id=>{void steerQueuedMessage(session.id,id).then(refreshQueue).catch(reason=>setError(String(reason)));}} onRemove={id=>{void removeQueuedMessage(session.id,id).then(refreshQueue).catch(reason=>setError(String(reason)));}} onEdit={id=>{const item=queue.find(value=>value.id===id);if(item){setEditing(id);setInput(item.text);textarea.current?.focus();}}}/>}
       {request&&<ProviderInteraction key={request.id} id={session.id} request={request} onResolved={()=>{provider.refresh();void onRefresh();}}/>}

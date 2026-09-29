@@ -118,3 +118,29 @@ test("fork freezes the last completed response while the parent continues workin
   expect(fresh.status(),await fresh.text()).toBe(201);
   await request.post(`${daemon}/api/sessions/${source.id}/stop`);
 });
+
+test('a long side chat can page to its first answer after bounded live replay',async({request,page})=>{
+ const source=await create(request,'Side history source');await expect.poll(()=>status(request,source.id)).toBe('completed');
+ const response=await request.post(`${daemon}/api/sessions/${source.id}/fork`,{data:{mode:'fresh'}});expect(response.status()).toBe(201);
+ const child=await response.json() as {id:string};
+ const transcript=path.join(tmp,'data/transcripts',child.id+'.log');
+ const entries:string[]=[];
+ for(let index=0;index<500;index++){
+  entries.push(JSON.stringify({type:'openade.user_message',text:`Historical question ${index}`}));
+  entries.push(JSON.stringify({type:'openade.agent_message',id:`answer-${index}`,text:`Historical answer ${index} ${'detail '.repeat(700)}`}));
+ }
+ fs.appendFileSync(transcript,entries.join('\n')+'\n');expect(fs.statSync(transcript).size).toBeGreaterThan(2_000_000);
+ let historyReads=0;page.on('response',response=>{if(response.url().includes(`/api/sessions/${child.id}/transcript-page`)&&response.status()===200)historyReads++;});
+ await ready(page);await open(page,'Side history source');await page.getByRole('button',{name:'Toggle files panel'}).click();
+ await page.getByRole('region',{name:'Side chats'}).getByRole('button',{name:'Open side chat New side chat'}).click();
+ const pane=page.locator('.side-chat-pane');await expect(pane.locator('.chat-assistant-turn').last()).toContainText('Historical answer 499');
+ await expect.poll(()=>pane.locator('.chat-timeline article').count()).toBeLessThanOrEqual(80);
+ const earlier=pane.getByRole('button',{name:'Show earlier messages'});await expect(earlier).toBeVisible();
+ for(let index=0;index<22&&await pane.getByText(/Historical answer 0 detail/).count()===0;index++){
+  await expect(earlier).toBeVisible({timeout:3000});await earlier.click();await expect(pane.getByRole('button',{name:'Loading earlier messages…'})).toHaveCount(0);
+ }
+ await expect(pane.getByText(/Historical answer 0 detail/)).toBeVisible();
+ expect(historyReads).toBeGreaterThan(0);await expect.poll(()=>pane.locator('.chat-timeline article').count()).toBeLessThanOrEqual(80);
+ await pane.getByRole('button',{name:'Show newer messages'}).click();
+ await expect(pane.getByText(/Historical answer 0 detail/)).toHaveCount(0);
+});
