@@ -1,7 +1,7 @@
 import { ArrowClockwise, ArrowSquareOut, ChatCircleDots, CaretRight, CaretDown, X, ArrowLeft, ArrowRight, GitBranch, Globe, FloppyDisk, Plus, Eye, EyeSlash, MagnifyingGlass } from "@phosphor-icons/react";
 import { createPortal } from "react-dom";
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { fileMediaURL, getFile, getFiles, getPreviewServers, saveFile, Session } from "./api";
+import { fileMediaURL, fileWatchURL, getFile, getFiles, getPreviewServers, saveFile, Session } from "./api";
 import {WorkspaceImage} from "./Attachments";
 import {MarkdownMessage} from "./MarkdownMessage";
 import { Preferences } from "./preferences";
@@ -41,6 +41,7 @@ export function FilesPanel({session,active,appearance,preferences,onPreferences,
  const [preview,setPreview]=useState(()=>rememberedFiles?.preview??false);const [imageRevision,setImageRevision]=useState(0);
  const [tabs,setTabs]=useState<string[]>(()=>rememberedFiles?.tabs??[]);const [collapsed,setCollapsed]=useState<Set<string>>(()=>new Set(rememberedFiles?.collapsed??[]));
  const [files,setFiles]=useState<string[]>([]);const [query,setQuery]=useState(()=>rememberedFiles?.query??"");const [searchActive,setSearchActive]=useState(0);const searchListRef=useRef<HTMLDivElement>(null);const [treeScrollTop,setTreeScrollTop]=useState(0);const [treeViewport,setTreeViewport]=useState(600);const [treeActivePath,setTreeActivePath]=useState(()=>rememberedFiles?.selected??"");const scrollFrame=useRef<number|null>(null),scrollFallback=useRef<number|null>(null),latestScrollTop=useRef(0);const [selected,setSelected]=useState(()=>rememberedFiles?.selected??"");const [content,setContent]=useState("");const [original,setOriginal]=useState("");const [error,setError]=useState("");const [loading,setLoading]=useState(()=>Boolean(rememberedFiles?.selected));const [saving,setSaving]=useState(false);const [version,setVersion]=useState(0);const [pending,setPending]=useState<string|null>(null);const dirty=content!==original;const imageFile=/\.(png|jpe?g|gif|webp|bmp|tiff?|ico|svg|avif|heic|heif)$/i.test(selected);const markdownFile=/\.(md|markdown|mdx)$/i.test(selected);const requestRef=useRef(0);
+ const initializedTree=useRef(false);
  const searchTaskTimer=useRef<number|undefined>(undefined);
  const scheduleSearchTask=(task:()=>void)=>{if(searchTaskTimer.current!==undefined)window.clearTimeout(searchTaskTimer.current);searchTaskTimer.current=window.setTimeout(()=>{searchTaskTimer.current=undefined;task();},0);};
  const focusTree=()=>scheduleSearchTask(()=>searchListRef.current?.focus({preventScroll:true}));
@@ -49,7 +50,13 @@ export function FilesPanel({session,active,appearance,preferences,onPreferences,
  useEffect(()=>{onDirtyChange(dirty);return()=>onDirtyChange(false);},[dirty,onDirtyChange]);
  useEffect(()=>()=>{if(scrollFrame.current!==null)cancelAnimationFrame(scrollFrame.current);if(scrollFallback.current!==null)window.clearTimeout(scrollFallback.current);},[]);
  useEffect(()=>()=>{if(searchTaskTimer.current!==undefined)window.clearTimeout(searchTaskTimer.current);},[]);
- useEffect(()=>{if(!active)return;let stale=false;void getFiles(session.id,preferences.show_ignored).then(result=>{if(!stale){setFiles(result);if(!rememberedFiles)setCollapsed(new Set(result.filter(path=>path.includes("/")).map(path=>path.split("/")[0])));}}).catch(reason=>{if(!stale)setError(String(reason));});return()=>{stale=true;};},[session.id,active,version,preferences.show_ignored]);
+ useEffect(()=>{if(!active)return;let stale=false;void getFiles(session.id,preferences.show_ignored).then(result=>{if(!stale){setFiles(current=>current.length===result.length&&current.every((path,index)=>path===result[index])?current:result);if(!initializedTree.current){initializedTree.current=true;if(!rememberedFiles)setCollapsed(new Set(result.filter(path=>path.includes("/")).map(path=>path.split("/")[0])));}}}).catch(reason=>{if(!stale)setError(String(reason));});return()=>{stale=true;};},[session.id,active,version,preferences.show_ignored]);
+ useEffect(()=>{if(!active)return;let stopped=false;let socket:WebSocket|undefined,timer:number|undefined,delay=250;
+  const connect=()=>{if(stopped)return;try{socket=new WebSocket(fileWatchURL(session.id));}catch{timer=window.setTimeout(connect,delay);delay=Math.min(5000,delay*2);return;}
+   socket.onmessage=event=>{try{const frame=JSON.parse(String(event.data)) as {type?:string};if(frame.type==="ready"||frame.type==="changed"){delay=250;setVersion(value=>value+1);}}catch{/* Ignore malformed notifications; the next repair resynchronizes. */}};
+   socket.onclose=()=>{if(!stopped){timer=window.setTimeout(connect,delay);delay=Math.min(5000,delay*2);}};
+  };connect();return()=>{stopped=true;if(timer!==undefined)window.clearTimeout(timer);socket?.close();};
+ },[session.id,active]);
  const load=useCallback(async(path:string,keepPreview=false)=>{const request=++requestRef.current;setSelected(path);setTabs(current=>current.includes(path)?current:[...current,path]);setLoading(true);setContent("");setOriginal("");setError("");if(!keepPreview)setPreview(false);if(/\.(png|jpe?g|gif|webp|bmp|tiff?|ico|svg|avif|heic|heif)$/i.test(path)){setImageRevision(value=>value+1);setLoading(false);return;}try{const result=await getFile(session.id,path);if(request===requestRef.current){setContent(result.content);setOriginal(result.content);}}catch(reason){if(request===requestRef.current)setError(String(reason));}finally{if(request===requestRef.current)setLoading(false);}},[session.id]);
  useEffect(()=>{if(rememberedFiles?.selected)void load(rememberedFiles.selected,true);},[load]);
  useEffect(()=>()=>{requestRef.current++;},[]);

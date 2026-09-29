@@ -340,6 +340,8 @@ export async function getFiles(id: string,ignored=false): Promise<string[]> {
   return (await request<{ files: string[] }>(`/api/sessions/${id}/files?ignored=${ignored?"1":"0"}`)).files;
 }
 
+export const fileWatchURL=(id:string)=>`${DAEMON_URL.replace(/^http/,"ws")}/api/sessions/${id}/files/watch?token=${encodeURIComponent(authToken)}`;
+
 export async function listPullRequests(repo: string): Promise<PullRequest[]> {
   const payload = await request<{ pull_requests: PullRequest[] }>(
     `/api/github/pull-requests?repo=${encodeURIComponent(repo)}`,

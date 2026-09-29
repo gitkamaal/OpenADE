@@ -2,6 +2,7 @@ import {test,create,ready,open,daemon,status} from './helpers';
 import {expect} from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
+import {execFileSync} from 'node:child_process';
 const png=fs.readFileSync(new URL('./fixtures/preview-grid.png',import.meta.url));
 
 test('files search follows source keyboard reveal and the eye controls hidden and ignored entries',async({page,request})=>{
@@ -54,14 +55,36 @@ test('large file tree keeps rendered rows bounded and reveals the end on scroll'
  await expect(tree.getByRole('treeitem',{name:'file-1199.md',exact:true})).toBeVisible();
 });
 
-test('reopening files reads external changes without polling a hidden panel',async({page,request})=>{
+test('reopening files reads external changes made while the panel is hidden',async({page,request})=>{
  const session=await create(request,'External file refresh');await expect.poll(()=>status(request,session.id)).toBe('completed');
  await ready(page);await open(page,'External file refresh');await page.getByLabel('Toggle files panel').click();
  const tree=page.getByRole('tree',{name:'Project files'});await expect(tree.getByRole('treeitem',{name:'README.md',exact:true})).toBeVisible();
+ await page.getByLabel('Toggle files panel').click();
  fs.writeFileSync(path.join(session.worktree_path,'outside-change.md'),'# Added elsewhere\n');
- await expect(tree.getByRole('treeitem',{name:'outside-change.md',exact:true})).toHaveCount(0);
- await page.getByLabel('Toggle files panel').click();await page.getByLabel('Toggle files panel').click();
+ await page.getByLabel('Toggle files panel').click();
  await expect(tree.getByRole('treeitem',{name:'outside-change.md',exact:true})).toBeVisible();
+});
+
+test('visible files follow nested external changes and release their watcher on close',async({page,request})=>{
+ const session=await create(request,'Live files watch');await expect.poll(()=>status(request,session.id)).toBe('completed');
+ const folder=path.join(session.worktree_path,'src');fs.mkdirSync(folder,{recursive:true});fs.writeFileSync(path.join(folder,'baseline.md'),'before\n');
+ await ready(page);await open(page,'Live files watch');await page.getByLabel('Toggle files panel').click();
+ const tree=page.getByRole('tree',{name:'Project files'});await tree.getByRole('treeitem',{name:'src',exact:true}).click();await expect(tree.getByRole('treeitem',{name:'src/baseline.md',exact:true})).toBeVisible();
+ const health=await(await request.get(`${daemon}/api/health`)).json();
+ const descriptors=()=>process.platform==='darwin'?execFileSync('lsof',['-nP','-p',String(health.pid)],{encoding:'utf8'}).trim().split('\n').slice(1).filter(line=>/^\d+[a-z]*$/.test(line.trim().split(/\s+/)[3]??'')).length:null;
+ const diagnostics=async()=>(await(await request.get(`${daemon}/api/diagnostics`)).json()) as {file_watch_subscribers:number;file_watch_roots:number;file_watch_dirs:number};
+ await expect.poll(async()=>(await diagnostics()).file_watch_subscribers).toBe(1);
+ const activeDescriptors=descriptors();
+ fs.writeFileSync(path.join(folder,'live.md'),'created elsewhere\n');await expect(tree.getByRole('treeitem',{name:'src/live.md',exact:true})).toBeVisible();
+ fs.renameSync(path.join(folder,'live.md'),path.join(folder,'renamed.md'));await expect(tree.getByRole('treeitem',{name:'src/renamed.md',exact:true})).toBeVisible();await expect(tree.getByRole('treeitem',{name:'src/live.md',exact:true})).toHaveCount(0);
+ const nested=path.join(folder,'new-folder');fs.mkdirSync(nested);fs.writeFileSync(path.join(nested,'first.md'),'new directory\n');await expect(tree.getByRole('treeitem',{name:'src/new-folder',exact:true})).toBeVisible();await expect.poll(async()=>(await diagnostics()).file_watch_dirs).toBeGreaterThanOrEqual(3);
+ fs.writeFileSync(path.join(nested,'later.md'),'created after directory watch\n');await expect(tree.getByRole('treeitem',{name:'src/new-folder/later.md',exact:true})).toBeVisible();
+ await page.getByLabel('Toggle files panel').click();await expect.poll(async()=>(await diagnostics()).file_watch_subscribers).toBe(0);await expect.poll(async()=>(await diagnostics()).file_watch_roots).toBe(0);await expect.poll(async()=>(await diagnostics()).file_watch_dirs).toBe(0);
+ fs.writeFileSync(path.join(folder,'after-close.md'),'created while hidden\n');await page.getByLabel('Toggle files panel').click();await expect(tree.getByRole('treeitem',{name:'src/after-close.md',exact:true})).toBeVisible();await expect.poll(async()=>(await diagnostics()).file_watch_subscribers).toBe(1);
+ await page.getByLabel('Toggle files panel').click();await expect.poll(async()=>(await diagnostics()).file_watch_subscribers).toBe(0);
+ for(let index=0;index<5;index++){await page.getByLabel('Toggle files panel').click();await expect.poll(async()=>(await diagnostics()).file_watch_subscribers).toBe(1);await page.getByLabel('Toggle files panel').click();await expect.poll(async()=>(await diagnostics()).file_watch_subscribers).toBe(0);}
+ await expect.poll(async()=>(await diagnostics()).file_watch_dirs).toBe(0);
+ if(activeDescriptors!==null)expect(descriptors()!).toBeLessThanOrEqual(activeDescriptors);
 });
 
 test('files tree uses the pinned source icon identities and loads their native assets',async({page,request})=>{

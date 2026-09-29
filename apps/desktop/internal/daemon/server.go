@@ -29,6 +29,7 @@ type Daemon struct {
 	store           *Store
 	sessions        *SessionManager
 	terminals       *TerminalManager
+	fileWatches     *fileWatchHub
 	server          *http.Server
 	listener        net.Listener
 	releaseProfile  func()
@@ -123,6 +124,7 @@ func New(config Config) (*Daemon, error) {
 	}
 	d.sessions = NewSessionManager(store, config.DataDir, d.deletions)
 	d.terminals = NewTerminalManager(store, config.DataDir, d.deletions)
+	d.fileWatches = newFileWatchHub()
 	d.server = &http.Server{Addr: config.Addr, Handler: d.routes(), ReadHeaderTimeout: 5 * time.Second}
 	return d, nil
 }
@@ -141,6 +143,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = d.server.Shutdown(shutdownCtx)
+		d.fileWatches.close()
 		d.terminals.Shutdown(shutdownCtx)
 		d.sessions.Shutdown(shutdownCtx)
 		_ = d.store.Close()
@@ -148,6 +151,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	case err := <-errCh:
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+		d.fileWatches.close()
 		d.terminals.Shutdown(shutdownCtx)
 		d.sessions.Shutdown(shutdownCtx)
 		_ = d.store.Close()
@@ -227,6 +231,7 @@ func (d *Daemon) routes() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{id}/stage", d.handleStage)
 	mux.HandleFunc("GET /api/sessions/{id}/diff", d.handleDiff)
 	mux.HandleFunc("GET /api/sessions/{id}/files", d.handleFiles)
+	mux.HandleFunc("GET /api/sessions/{id}/files/watch", d.handleFilesWatch)
 	mux.HandleFunc("GET /api/sessions/{id}/file-media", d.handleFileMedia)
 	mux.HandleFunc("GET /api/sessions/{id}/generated-images/{imageID}/media", d.handleGeneratedImageMedia)
 	mux.HandleFunc("GET /api/sessions/{id}/file", d.handleFile)
@@ -755,6 +760,57 @@ func (d *Daemon) handleFiles(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"files": files})
 }
 
+func (d *Daemon) handleFilesWatch(w http.ResponseWriter, r *http.Request) {
+	session, err := d.store.GetSession(r.PathValue("id"))
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	changes, cancel, err := d.fileWatches.subscribe(session.WorktreePath)
+	if err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		cancel()
+		return
+	}
+	defer conn.Close()
+	defer cancel()
+	conn.SetReadLimit(1024)
+	go func() {
+		for {
+			if _, _, err := conn.NextReader(); err != nil {
+				cancel()
+				return
+			}
+		}
+	}()
+	_ = conn.SetWriteDeadline(time.Now().Add(3 * time.Second))
+	if conn.WriteJSON(map[string]string{"type": "ready"}) != nil {
+		return
+	}
+	ping := time.NewTicker(30 * time.Second)
+	defer ping.Stop()
+	for {
+		select {
+		case _, open := <-changes:
+			if !open {
+				return
+			}
+			_ = conn.SetWriteDeadline(time.Now().Add(3 * time.Second))
+			if conn.WriteJSON(map[string]string{"type": "changed"}) != nil {
+				return
+			}
+		case <-ping.C:
+			if conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(3*time.Second)) != nil {
+				return
+			}
+		}
+	}
+}
+
 func (d *Daemon) handlePullRequests(w http.ResponseWriter, r *http.Request) {
 	repo := r.URL.Query().Get("repo")
 	if repo == "" {
@@ -836,7 +892,7 @@ func (d *Daemon) authorize(next http.Handler) http.Handler {
 			return
 		}
 		supplied := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if supplied == "" && (r.URL.Path == "/api/events" || strings.HasSuffix(r.URL.Path, "/stream") || (strings.HasPrefix(r.URL.Path, "/api/attachments/") && strings.HasSuffix(r.URL.Path, "/media")) || r.URL.Path == "/api/new-thread-artwork/media" || (strings.HasPrefix(r.URL.Path, "/api/sessions/") && strings.HasSuffix(r.URL.Path, "/file-media"))) {
+		if supplied == "" && (r.URL.Path == "/api/events" || strings.HasSuffix(r.URL.Path, "/stream") || (strings.HasPrefix(r.URL.Path, "/api/sessions/") && strings.HasSuffix(r.URL.Path, "/files/watch")) || (strings.HasPrefix(r.URL.Path, "/api/attachments/") && strings.HasSuffix(r.URL.Path, "/media")) || r.URL.Path == "/api/new-thread-artwork/media" || (strings.HasPrefix(r.URL.Path, "/api/sessions/") && strings.HasSuffix(r.URL.Path, "/file-media"))) {
 			supplied = r.URL.Query().Get("token")
 		}
 		if subtle.ConstantTimeCompare([]byte(supplied), []byte(d.authToken)) != 1 {
