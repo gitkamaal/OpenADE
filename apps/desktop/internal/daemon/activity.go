@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -245,6 +246,64 @@ func (d *Daemon) handleSnapshot(w http.ResponseWriter, r *http.Request) {
 	snapshot["new_thread_artwork"] = d.artwork.snapshot()
 	writeJSON(w, 200, snapshot)
 }
+
+// One poll serves all connected windows. Activity is written by SQLite
+// triggers across many call sites, so this keeps the committed database as
+// the source of truth without one idle query loop per SSE connection.
+func (d *Daemon) watchActivity() (<-chan struct{}, func()) {
+	d.activityMu.Lock()
+	if d.activityClients == nil {
+		d.activityClients = make(map[chan struct{}]struct{})
+	}
+	client := make(chan struct{}, 1)
+	d.activityClients[client] = struct{}{}
+	if d.activityStop == nil {
+		ctx, cancel := context.WithCancel(context.Background())
+		d.activityStop = cancel
+		go d.pollActivity(ctx)
+	}
+	d.activityMu.Unlock()
+	return client, func() {
+		d.activityMu.Lock()
+		delete(d.activityClients, client)
+		if len(d.activityClients) == 0 && d.activityStop != nil {
+			d.activityStop()
+			d.activityStop = nil
+		}
+		d.activityMu.Unlock()
+	}
+}
+
+func (d *Daemon) pollActivity(ctx context.Context) {
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	var last int64
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		var latest int64
+		if err := d.store.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(sequence),0) FROM activity`).Scan(&latest); err != nil {
+			continue
+		}
+		atomic.AddInt64(&d.activityPolls, 1)
+		if latest == last {
+			continue
+		}
+		last = latest
+		d.activityMu.Lock()
+		for client := range d.activityClients {
+			select {
+			case client <- struct{}{}:
+			default:
+			}
+		}
+		d.activityMu.Unlock()
+	}
+}
+
 func (d *Daemon) handleEvents(w http.ResponseWriter, r *http.Request) {
 	after, err := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
 	if err != nil || after < 0 {
@@ -259,8 +318,8 @@ func (d *Daemon) handleEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	controller := http.NewResponseController(w)
-	ticker := time.NewTicker(250 * time.Millisecond)
-	defer ticker.Stop()
+	changed, stop := d.watchActivity()
+	defer stop()
 	heartbeat := time.NewTicker(15 * time.Second)
 	defer heartbeat.Stop()
 	for {
@@ -293,7 +352,7 @@ func (d *Daemon) handleEvents(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-r.Context().Done():
 			return
-		case <-ticker.C:
+		case <-changed:
 		case <-heartbeat.C:
 			_ = controller.SetWriteDeadline(time.Now().Add(3 * time.Second))
 			if _, err = fmt.Fprint(w, ": keepalive\n\n"); err != nil {

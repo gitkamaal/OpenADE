@@ -197,9 +197,8 @@ npx playwright install chromium
 npm run build
 go vet ./...
 npm run e2e
-# Rebuild without test URL/token before packaging.
-npm run build
-wails build -m -skipbindings -s
+# Rebuild the frontend without synthetic test settings, then package and verify.
+./scripts/build-handoff.sh /path/to/local-output-folder
 ```
 
 The flows cover settings and shortcuts, native chat and model arguments, queue edit/order/turn ownership, files and write conflicts, diffs/commit/history, draft PR delivery through a synthetic gh CLI, archived sessions, conversation adoption, repository isolation, raw PTY input/resize, authenticated control, cancellation/crash recovery, daemon restart, replay and inactive-view cleanup. Production-client performance is measured with 24 sessions, two repositories and a 260-turn transcript. See [verification and limits](docs/zeron-rebuild.md).

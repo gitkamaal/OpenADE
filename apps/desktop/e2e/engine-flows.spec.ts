@@ -7,8 +7,8 @@ import { create,daemon,otherRepo,repo,status,tmp,token } from "./helpers";
 test.describe.configure({mode:"serial"});
 const headers={Authorization:`Bearer ${token}`,"Content-Type":"application/json"};
 async function replay(url:string){return new Promise<{data:string;cursor:number;reset:boolean;offset:number}>((resolve,reject)=>{const ws=new WebSocket(url);const timeout=setTimeout(()=>{ws.close();reject(Error("stream timed out"));},5000);ws.onerror=()=>{clearTimeout(timeout);reject(Error("stream failed"));};ws.onmessage=event=>{const message=JSON.parse(String(event.data));if(message.type==="output"){clearTimeout(timeout);ws.close();resolve(message);}};});}
-function start(port:number,data:string){const child=spawn(path.join(tmp,"openade-e2e"),["--daemon","--addr",`127.0.0.1:${port}`,"--data-dir",data],{env:{...process.env,OPENADE_AUTH_TOKEN:token,OPENADE_PROVIDER_HOME:path.join(tmp,"provider-home"),PATH:`${path.join(tmp,"bin")}:${process.env.PATH}`,SHELL:"/bin/sh"},stdio:"pipe"});return child;}
-async function stopped(child:ChildProcess,signal:NodeJS.Signals="SIGTERM"){if(child.exitCode!==null)return;child.kill(signal);await new Promise<void>((resolve,reject)=>{const timeout=setTimeout(()=>reject(Error("engine did not stop")),8000);child.once("exit",()=>{clearTimeout(timeout);resolve();});});}
+function start(port:number,data:string,shell="/bin/sh"){const child=spawn(path.join(tmp,"openade-e2e"),["--daemon","--addr",`127.0.0.1:${port}`,"--data-dir",data],{env:{...process.env,OPENADE_AUTH_TOKEN:token,OPENADE_PROVIDER_HOME:path.join(tmp,"provider-home"),PATH:`${path.join(tmp,"bin")}:${process.env.PATH}`,SHELL:shell},stdio:"pipe"});return child;}
+async function stopped(child:ChildProcess,signal:NodeJS.Signals="SIGTERM"){if(child.exitCode!==null||child.signalCode!==null)return;child.kill(signal);await new Promise<void>((resolve,reject)=>{const timeout=setTimeout(()=>reject(Error("engine did not stop")),8000);child.once("exit",()=>{clearTimeout(timeout);resolve();});});}
 
 test("local control requires authentication and rejects foreign origins and non-loopback binding",async({request})=>{
  expect((await request.get(`${daemon}/api/state`,{headers:{Authorization:""}})).status()).toBe(401);expect((await request.get(`${daemon}/api/state`,{headers:{Origin:"https://hostile.example"}})).status()).toBe(403);
@@ -43,12 +43,48 @@ test("snapshot plus sequenced SSE reflects committed changes and rejects a compe
  const session=await create(request,"Transactional event");const response=await responsePromise;const reader=response.body!.getReader();let data="";while(!data.includes(session.id)){const part=await reader.read();if(part.done)break;data+=new TextDecoder().decode(part.value);}controller.abort();expect(data).toContain(session.id);const current=await (await request.get(`${daemon}/api/state`)).json();expect(current.sequence).toBeGreaterThan(snapshot.sequence);expect(current.sessions.some((s:{id:string})=>s.id===session.id)).toBe(true);
  const before=await status(request,session.id);const competing=spawnSync(path.join(tmp,"openade-e2e"),["--daemon","--addr","127.0.0.1:7468","--data-dir",path.join(tmp,"data")],{encoding:"utf8",timeout:5000,env:{...process.env,OPENADE_AUTH_TOKEN:token}});expect(competing.status).not.toBe(0);expect(competing.stderr).toContain("another engine owns this profile");expect(await status(request,session.id)).toBe(before);
 });
+test("two event windows share idle polling and release their subscriptions",async({request})=>{
+ const sequence=(await(await request.get(`${daemon}/api/state`)).json()).sequence;
+ const controllers=[new AbortController(),new AbortController()];
+ try{
+  const responses=controllers.map(controller=>fetch(`${daemon}/api/events?after=${sequence}&token=${token}`,{signal:controller.signal}));
+  await expect.poll(async()=>(await(await request.get(`${daemon}/api/diagnostics`)).json()).activity_clients).toBe(2);
+  const before=(await(await request.get(`${daemon}/api/diagnostics`)).json()).activity_polls;
+  await new Promise(resolve=>setTimeout(resolve,800));
+  const after=(await(await request.get(`${daemon}/api/diagnostics`)).json()).activity_polls;
+  expect(after-before).toBeLessThanOrEqual(5);
+  const session=await create(request,"Shared activity poll");
+  for(const response of await Promise.all(responses)){
+   const reader=response.body!.getReader();let data="";
+   while(!data.includes(session.id)){const part=await reader.read();if(part.done)break;data+=new TextDecoder().decode(part.value);}
+   expect(data).toContain(session.id);
+  }
+ }finally{controllers.forEach(controller=>controller.abort());}
+ await expect.poll(async()=>(await(await request.get(`${daemon}/api/diagnostics`)).json()).activity_clients).toBe(0);
+});
 test("engine death and restart preserve sessions, turns, transcripts and queued messages in an explicit profile",async()=>{
  const port=7467;const base=`http://127.0.0.1:${port}`;const data=path.join(tmp,"recovery-data");let child=start(port,data);
  try{await expect.poll(async()=>{try{return(await fetch(base+"/api/health")).status;}catch{return 0;}}).toBe(200);
  const session=await (await fetch(base+"/api/sessions",{method:"POST",headers,body:JSON.stringify({title:"Restart recovery",prompt:"wait-provider recovery",agent:"codex",repo_root:repo,base_branch:"main"})})).json();await fetch(`${base}/api/sessions/${session.id}/message-queue`,{method:"POST",headers,body:JSON.stringify({text:"queued after recovery"})});await stopped(child,"SIGKILL");child=start(port,data);await expect.poll(async()=>{try{return(await fetch(base+"/api/health")).status;}catch{return 0;}}).toBe(200);
  await expect.poll(async()=> (await (await fetch(`${base}/api/sessions/${session.id}`,{headers})).json()).generation).toBe(2);const turns=(await (await fetch(`${base}/api/sessions/${session.id}/turns`,{headers})).json()).turns;expect(turns.find((turn:{generation:number})=>turn.generation===1).status).toBe("interrupted");expect(turns.find((turn:{generation:number})=>turn.generation===2).queue_message_id).toBeTruthy();expect(fs.readFileSync(path.join(data,"transcripts",session.id+".log"),"utf8")).toContain("queued after recovery");
  }finally{await stopped(child);}
+});
+
+test("engine restart reaps an orphaned project terminal",async()=>{
+ const port=7472,base=`http://127.0.0.1:${port}`,data=path.join(tmp,"terminal-crash-recovery"),shell=path.join(tmp,"stubborn-terminal.py");fs.rmSync(data,{recursive:true,force:true});fs.writeFileSync(shell,"#!/usr/bin/env python3\nimport signal,time\nsignal.signal(signal.SIGHUP,signal.SIG_IGN)\nsignal.signal(signal.SIGTERM,signal.SIG_IGN)\nprint('ORPHAN_READY',flush=True)\nwhile True: time.sleep(1)\n",{mode:0o755});let child=start(port,data,shell);let terminalPID=0;
+ const send=(endpoint:string,method="GET",body?:unknown)=>fetch(base+endpoint,{method,headers,body:body===undefined?undefined:JSON.stringify(body)});
+ try{
+  await expect.poll(async()=>{try{return(await fetch(base+"/api/health")).status;}catch{return 0;}}).toBe(200);
+  const session=await(await send("/api/sessions","POST",{title:"Terminal crash recovery",prompt:"Terminal owner",agent:"codex",repo_root:""})).json();
+  await expect.poll(async()=>(await(await send(`/api/sessions/${session.id}`)).json()).status).toBe("completed");
+  const terminal=await(await send(`/api/sessions/${session.id}/terminals`,"POST",{title:"Orphan candidate"})).json();terminalPID=terminal.pid;
+  expect(terminalPID).toBeGreaterThan(0);expect(()=>process.kill(terminalPID,0)).not.toThrow();
+  await expect.poll(async()=> (await replay(`ws://127.0.0.1:${port}/api/terminals/${terminal.id}/stream?token=${token}`)).data).toContain("ORPHAN_READY");
+  await stopped(child,"SIGKILL");expect(()=>process.kill(terminalPID,0)).not.toThrow();
+  child=start(port,data,shell);await expect.poll(async()=>{try{return(await fetch(base+"/api/health")).status;}catch{return 0;}}).toBe(200);
+  await expect.poll(()=>spawnSync("ps",["-p",String(terminalPID),"-o","state="],{encoding:"utf8"}).stdout.trim()).toMatch(/^(|Z)$/);
+  const recovered=await(await send(`/api/sessions/${session.id}/terminals`)).json();expect(recovered.terminals.find((item:{id:string})=>item.id===terminal.id)?.status).toBe("interrupted");
+ }finally{await stopped(child);if(terminalPID){try{process.kill(-terminalPID,"SIGKILL");}catch{}}}
 });
 
 test("switching surfaces interrupts the old turn, resumes the same provider identity, and admits one next turn",async({request})=>{
