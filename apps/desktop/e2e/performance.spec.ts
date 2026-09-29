@@ -30,9 +30,9 @@ test("repeatable production-client performance with multiple projects and long i
 });
 
 test("active streamed chat remains visible when its transcript passes the scrollback bound",async({page,request},testInfo)=>{
- test.setTimeout(150000);
- const stress=process.env.OPENADE_SCROLLBACK_STRESS==="1",historical=stress?950:380;
- const session=await create(request,"Sliding transcript workload",{agent:"claude",prompt:stress?"sliding-transcript-stress":"sliding-transcript"});
+ test.setTimeout(240000);
+ const size=Number(process.env.OPENADE_SCROLLBACK_STRESS??0),historical=size>=2?1700:size>=1?950:380;
+ const session=await create(request,"Sliding transcript workload",{agent:"claude",prompt:size>=2?"sliding-transcript-overflow":size>=1?"sliding-transcript-stress":"sliding-transcript"});
  const gate=path.join(tmp,"provider-home","sliding-transcript-"+session.id);
  try{
   await ready(page);await open(page,"Sliding transcript workload");
@@ -49,6 +49,7 @@ test("active streamed chat remains visible when its transcript passes the scroll
   const frames=await page.evaluate(()=>(window as typeof window&{__stopFrameProbe:()=>number[]}).__stopFrameProbe());
   const transcriptBytes=fs.statSync(path.join(tmp,"data","transcripts",session.id+".log")).size;
   expect(transcriptBytes).toBeGreaterThan(2_000_000);
+  if(size>=2)expect(transcriptBytes).toBeGreaterThan(8*1024*1024);
   const replay=await page.evaluate(({id,token})=>new Promise<{first:string;offset:number;cursor:number}>((resolve,reject)=>{const socket=new WebSocket(`ws://127.0.0.1:7455/api/sessions/${id}/stream?token=${encodeURIComponent(token)}`);const timer=setTimeout(()=>{socket.close();reject(Error("replay timed out"));},10000);socket.onmessage=event=>{const frame=JSON.parse(String(event.data)) as {type:string;data:string;offset:number;cursor:number};if(frame.type!=="output")return;clearTimeout(timer);socket.close();resolve({first:frame.data.slice(0,32),offset:frame.offset,cursor:frame.cursor});};socket.onerror=()=>{clearTimeout(timer);reject(Error("replay failed"));};}),{id:session.id,token});
   expect(replay.first.startsWith("{")).toBe(true);
   expect(replay.cursor).toBe(transcriptBytes);
@@ -77,6 +78,32 @@ test("active streamed chat remains visible when its transcript passes the scroll
   await page.getByRole("button",{name:"Collapse sidebar"}).click();
   await expect.poll(()=>page.locator(".ade").evaluate(node=>Number.parseFloat(getComputedStyle(node).gridTemplateColumns))).toBeLessThan(1);
   await expect(page.getByRole("button",{name:"Jump to latest"})).toBeVisible();
+  let historyReads=0;
+  page.on("response",response=>{if(response.url().includes(`/api/sessions/${session.id}/transcript-page`)&&response.status()===200)historyReads++;});
+  for(let index=0;index<80&&await page.getByText(/Historical answer 0 detail/).count()===0;index++){
+   const earlier=page.getByRole("button",{name:"Show earlier messages"});
+   await expect(earlier).toBeEnabled();await earlier.click();
+   await expect(page.locator(".chat-timeline article")).not.toHaveCount(0);
+   await expect.poll(()=>page.locator(".chat-timeline article").count()).toBeLessThanOrEqual(80);
+   await expect(page.getByRole("button",{name:"Loading earlier messages…"})).toHaveCount(0);
+  }
+  await expect(page.getByText(/Historical answer 0 detail/)).toBeVisible();
+  expect(historyReads).toBeGreaterThan(0);
+  await page.getByRole("button",{name:"Show newer messages"}).click();
+  await expect(page.locator(".chat-timeline article")).not.toHaveCount(0);
+  if(size>=2){
+   const readsBefore=historyReads;
+   for(let index=0;index<80&&await page.getByRole("button",{name:"Show newer messages"}).count()>0;index++){
+    const newer=page.getByRole("button",{name:"Show newer messages"});await expect(newer).toBeEnabled();await newer.click();
+    await expect(page.getByRole("button",{name:"Loading messages…"})).toHaveCount(0);
+    await expect.poll(()=>page.locator(".chat-timeline article").count()).toBeLessThanOrEqual(80);
+   }
+   expect(historyReads).toBeGreaterThan(readsBefore);
+   await expect(page.locator(".chat-assistant-turn").last()).toContainText("Latest visible answer.");
+  }
+  await page.getByRole("button",{name:"Jump to latest"}).click();
+  await expect(page.locator(".chat-assistant-turn").last()).toContainText("Latest visible answer.");
+  await expect.poll(()=>page.locator(".messages").evaluate(node=>node.scrollHeight-node.scrollTop-node.clientHeight),{timeout:3000}).toBeLessThan(80);
   let before:number|undefined;const pages:Buffer[]=[];
   do{
    const response=await request.get(`${daemon}/api/sessions/${session.id}/transcript-page${before===undefined?"":`?before=${before}`}`);

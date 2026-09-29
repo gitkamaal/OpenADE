@@ -12,41 +12,128 @@ import {
   TerminalWindow,
   Wrench,
 } from "@phosphor-icons/react";
-import { memo, useLayoutEffect, useEffect, useRef, useState } from "react";
-import { fetchSubagentSummaries, generatedImageMediaURL, listSessionTurnTimes, Session, SessionTurnTime, SubagentSummary } from "./api";
-import { ChatActivity, ChatSegment, GeneratedImage, createTranscriptParser, withDurableTurnTimestamps } from "./chat-model";
+import { memo, useLayoutEffect, useEffect, useMemo, useRef, useState } from "react";
+import { fetchSubagentSummaries, generatedImageMediaURL, getTranscriptPage, listSessionTurnTimes, Session, SessionTurnTime, SubagentSummary } from "./api";
+import { ChatActivity, ChatSegment, ChatTurn, GeneratedImage, createTranscriptParser, withDurableTurnTimestamps } from "./chat-model";
 import { MarkdownMessage } from "./MarkdownMessage";
 import { parseReviewComments } from "./ReviewComments";
 
 const hoverTimestampFormatter=new Intl.DateTimeFormat("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit",hour12:true});
+const transcriptPageBytes=1024*1024;
+const historyWindowBytes=8*transcriptPageBytes;
+type HistoryWindow={sessionId:string;start:number;end:number;liveEnd:number;alignedStart:boolean;bytes:Uint8Array};
+const decodePage=(value:string)=>Uint8Array.from(atob(value),character=>character.charCodeAt(0));
+function joinPages(left:Uint8Array,right:Uint8Array){const joined=new Uint8Array(left.length+right.length);joined.set(left);joined.set(right,left.length);return joined;}
+function historyText(history:HistoryWindow){
+ let text=new TextDecoder().decode(history.bytes);
+ // A byte page can begin inside a UTF-8 code point or a JSONL event. The
+ // preceding page restores that event when the reader moves further back.
+ if(history.start>0&&!history.alignedStart){const newline=text.indexOf("\n");text=newline<0?"":text.slice(newline+1);}
+ return text;
+}
+function anchoredTurnIndex(turns:ChatTurn[],anchor?:ChatTurn,neighbor?:ChatTurn){
+ if(!anchor)return -1;
+ const matches=(left:ChatTurn,right:ChatTurn)=>left.role===right.role&&left.markdown===right.markdown;
+ const exact=turns.findIndex((turn,index)=>matches(turn,anchor)&&(!neighbor||Boolean(turns[index+1]&&matches(turns[index+1],neighbor))));
+ return exact>=0?exact:turns.findIndex(turn=>matches(turn,anchor));
+}
 function formatHoverTimestamp(timestamp:number){
  const parts=hoverTimestampFormatter.formatToParts(timestamp);
  const value=(type:Intl.DateTimeFormatPartTypes)=>parts.find(part=>part.type===type)?.value??"";
  return `${value("month")} ${value("day")}, ${value("hour")}:${value("minute")} ${value("dayPeriod")}`;
 }
 
-export function ChatTimeline({ session, output, activityExpanded = false, onOpenSubagent, onNavigate, initialPromptOverride, disableDurableTimestamps = false }: { session: Session; output: string; activityExpanded?: boolean; onOpenSubagent?:(id:string,title:string)=>void; onNavigate?:()=>void; initialPromptOverride?:string; disableDurableTimestamps?:boolean }) {
+export function ChatTimeline({ session, output, outputOffset=0, outputCursor=0, following, activityExpanded = false, onOpenSubagent, onNavigate, initialPromptOverride, disableDurableTimestamps = false }: { session: Session; output: string; outputOffset?:number; outputCursor?:number; following?:boolean; activityExpanded?: boolean; onOpenSubagent?:(id:string,title:string)=>void; onNavigate?:()=>void; initialPromptOverride?:string; disableDurableTimestamps?:boolean }) {
   const running = ["starting", "running", "waiting"].includes(session.status);
   const initialPrompt=initialPromptOverride??(session.parent_session_id?"":session.prompt);
+  const [history,setHistory]=useState<HistoryWindow|null>(null);
+  const [visibleEnd,setVisibleEnd]=useState<number|null>(null);
+  const [historyBusy,setHistoryBusy]=useState(false);
+  const [historyError,setHistoryError]=useState("");
+  const activeHistory=history?.sessionId===session.id&&following!==true?history:null;
+  const decodedHistory=useMemo(()=>activeHistory?historyText(activeHistory):null,[activeHistory]);
+  const source=decodedHistory??output;
+  const sourcePrompt=activeHistory?(activeHistory.start===0?initialPrompt:""):(outputOffset===0?initialPrompt:"");
+  useEffect(()=>{if(following===true){setHistory(null);setVisibleEnd(null);setHistoryError("");}},[following]);
   const [durable,setDurable]=useState<{sessionId:string;records:SessionTurnTime[]}|null>(null);
   useEffect(()=>{if(disableDurableTimestamps){setDurable(null);return;}let stale=false;void listSessionTurnTimes(session.id).then(records=>{if(!stale)setDurable({sessionId:session.id,records});}).catch(()=>{});return()=>{stale=true;};},[session.id,session.generation,session.status,disableDurableTimestamps]);
-  const parser=useRef(createTranscriptParser(initialPrompt,session.created_at));const previous=useRef("");const prompt=useRef(initialPrompt);
-  if(prompt.current!==initialPrompt||!output.startsWith(previous.current)){parser.current=createTranscriptParser(initialPrompt,session.created_at);previous.current="";prompt.current=initialPrompt;}
-  parser.current.append(output.slice(previous.current.length));previous.current=output;
-  const parsed=parser.current.snapshot(running);
-  const turns=!disableDurableTimestamps&&durable?.sessionId===session.id?withDurableTurnTimestamps(parsed,durable.records,session.generation):parsed;
-  const [visibleCount,setVisibleCount]=useState(80);const timeline=useRef<HTMLDivElement>(null);const jump=useRef<string|null>(null);
-  const visibleSubagentIDs=[...new Set(turns.slice(-visibleCount).flatMap(turn=>turn.activities.filter(activity=>activity.kind==="subagent").map(activity=>activity.docId).filter((id):id is string=>Boolean(id))))].slice(-128);
+  const parser=useRef(createTranscriptParser(sourcePrompt,session.created_at));const previous=useRef("");const prompt=useRef(sourcePrompt);
+  const historicalRunning=running&&(!activeHistory||activeHistory.end===activeHistory.liveEnd);
+  const parsed=useMemo(()=>{if(prompt.current!==sourcePrompt||!source.startsWith(previous.current)){parser.current=createTranscriptParser(sourcePrompt,session.created_at);previous.current="";prompt.current=sourcePrompt;}parser.current.append(source.slice(previous.current.length));previous.current=source;return parser.current.snapshot(historicalRunning);},[source,sourcePrompt,historicalRunning,session.created_at]);
+  const turns=useMemo(()=>!disableDurableTimestamps&&durable?.sessionId===session.id?withDurableTurnTimestamps(parsed,durable.records,session.generation):parsed,[parsed,durable,session.id,session.generation,disableDurableTimestamps]);
+  const end=following===true?turns.length:Math.min(visibleEnd??turns.length,turns.length);
+  const start=Math.max(0,end-80);
+  const visibleTurns=turns.slice(start,end);
+  const timeline=useRef<HTMLDivElement>(null);const jump=useRef<string|null>(null);
+  const visibleSubagentIDs=[...new Set(visibleTurns.flatMap(turn=>turn.activities.filter(activity=>activity.kind==="subagent").map(activity=>activity.docId).filter((id):id is string=>Boolean(id))))].slice(-128);
   const visibleSubagentKey=visibleSubagentIDs.join(",");
   const [subagentSummaries,setSubagentSummaries]=useState<Record<string,SubagentSummary>>({});
   useEffect(()=>{if(!visibleSubagentKey){setSubagentSummaries({});return;}let active=true,busy=false;const ids=visibleSubagentKey.split(",");const read=()=>{if(busy)return;busy=true;void fetchSubagentSummaries(session.id,ids).then(items=>{if(!active)return;const next=Object.fromEntries(items.map(item=>[item.id,item]));setSubagentSummaries(current=>Object.keys(current).length===items.length&&items.every(item=>current[item.id]?.status===item.status&&current[item.id]?.child_thread_id===item.child_thread_id&&current[item.id]?.title===item.title)?current:next);}).catch(()=>{}).finally(()=>{busy=false;});};read();const timer=window.setInterval(()=>{if(!document.hidden)read();},1000);return()=>{active=false;window.clearInterval(timer);};},[session.id,visibleSubagentKey]);
-  useLayoutEffect(()=>{if(!jump.current)return;const target=timeline.current?.querySelector<HTMLElement>(`[data-message-id="${jump.current}"]`),scroll=timeline.current?.closest<HTMLElement>(".messages");if(target&&scroll){scroll.scrollTo({top:scroll.scrollTop+target.getBoundingClientRect().top-scroll.getBoundingClientRect().top-24,behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth"});jump.current=null;}},[visibleCount]);
+  useLayoutEffect(()=>{const scroll=timeline.current?.closest<HTMLElement>(".messages");if(!scroll)return;if(jump.current){if(jump.current==="__top__"){scroll.scrollTop=0;jump.current=null;return;}const target=timeline.current?.querySelector<HTMLElement>(`[data-message-id="${jump.current}"]`);if(target){scroll.scrollTo({top:scroll.scrollTop+target.getBoundingClientRect().top-scroll.getBoundingClientRect().top-24,behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth"});jump.current=null;}}else if(visibleEnd!==null)scroll.scrollTop=0;},[visibleEnd,activeHistory]);
+
+  const readHistory=(window:HistoryWindow)=>{const text=historyText(window),reader=createTranscriptParser(window.start===0?initialPrompt:"",session.created_at);reader.append(text);return reader.snapshot(running&&window.end===window.liveEnd);};
+  const showEarlier=async()=>{
+   onNavigate?.();setHistoryError("");
+   if(start>0){setVisibleEnd(Math.max(80,end-60));return;}
+   const before=activeHistory?.start??outputCursor;
+   if(before<=0||historyBusy)return;
+   setHistoryBusy(true);
+   try{
+    let next=activeHistory;
+    const targetBytes=next?transcriptPageBytes:Math.min(historyWindowBytes,new TextEncoder().encode(output).length+transcriptPageBytes);
+    let added=0;
+    while((!next||added<targetBytes)&&before-(next?added:0)>0){
+     const cursor=next?.start??outputCursor;
+     const page=await getTranscriptPage(session.id,cursor);
+     if(page.cursor!==cursor||page.offset>=cursor)throw Error("Earlier history changed. Return to latest and try again.");
+     const bytes=decodePage(page.data);
+     if(bytes.length!==page.cursor-page.offset)throw Error("Earlier history was incomplete. Try again.");
+     next={sessionId:session.id,start:page.offset,end:next?.end??cursor,liveEnd:next?.liveEnd??cursor,alignedStart:page.offset===0,bytes:next?joinPages(bytes,next.bytes):bytes};
+     added+=bytes.length;
+     if(page.offset===0||next.bytes.length>=historyWindowBytes)break;
+    }
+    if(!next)return;
+    if(next.bytes.length>historyWindowBytes){
+     const limit=historyWindowBytes;
+     let cutoff=limit;while(cutoff>0&&next.bytes[cutoff-1]!==10)cutoff--;
+     if(cutoff===0)throw Error("This transcript contains an oversized entry that cannot be paged safely.");
+     next={...next,end:next.start+cutoff,bytes:next.bytes.slice(0,cutoff)};
+    }
+    const nextTurns=readHistory(next),anchor=anchoredTurnIndex(nextTurns,turns[start],turns[start+1]);
+    setHistory(next);
+    setVisibleEnd(Math.min(nextTurns.length,anchor<0?80:Math.max(80,anchor+20)));
+   }catch(reason){setHistoryError(reason instanceof Error?reason.message:String(reason));}finally{setHistoryBusy(false);}
+  };
+  const showNewer=async()=>{
+   setHistoryError("");
+   if(end<turns.length){setVisibleEnd(Math.min(turns.length,end+60));return;}
+   if(!activeHistory)return;
+   if(activeHistory.end>=activeHistory.liveEnd){setHistory(null);setVisibleEnd(null);return;}
+   setHistoryBusy(true);
+   try{
+    const target=Math.min(activeHistory.liveEnd,activeHistory.end+transcriptPageBytes);
+    const page=await getTranscriptPage(session.id,target);
+    if(page.cursor!==target||page.offset>activeHistory.end)throw Error("Newer history changed. Return to latest and try again.");
+    const bytes=decodePage(page.data).slice(activeHistory.end-page.offset);
+    let next:HistoryWindow={...activeHistory,end:target,bytes:joinPages(activeHistory.bytes,bytes)};
+    if(next.bytes.length>historyWindowBytes){
+     let cutoff=next.bytes.length-historyWindowBytes;while(cutoff<next.bytes.length&&next.bytes[cutoff-1]!==10)cutoff++;
+     next={...next,start:next.start+cutoff,alignedStart:true,bytes:next.bytes.slice(cutoff)};
+    }
+    const nextTurns=readHistory(next),anchor=anchoredTurnIndex(nextTurns,turns[end-1]);
+    setHistory(next);setVisibleEnd(Math.min(nextTurns.length,anchor<0?80:Math.max(80,anchor+61)));
+   }catch(reason){setHistoryError(reason instanceof Error?reason.message:String(reason));}finally{setHistoryBusy(false);}
+  };
 
   return (
     <div ref={timeline} className="chat-timeline" aria-live="polite">
-      <MessageRail turns={turns} timeline={timeline} onJump={index=>{onNavigate?.();const target=turns[index];const row=timeline.current?.querySelector<HTMLElement>(`[data-message-id="${target.id}"]`),scroll=timeline.current?.closest<HTMLElement>(".messages");if(row&&scroll)scroll.scrollTo({top:scroll.scrollTop+row.getBoundingClientRect().top-scroll.getBoundingClientRect().top-24,behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth"});else{jump.current=target.id;setVisibleCount(current=>Math.max(current,turns.length-index));}}}/>
-      {turns.length>visibleCount&&<button className="load-earlier" onClick={()=>{onNavigate?.();setVisibleCount(count=>count+80);}}>Show earlier messages</button>}
-      {turns.slice(-visibleCount).map((turn) =>
+      <MessageRail turns={turns} timeline={timeline} onJump={index=>{onNavigate?.();const target=turns[index];const row=timeline.current?.querySelector<HTMLElement>(`[data-message-id="${target.id}"]`),scroll=timeline.current?.closest<HTMLElement>(".messages");if(index===0){if(row&&scroll)scroll.scrollTop=0;else{jump.current="__top__";setVisibleEnd(Math.min(turns.length,60));}}else if(row&&scroll)scroll.scrollTo({top:scroll.scrollTop+row.getBoundingClientRect().top-scroll.getBoundingClientRect().top-24,behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth"});else{jump.current=target.id;setVisibleEnd(Math.min(turns.length,index+60));}}}/>
+      {(start>0||Boolean(activeHistory?.start)||(!activeHistory&&outputOffset>0)||end<turns.length||activeHistory)&&<div className="history-navigation">
+        {(start>0||Boolean(activeHistory?.start)||(!activeHistory&&outputOffset>0))&&<button className="load-earlier" disabled={historyBusy} onClick={()=>void showEarlier()}>{historyBusy?"Loading earlier messages…":"Show earlier messages"}</button>}
+        {(end<turns.length||activeHistory)&&<button className="load-earlier" disabled={historyBusy} onClick={()=>void showNewer()}>{historyBusy?"Loading messages…":"Show newer messages"}</button>}
+      </div>}
+      {historyError&&<p className="history-error" role="alert">{historyError}</p>}
+      {visibleTurns.map((turn) =>
         turn.role === "system" ? <div className="fork-seam" key={turn.id} role="note">Forked from <strong>{turn.markdown}</strong></div> : turn.role === "user" ? (
           <UserTurn key={turn.id} id={turn.id} text={turn.markdown} timestamp={turn.timestamp} />
         ) : (

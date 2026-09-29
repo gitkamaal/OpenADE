@@ -79,7 +79,7 @@ if structured:
   sys.exit(0)
  if name=='claude' and 'sliding-transcript' in prompt:
   gate=os.path.join(os.environ['OPENADE_PROVIDER_HOME'],'sliding-transcript-'+sid)
-  historical=950 if 'sliding-transcript-stress' in prompt else 380
+  historical=1700 if 'sliding-transcript-overflow' in prompt else 950 if 'sliding-transcript-stress' in prompt else 380
   for index in range(historical):
    emit({'type':'openade.user_message','text':'Historical prompt '+str(index)})
    emit({'type':'assistant','message':{'content':[{'type':'text','text':'Historical answer '+str(index)+' '+('detail '*650)}]}})
