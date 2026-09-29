@@ -199,3 +199,40 @@ test('long user messages use the source width and accessible five-line fold',asy
  const before=(await text.boundingBox())!.height;expect(before).toBe(110);await bubble.getByLabel('Expand message').click();expect((await text.boundingBox())!.height).toBeGreaterThan(before);await bubble.getByLabel('Collapse message').click();expect((await text.boundingBox())!.height).toBe(before);
  const width=(await bubble.boundingBox())!.width,timeline=(await page.locator('.chat-timeline').boundingBox())!.width;expect(width).toBeLessThanOrEqual(timeline*.8+1);
 });
+
+test('chat, workspace and files reflow together when the window and sidebar change width',async({page,request})=>{
+ await page.setViewportSize({width:1480,height:920});await create(request,'Three surface layout');await ready(page);await open(page,'Three surface layout');
+ await page.getByLabel('Toggle files panel').click();await panel(page,'Browser');
+ const workspace=page.locator('.session-workspace'),conversation=workspace.locator('.conversation'),work=workspace.locator('.work-panel-clip'),files=workspace.locator('.files-panel-clip');
+ const widths=async()=>({chat:(await conversation.boundingBox())!.width,work:(await work.boundingBox())!.width,files:(await files.boundingBox())!.width});
+ await expect.poll(async()=>{const size=await widths();return size.chat>=300&&size.work>=340&&size.files>=200&&await workspace.evaluate(el=>el.scrollWidth<=el.clientWidth+1);}).toBe(true);
+ await page.setViewportSize({width:1040,height:800});
+ await expect.poll(async()=>{const size=await widths();return size.chat===0&&size.work>=500&&size.files>=200&&await workspace.evaluate(el=>el.scrollWidth<=el.clientWidth+1);}).toBe(true);
+ await page.getByLabel('Collapse sidebar').click();
+ await expect.poll(async()=>{const size=await widths();return size.chat>=300&&size.work>=340&&size.files>=200&&await workspace.evaluate(el=>el.scrollWidth<=el.clientWidth+1);}).toBe(true);
+ expect((await page.getByLabel('Toggle sidebar').boundingBox())!.x).toBeGreaterThanOrEqual(96);
+ await page.getByLabel('Toggle sidebar').click();
+ await expect.poll(async()=>{const size=await widths();return size.chat===0&&size.work>=500&&size.files>=200;}).toBe(true);
+ await page.getByLabel('Close right sidebar').click();await page.getByLabel('Toggle files panel').click();
+ await expect(conversation).toBeVisible();await expect.poll(async()=>(await conversation.boundingBox())!.width).toBeGreaterThan(600);
+});
+
+test('native titlebar drag targets keep the traffic-light lane and sidebar toggle separate',async({page,request})=>{
+ await page.setViewportSize({width:1480,height:920});await bridge(page);await create(request,'Titlebar drag geometry');await ready(page);
+ const dragAt=async(x:number,y:number)=>page.evaluate(([px,py])=>getComputedStyle(document.elementFromPoint(px,py)!).getPropertyValue('--wails-draggable').trim(),[x,y] as const);
+ const collapse=page.getByLabel('Collapse sidebar');
+ await expect.poll(async()=>Math.round((await collapse.boundingBox())!.x)).toBe(96);
+ await expect.poll(()=>dragAt(111,22)).toBe('no-drag');
+ await expect.poll(()=>dragAt(190,18)).toBe('drag');
+ await expect.poll(()=>dragAt(350,18)).toBe('drag');
+ await collapse.click();
+ await expect.poll(async()=>Math.round((await page.getByLabel('Toggle sidebar').boundingBox())!.x)).toBe(96);
+ const toggle=(await page.getByLabel('Toggle sidebar').boundingBox())!;
+ expect(await dragAt(toggle.x+toggle.width/2,toggle.y+toggle.height/2)).toBe('no-drag');
+ await expect.poll(()=>dragAt(350,18)).toBe('drag');
+ await page.getByLabel('Toggle sidebar').click();
+ await open(page,'Titlebar drag geometry');
+ await expect.poll(()=>dragAt(390,18)).toBe('drag');
+ await page.getByLabel('Collapse sidebar').click();
+ await expect.poll(()=>dragAt(380,18)).toBe('drag');
+});

@@ -14,7 +14,7 @@ import {
 } from "@phosphor-icons/react";
 import { memo, useLayoutEffect, useEffect, useRef, useState } from "react";
 import { fetchSubagentSummaries, generatedImageMediaURL, listSessionTurnTimes, Session, SessionTurnTime, SubagentSummary } from "./api";
-import { ChatActivity, GeneratedImage, createTranscriptParser, withDurableTurnTimestamps } from "./chat-model";
+import { ChatActivity, ChatSegment, GeneratedImage, createTranscriptParser, withDurableTurnTimestamps } from "./chat-model";
 import { MarkdownMessage } from "./MarkdownMessage";
 import { parseReviewComments } from "./ReviewComments";
 
@@ -55,6 +55,7 @@ export function ChatTimeline({ session, output, activityExpanded = false, onOpen
             session={session}
             markdown={turn.markdown}
             activities={turn.activities}
+            segments={turn.segments}
             generatedImages={turn.generatedImages}
             streaming={Boolean(turn.streaming)}
             agent={session.agent}
@@ -87,6 +88,7 @@ const AssistantTurn=memo(function AssistantTurn({
   session,
   markdown,
   activities,
+  segments,
   generatedImages,
   streaming,
   agent,
@@ -98,6 +100,7 @@ const AssistantTurn=memo(function AssistantTurn({
   session: Session;
   markdown: string;
   activities: ChatActivity[];
+  segments?: ChatSegment[];
   generatedImages: GeneratedImage[];
   streaming: boolean;
   agent: string;
@@ -106,17 +109,20 @@ const AssistantTurn=memo(function AssistantTurn({
   subagentSummaries:Record<string,SubagentSummary>;
   timestamp?:number;
 }) {
-  const visibleMarkdown = useProgressiveMarkdown(markdown, streaming);
-  const questions=activities.filter(activity=>activity.kind==="question");
-  const subagents=activities.filter(activity=>activity.kind==="subagent");
-  const grouped=activities.filter(activity=>activity.kind!=="question"&&activity.kind!=="subagent");
+  // The socket already coalesces provider deltas once per frame. Show the
+  // actual delivered text rather than replaying a second, slower typewriter.
+  const visibleMarkdown = markdown;
+  const renderActivities=(items:ChatActivity[],key:string)=>{
+    const questions=items.filter(activity=>activity.kind==="question");
+    const subagents=items.filter(activity=>activity.kind==="subagent");
+    const grouped=items.filter(activity=>activity.kind!=="question"&&activity.kind!=="subagent");
+    return <div className="chat-activity-segment" key={key}>{questions.map(question=><div className="transcript-question" role="note" aria-label={`Question: ${question.title}`} key={question.id}><span className="transcript-question-icon"><ChatCircleDots/></span><strong>Question</strong><span>{question.status==="pending"?"Awaiting your answer…":question.title}</span></div>)}{subagents.map(activity=><SubagentCard key={activity.id} activity={activity} summary={activity.docId?subagentSummaries[activity.docId]:undefined} onOpen={onOpenSubagent}/>)}{grouped.length>0&&<ActivityGroup activities={grouped} streaming={streaming} expanded={activityExpanded}/>}</div>;
+  };
   return (
     <article className="chat-assistant-turn">
       <header><span className="agent-avatar"><ProviderIcon provider={agent}/></span><strong>{agentLabel(agent)}</strong></header>
-      {questions.map(question=><div className="transcript-question" role="note" aria-label={`Question: ${question.title}`} key={question.id}><span className="transcript-question-icon"><ChatCircleDots/></span><strong>Question</strong><span>{question.status==="pending"?"Awaiting your answer…":question.title}</span></div>)}
-      {subagents.map(activity=><SubagentCard key={activity.id} activity={activity} summary={activity.docId?subagentSummaries[activity.docId]:undefined} onOpen={onOpenSubagent}/>)}
-      {grouped.length > 0 && <ActivityGroup activities={grouped} streaming={streaming} expanded={activityExpanded} />}
-      {visibleMarkdown ? <MarkdownMessage session={session}>{visibleMarkdown}</MarkdownMessage> : streaming&&grouped.length===0 ? (
+      {segments?.length?segments.map(segment=>segment.kind==="text"?<MarkdownMessage key={segment.id} session={session}>{segment.markdown}</MarkdownMessage>:renderActivities(segment.activities,segment.id)):<>{activities.length>0&&renderActivities(activities,"activity-fallback")}{visibleMarkdown&&<MarkdownMessage session={session}>{visibleMarkdown}</MarkdownMessage>}</>}
+      {streaming&&!visibleMarkdown&&activities.length===0 ? (
         <div className="native-thinking"><SpinnerGap className="spin" /> Working through the task…</div>
       ) : null}
       {generatedImages.length>0&&<section className="generated-images" aria-label="Generated images">{generatedImages.map(image=><AttachmentImage key={image.id} image={{...image,path:""}} sourceURL={generatedImageMediaURL(session.id,image.id)} className="generated-image"/>)}</section>}
@@ -190,32 +196,6 @@ function ActivityRow({activity,streaming,expanded}:{activity:ChatActivity;stream
  const [manual,setManual]=useState<boolean|null>(null);
  const detailOpen=manual??(activity.kind==="thinking"&&streaming&&expanded);
  return <div className="activity-row"><span className={`activity-icon ${activity.kind}`}>{activityIcon(activity)}</span>{activity.detail?<div className="activity-detail"><button type="button" aria-expanded={detailOpen} onClick={()=>setManual(!detailOpen)}>{activity.title}<CaretDown/></button>{detailOpen&&<pre>{activity.detail}</pre>}</div>:<strong>{activity.title}</strong>}</div>;
-}
-
-function useProgressiveMarkdown(markdown: string, streaming: boolean): string {
-  const [visible, setVisible] = useState(streaming ? "" : markdown);
-
-  useEffect(() => {
-    if (!streaming) {
-      setVisible(markdown);
-      return;
-    }
-    if (!markdown.startsWith(visible)) {
-      setVisible("");
-    }
-  }, [markdown, streaming, visible]);
-
-  useEffect(() => {
-    if (!streaming || visible.length >= markdown.length) return;
-    const remaining = markdown.length - visible.length;
-    const step = Math.max(2, Math.min(28, Math.ceil(remaining / 18)));
-    const timer = window.setTimeout(() => {
-      setVisible(markdown.slice(0, Math.min(markdown.length, visible.length + step)));
-    }, 18);
-    return () => window.clearTimeout(timer);
-  }, [markdown, streaming, visible]);
-
-  return visible;
 }
 
 function activityIcon(activity: ChatActivity) {

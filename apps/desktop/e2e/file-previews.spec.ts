@@ -4,6 +4,21 @@ import fs from 'node:fs';
 import path from 'node:path';
 const png=fs.readFileSync(new URL('./fixtures/preview-grid.png',import.meta.url));
 
+test('files tree uses the pinned source icon identities and loads their native assets',async({page,request})=>{
+ const session=await create(request,'File identity icons');await expect.poll(()=>status(request,session.id)).toBe('completed');
+ fs.mkdirSync(path.join(session.worktree_path,'src'),{recursive:true});
+ fs.writeFileSync(path.join(session.worktree_path,'src','component.test.tsx'),'export const ready = true;\n');
+ await ready(page);await open(page,'File identity icons');await page.getByLabel('Toggle files panel').click();
+ const tree=page.getByRole('tree',{name:'Project files'}),folder=tree.getByRole('treeitem',{name:'src',exact:true});
+ await expect(folder.locator('img')).toHaveAttribute('src',/file-icons\/dark\/folders\/folder-orange-code\.svg$/);
+ await folder.click();
+ const file=tree.getByRole('treeitem',{name:'src/component.test.tsx',exact:true});
+ await expect(file.locator('img')).toHaveAttribute('src',/file-icons\/dark\/files\/react-test\.svg$/);
+ await expect.poll(()=>file.locator('img').evaluate(node=>(node as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+ await file.click();
+ await expect(page.getByRole('tab',{name:'component.test.tsx'}).locator('img')).toHaveAttribute('src',/file-icons\/dark\/files\/react-test\.svg$/);
+});
+
 test('chat switching restores the selected file tab and reloads its saved Markdown preview',async({page,request})=>{
  const first=await create(request,'File owner first',{agent:'shell',prompt:'printf first'});
  const second=await create(request,'File owner second',{agent:'shell',prompt:'printf second'});

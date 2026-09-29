@@ -32,11 +32,61 @@ test('Claude cached context usage excludes child traffic and persists in the cha
  expect((await state(request,s.id)).context).toEqual({tokens:42000,window:200000});
  await ready(page);await open(page,'Claude context telemetry');
  const ring=page.getByRole('button',{name:'Context usage 21%'});await expect(ring).toBeVisible();await ring.click();
- await expect(page.getByRole('dialog',{name:'Context usage details'})).toContainText('42,000 of 200,000');
+ await expect(page.getByRole('dialog',{name:'Context usage details'})).toContainText('42,000 / 200,000 tokens');
+ await expect(page.getByRole('dialog',{name:'Context usage details'})).toContainText('158,000 tokens remaining');
  await page.reload();await expect(page.getByRole('button',{name:'Context usage 21%'})).toBeVisible();
  expect((await request.post(`${daemon}/api/sessions/${s.id}/messages`,{data:{text:'Follow-up without usage metadata'}})).status()).toBe(202);
  await expect.poll(async()=>{const current=await(await request.get(`${daemon}/api/sessions/${s.id}`)).json();return current.generation===2?current.status:'previous';}).toBe('completed');
  expect((await state(request,s.id)).context).toEqual({tokens:42000,window:200000});
+});
+
+test('known context capacity remains visible while token use is unavailable',async({request,page})=>{
+ const session=await create(request,'Context capacity without usage',{agent:'codex',prompt:'context-window-only'});
+ await expect.poll(()=>status(request,session.id)).toBe('completed');
+ expect((await state(request,session.id)).context).toEqual({tokens:null,window:200000});
+ await ready(page);await open(page,'Context capacity without usage');
+ const ring=page.getByRole('button',{name:'Context usage —'});await expect(ring).toBeVisible();await ring.click();
+ const card=page.getByRole('dialog',{name:'Context usage details'});
+ await expect(card).toContainText('200,000 token capacity');
+ await expect(card).toContainText('Waiting for context usage');
+ await page.reload();await expect(ring).toBeVisible();
+});
+
+test('delivered stream text becomes visible before the provider finishes',async({request,page})=>{
+ const session=await create(request,'Live stream fidelity',{agent:'codex',prompt:'stream-visible-burst'});
+ await ready(page);await open(page,'Live stream fidelity');
+ await expect.poll(async()=>page.locator('.chat-assistant-turn .markdown-body').last().textContent(),{timeout:2500}).toContain('FIRST_CHUNK_END');
+ await expect.poll(()=>status(request,session.id)).toBe('completed');
+ await expect(page.locator('.chat-assistant-turn .markdown-body').last()).toContainText('Live stream finished');
+});
+
+test('text and work keep provider event order in the chat timeline',async({request,page})=>{
+ const session=await create(request,'Interleaved stream',{agent:'codex',prompt:'interleaved-stream'});
+ await expect.poll(()=>status(request,session.id)).toBe('completed');
+ await ready(page);await open(page,'Interleaved stream');
+ const parts=page.locator('.chat-assistant-turn').last().locator(':scope > .markdown-body, :scope > .chat-activity-segment');
+ await expect(parts).toHaveCount(3);
+ await expect(parts.nth(0)).toHaveText('First visible text.');
+ await expect(parts.nth(1).locator('summary')).toHaveText('Ran 1 command');
+ await expect(parts.nth(2)).toHaveText('Second visible text.');
+ await page.reload();
+ await expect(parts).toHaveCount(3);
+});
+
+test('thinking separated by assistant text remains in two ordered work groups',async({request,page})=>{
+ const session=await create(request,'Interleaved thinking',{agent:'codex',prompt:'interleaved-thinking'});
+ await expect.poll(()=>status(request,session.id)).toBe('completed');
+ await ready(page);await open(page,'Interleaved thinking');
+ const parts=page.locator('.chat-assistant-turn').last().locator(':scope > .markdown-body, :scope > .chat-activity-segment');
+ await expect(parts).toHaveCount(5);
+ for(const [index,text] of [[1,'First thought.'],[3,'Second thought.']] as const){
+  await parts.nth(index).locator('summary').click();
+  await parts.nth(index).getByRole('button',{name:'Thought process'}).click();
+  await expect(parts.nth(index)).toContainText(text);
+ }
+ await expect(parts.nth(0)).toHaveText('First text.');
+ await expect(parts.nth(2)).toHaveText('Second text.');
+ await expect(parts.nth(4)).toHaveText('Third text.');
 });
 
 test('Codex app-server reasoning text reaches the native work accordion',async({request,page})=>{
@@ -133,7 +183,7 @@ test('persistent stdio conversation, typed images, context and completion-before
  const s=await create(request,'Persistent Codex');await expect.poll(()=>status(request,s.id)).toBe('completed');expect((await state(request,s.id)).context).toEqual({tokens:32000,window:128000});
  const upload=await request.post(`${daemon}/api/attachments?name=fixture.png`,{headers:{'Content-Type':'image/png'},data:fs.readFileSync(path.join(tmp,'../fixtures/preview-grid.png'))});expect(upload.status()).toBe(201);const image=await upload.json();
  expect((await request.post(`${daemon}/api/sessions/${s.id}/messages`,{data:{text:`Image follow-up\n\nAttached images (local files — open them to view):\n- ${image.path}`}})).status()).toBe(202);await expect.poll(()=>status(request,s.id)).toBe('completed');const methods=logs(s.id).filter(row=>row.method);expect(methods.filter(row=>row.method==='initialize')).toHaveLength(1);expect(methods.filter(row=>row.method==='thread/start')).toHaveLength(1);expect(methods.filter(row=>row.method==='turn/start')).toHaveLength(2);expect(new Set(methods.map(row=>row.pid)).size).toBe(1);expect(logs(s.id).some(row=>JSON.stringify(row.inputTypes)==='["text","localImage"]')).toBe(true);
- await ready(page);await open(page,'Persistent Codex');await expect(page.getByRole('button',{name:'Context usage 25%'})).toBeVisible();await page.getByRole('button',{name:'Context usage 25%'}).click();await expect(page.getByRole('dialog',{name:'Context usage details'})).toContainText('32,000 of 128,000');expect(await page.getByRole('dialog',{name:'Context usage details'}).evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2));})).toBe(true);await page.keyboard.press('Escape');await expect(page.getByRole('dialog',{name:'Context usage details'})).toBeHidden();
+ await ready(page);await open(page,'Persistent Codex');await expect(page.getByRole('button',{name:'Context usage 25%'})).toBeVisible();await page.getByRole('button',{name:'Context usage 25%'}).click();await expect(page.getByRole('dialog',{name:'Context usage details'})).toContainText('32,000 / 128,000 tokens');await expect(page.getByRole('dialog',{name:'Context usage details'})).toContainText('96,000 tokens remaining');expect(await page.getByRole('dialog',{name:'Context usage details'}).evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2));})).toBe(true);await page.keyboard.press('Escape');await expect(page.getByRole('dialog',{name:'Context usage details'})).toBeHidden();
  const tail=await create(request,'Final tail',{prompt:'eof-final'});await expect.poll(()=>status(request,tail.id)).toBe('completed');expect(fs.readFileSync(path.join(tmp,'data/transcripts',tail.id+'.log'),'utf8')).toContain('Final tail survives EOF');
 });
 
@@ -365,7 +415,7 @@ test('atomic queue edit/steer claims send the winning text; early mismatched sta
 
 
 test('question and context surfaces follow Frosted/Opaque materials without fading text',async({request,page})=>{
- const s=await create(request,'Question materials',{prompt:'question materials'});try{await ready(page);await open(page,'Question materials');await expect(page.getByRole('dialog',{name:'Your input is needed'})).toBeVisible();await page.getByLabel('Open settings').click();await page.getByRole('tab',{name:'Appearance',exact:true}).click();await choose(page,'Glass','frosted');await page.getByRole('button',{name:'Back',exact:true}).click();const form=page.getByRole('dialog',{name:'Your input is needed'});await expect(form).toHaveCSS('opacity','1');expect(await form.evaluate(el=>getComputedStyle(el,'::before').backdropFilter)).toBe('blur(16px)');expect(await form.evaluate(el=>{const canvas=document.createElement('canvas');canvas.width=canvas.height=1;const ctx=canvas.getContext('2d')!;ctx.fillStyle=getComputedStyle(el,'::before').backgroundColor;ctx.fillRect(0,0,1,1);return ctx.getImageData(0,0,1,1).data[3];})).toBeLessThan(255);
+ const s=await create(request,'Question materials',{prompt:'question materials'});try{await ready(page);await open(page,'Question materials');await expect(page.getByRole('dialog',{name:'Your input is needed'})).toBeVisible();await page.getByLabel('Open settings').click();await page.getByRole('tab',{name:'Appearance',exact:true}).click();await choose(page,'Glass','frosted');await page.getByRole('button',{name:'Back',exact:true}).click();const form=page.getByRole('dialog',{name:'Your input is needed'});await expect(form).toHaveCSS('opacity','1');const reduced=await page.evaluate(()=>matchMedia('(prefers-reduced-transparency: reduce)').matches);expect(await form.evaluate(el=>getComputedStyle(el,'::before').backdropFilter)).toBe(reduced?'none':'blur(16px)');const alpha=await form.evaluate(el=>{const canvas=document.createElement('canvas');canvas.width=canvas.height=1;const ctx=canvas.getContext('2d')!;ctx.fillStyle=getComputedStyle(el,'::before').backgroundColor;ctx.fillRect(0,0,1,1);return ctx.getImageData(0,0,1,1).data[3];});if(reduced)expect(alpha).toBe(255);else expect(alpha).toBeLessThan(255);
  await page.getByLabel('Open settings').click();await page.getByRole('tab',{name:'Appearance',exact:true}).click();await choose(page,'Glass','opaque');await page.getByRole('button',{name:'Back',exact:true}).click();await expect(form).toHaveCSS('opacity','1');expect(await form.evaluate(el=>{const canvas=document.createElement('canvas');canvas.width=canvas.height=1;const ctx=canvas.getContext('2d')!;ctx.fillStyle=getComputedStyle(el,'::before').backgroundColor;ctx.fillRect(0,0,1,1);return ctx.getImageData(0,0,1,1).data[3];})).toBe(255);await expect(page.getByRole('button',{name:'Context usage —'})).toHaveCount(0);}finally{await request.post(`${daemon}/api/sessions/${s.id}/stop`);}
 });
 

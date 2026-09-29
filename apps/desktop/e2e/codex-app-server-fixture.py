@@ -27,6 +27,35 @@ def work(turn,prompt):
  if 'bad-json' in prompt:
   with lock:print('{invalid protocol',flush=True)
   return
+ if 'context-window-only' in prompt:
+  state[turn]['active']=False
+  notify('thread/tokenUsage/updated',{'threadId':thread,'turnId':turn,'tokenUsage':{'last':{},'modelContextWindow':200000}})
+  notify('turn/completed',{'threadId':thread,'turn':{'id':turn,'status':'completed'}})
+  return
+ if 'stream-visible-burst' in prompt:
+  notify('item/agentMessage/delta',{'threadId':thread,'turnId':turn,'itemId':'message','delta':'Live stream '+('chunk '*1800)+'FIRST_CHUNK_END'})
+  time.sleep(4)
+  complete(turn,'Live stream finished')
+  return
+ if 'interleaved-stream' in prompt:
+  state[turn]['active']=False
+  notify('item/agentMessage/delta',{'threadId':thread,'turnId':turn,'itemId':'message','delta':'First visible text. '})
+  notify('item/started',{'threadId':thread,'turnId':turn,'item':{'id':'inspect','type':'commandExecution','command':'printf inspected'}})
+  notify('item/completed',{'threadId':thread,'turnId':turn,'item':{'id':'inspect','type':'commandExecution','command':'printf inspected','aggregatedOutput':'inspected'}})
+  notify('item/agentMessage/delta',{'threadId':thread,'turnId':turn,'itemId':'message','delta':'Second visible text.'})
+  notify('item/completed',{'threadId':thread,'turnId':turn,'item':{'id':'message','type':'agentMessage','text':'First visible text. Second visible text.'}})
+  notify('turn/completed',{'threadId':thread,'turn':{'id':turn,'status':'completed'}})
+  return
+ if 'interleaved-thinking' in prompt:
+  state[turn]['active']=False
+  notify('item/agentMessage/delta',{'threadId':thread,'turnId':turn,'itemId':'message','delta':'First text. '})
+  notify('item/reasoning/summaryTextDelta',{'threadId':thread,'turnId':turn,'itemId':'thought-one','delta':'First thought.'})
+  notify('item/agentMessage/delta',{'threadId':thread,'turnId':turn,'itemId':'message','delta':'Second text. '})
+  notify('item/reasoning/summaryTextDelta',{'threadId':thread,'turnId':turn,'itemId':'thought-two','delta':'Second thought.'})
+  notify('item/agentMessage/delta',{'threadId':thread,'turnId':turn,'itemId':'message','delta':'Third text.'})
+  notify('item/completed',{'threadId':thread,'turnId':turn,'item':{'id':'message','type':'agentMessage','text':'First text. Second text. Third text.'}})
+  notify('turn/completed',{'threadId':thread,'turn':{'id':turn,'status':'completed'}})
+  return
  if 'flood' in prompt:
   for _ in range(40):notify('item/agentMessage/delta',{'threadId':thread,'turnId':turn,'delta':'x'*300000})
   return

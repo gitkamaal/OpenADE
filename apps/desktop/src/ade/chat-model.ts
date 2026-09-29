@@ -12,12 +12,17 @@ export interface ChatActivity {
 
 export interface GeneratedImage {id:string;name:string;mime:"image/png";size:number}
 
+export type ChatSegment =
+  | {id:string;kind:"text";markdown:string}
+  | {id:string;kind:"activity";activities:ChatActivity[]};
+
 export interface ChatTurn {
   id: string;
   role: "user" | "assistant" | "system";
   markdown: string;
   activities: ChatActivity[];
   generatedImages: GeneratedImage[];
+  segments?: ChatSegment[];
   streaming?: boolean;
   timestamp?: number;
 }
@@ -34,6 +39,13 @@ export function createTranscriptParser(initialPrompt:string,initialCreatedAt?:st
   let partial = "";
   let finalMessage = "";
   let providerMessages=new Map<string,string>();
+  let activityBoundaries:{at:number;ids:string[]}[]=[];
+  let orderedText=true;
+  const commitCurrent=()=>{
+    const markdown=(finalMessage||partial).trim();
+    assistant.segments=buildSegments(markdown,assistant.activities,activityBoundaries,orderedText);
+    commitAssistant(turns,assistant,markdown);
+  };
 
   // Strip terminal escapes one line at a time. A raw TUI can leave an OSC
   // sequence unterminated; stripping the entire transcript at once would then
@@ -53,9 +65,9 @@ export function createTranscriptParser(initialPrompt:string,initialCreatedAt?:st
     if (!event) return;
 
     if (event.type === "openade.fork_source") {
-      commitAssistant(turns, assistant, finalMessage || partial);
+      commitCurrent();
       turns.push({id:`fork-${turns.length}`,role:"system",markdown:String(event.title??"Previous chat"),activities:[],generatedImages:[]});
-      assistant=newAssistant(turns.length);partial="";finalMessage="";providerMessages=new Map();
+      assistant=newAssistant(turns.length);partial="";finalMessage="";providerMessages=new Map();activityBoundaries=[];orderedText=true;
       return;
     }
 
@@ -64,7 +76,7 @@ export function createTranscriptParser(initialPrompt:string,initialCreatedAt?:st
       // provider's turn/completed frame arrives. The accepted user marker is
       // the durable boundary for that preceding entry's hover timestamp.
       if(assistant.timestamp===undefined)assistant.timestamp=parseTimestamp(event.created_at);
-      commitAssistant(turns, assistant, finalMessage || partial);
+      commitCurrent();
       turns.push({
         id: `user-${turns.length}`,
         role: "user",
@@ -75,21 +87,23 @@ export function createTranscriptParser(initialPrompt:string,initialCreatedAt?:st
       });
       assistant = newAssistant(turns.length);
       partial = "";
-      finalMessage = "";providerMessages=new Map();
+      finalMessage = "";providerMessages=new Map();activityBoundaries=[];orderedText=true;
       return;
     }
 
     if (event.type === "openade.child_turn_started") {
       // A provider may resume a child thread without echoing another user
       // item. Keep its next answer separate from the completed assignment.
-      commitAssistant(turns, assistant, finalMessage || partial);
+      commitCurrent();
       assistant = newAssistant(turns.length);
       partial = "";
       finalMessage = "";
-      providerMessages = new Map();
+      providerMessages = new Map();activityBoundaries=[];orderedText=true;
       return;
     }
 
+    const textBefore=(finalMessage||partial).trim();
+    const activityCount=assistant.activities.length;
     const type = String(event.type ?? "");
     if(type==="turn.completed")assistant.timestamp=parseTimestamp(event.created_at);
     if(type==="openade.turn_finished"&&assistant.timestamp===undefined)assistant.timestamp=parseTimestamp(event.created_at);
@@ -157,7 +171,7 @@ export function createTranscriptParser(initialPrompt:string,initialCreatedAt?:st
     if (type === "stream_event" && isRecord(event.event)) {
       const delta = isRecord(event.event.delta) ? event.event.delta : null;
       if (delta?.type === "text_delta") partial += String(delta.text ?? "");
-      if (delta?.type === "thinking_delta") appendThought(assistant, String(delta.thinking ?? delta.text ?? ""));
+      if (delta?.type === "thinking_delta") appendThought(assistant, String(delta.thinking ?? delta.text ?? ""),false,Boolean(activityBoundaries.length&&activityBoundaries.at(-1)!.at<textBefore.length));
     }
     if (type === "assistant" && isRecord(event.message) && Array.isArray(event.message.content)) {
       const content = event.message.content.filter(isRecord);
@@ -168,7 +182,7 @@ export function createTranscriptParser(initialPrompt:string,initialCreatedAt?:st
         .trim();
       if (text) finalMessage = text;
       for (const block of content) {
-        if(block.type==="thinking")appendThought(assistant,String(block.thinking??""),true);
+        if(block.type==="thinking")appendThought(assistant,String(block.thinking??""),true,Boolean(activityBoundaries.length&&activityBoundaries.at(-1)!.at<textBefore.length));
         if(block.type!=="tool_use"||block.name==="Agent"||block.name==="Task")continue;
         addActivity(assistant, "tool", toolTitle(String(block.name ?? "Use tool")));
       }
@@ -176,14 +190,39 @@ export function createTranscriptParser(initialPrompt:string,initialCreatedAt?:st
     if (type === "result" && typeof event.result === "string" && event.result.trim()) {
       finalMessage = event.result.trim();
     }
+    if(assistant.activities.length>activityCount){
+      const ids=assistant.activities.slice(activityCount).map(activity=>activity.id);
+      const previous=activityBoundaries.at(-1);
+      if(previous?.at===textBefore.length)previous.ids.push(...ids);
+      else activityBoundaries.push({at:textBefore.length,ids});
+    }
+    const textAfter=(finalMessage||partial).trim();
+    if(!textAfter.startsWith(textBefore))orderedText=false;
   };
   return {
     append(chunk:string){const lines=(carry+chunk.replace(/\r/g,"")).split("\n");carry=lines.pop()??"";for(const line of lines)consume(line);},
     snapshot(running:boolean):ChatTurn[]{
-      const current={...assistant,activities:assistant.activities.map(activity=>({...activity})),generatedImages:assistant.generatedImages.map(image=>({...image})),markdown:(finalMessage||partial).trim(),streaming:running};
+      const markdown=(finalMessage||partial).trim();
+      const activities=assistant.activities.map(activity=>({...activity}));
+      const current={...assistant,activities,generatedImages:assistant.generatedImages.map(image=>({...image})),markdown,segments:buildSegments(markdown,activities,activityBoundaries,orderedText),streaming:running};
       return current.markdown||current.activities.length||current.generatedImages.length||running?[...turns,current]:[...turns];
     },
   };
+}
+
+function buildSegments(markdown:string,activities:ChatActivity[],boundaries:{at:number;ids:string[]}[],ordered:boolean):ChatSegment[]|undefined{
+  if(!ordered||!boundaries.length||boundaries.some(boundary=>boundary.at>markdown.length))return undefined;
+  const byID=new Map(activities.map(activity=>[activity.id,activity]));
+  const segments:ChatSegment[]=[];
+  let cursor=0;
+  for(const [index,boundary] of boundaries.entries()){
+    if(boundary.at>cursor)segments.push({id:`text-${index}`,kind:"text",markdown:markdown.slice(cursor,boundary.at)});
+    const group=boundary.ids.map(id=>byID.get(id)).filter((activity):activity is ChatActivity=>Boolean(activity));
+    if(group.length)segments.push({id:`activity-${group[0].id}`,kind:"activity",activities:group});
+    cursor=boundary.at;
+  }
+  if(cursor<markdown.length)segments.push({id:`text-${boundaries.length}`,kind:"text",markdown:markdown.slice(cursor)});
+  return segments.length?segments:undefined;
 }
 export function parseChatTranscript(value:string,initialPrompt:string,running:boolean,initialCreatedAt?:string):ChatTurn[]{const parser=createTranscriptParser(initialPrompt,initialCreatedAt);parser.append(value+"\n");return parser.snapshot(running);}
 
@@ -240,10 +279,10 @@ function addActivity(
   turn.activities.push({ id: `${turn.id}-activity-${turn.activities.length}`, kind, title, detail });
 }
 
-function appendThought(turn:ChatTurn,text:string,complete=false){
+function appendThought(turn:ChatTurn,text:string,complete=false,forceNew=false){
   const bounded=text.slice(0,64*1024),previous=turn.activities.at(-1);
   if(!bounded.trim())return;
-  if(previous?.kind==="thinking"){
+  if(!forceNew&&previous?.kind==="thinking"){
     if(complete){if(!previous.detail||bounded.startsWith(previous.detail))previous.detail=bounded||previous.detail;else if(bounded!==previous.detail)addActivity(turn,"thinking","Thought process",bounded);}
     else if(bounded)previous.detail=((previous.detail??"")+bounded).slice(0,64*1024);
     return;

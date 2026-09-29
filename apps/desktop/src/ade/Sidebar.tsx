@@ -696,6 +696,7 @@ export function Sidebar({
       hidden={page === "settings"}
       className={`sidebar ${preferences.sidebar_compact ? "compact-sidebar" : ""} ${preferences.sidebar_show_project_icon ? "show-project-icons" : ""} ${preferences.sidebar_show_project_label ? "" : "hide-project-labels"}`}
     >
+      <div className="sidebar-titlebar-drag" aria-hidden="true" />
       <div className="workspace-switcher">
         <span>OpenADE</span>
         <button
@@ -716,7 +717,7 @@ export function Sidebar({
           <Plus />
         </button>
         <button
-          className="icon-button workspace-action"
+          className="icon-button workspace-action sidebar-collapse-titlebar"
           onClick={onToggle}
           aria-label="Collapse sidebar"
           title="Collapse sidebar"

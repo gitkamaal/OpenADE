@@ -1,6 +1,8 @@
 import {choose,setRepository} from "./helpers";
 import {test,create,ready,open,panel,daemon,status,repo,tmp} from './helpers';
-import {expect} from '@playwright/test';
+import {expect,Page} from '@playwright/test';
+const reducedTransparency=(page:Page)=>page.evaluate(()=>matchMedia('(prefers-reduced-transparency: reduce)').matches);
+const expectMaterialWash=async(page:Page)=>{const fill=await page.locator('.ade').evaluate(el=>getComputedStyle(el).getPropertyValue('--shell-fill').trim());if(await reducedTransparency(page))expect(fill).toBe('var(--sidebar)');else expect(fill).toContain('50%');};
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {spawn,execFileSync} from 'node:child_process';
@@ -52,7 +54,7 @@ test('pointer-activated composers and dropdown searches stay quiet while keyboar
  await page.keyboard.press('Tab');await page.keyboard.press('Shift+Tab');await expect(message).toBeFocused();await expect(composer).toHaveCSS('outline-width','2px');
 });
 test('Frosted applies through the canvas, chat, editor, terminal and popup surfaces',async({page,request})=>{
- const session=await create(request,'Material throughout workspace');await ready(page);await page.getByLabel('Open settings').click();await page.getByRole('tab',{name:'Appearance',exact:true}).click();await choose(page,'Glass','frosted');await expect(page.locator('.main-shell')).toHaveCSS('background-color','rgba(0, 0, 0, 0)');await page.getByRole('button',{name:'Back',exact:true}).click();await open(page,'Material throughout workspace');await expect(page.locator('.conversation')).toHaveCSS('background-color','rgba(0, 0, 0, 0)');await expect(page.locator('.session-composer')).toHaveCSS('backdrop-filter','none');expect(await page.locator('.session-composer').evaluate(el=>getComputedStyle(el,'::before').backdropFilter)).toBe('blur(16px)');await page.getByLabel('Toggle files panel').click();await expect(page.locator('.files-panel-clip')).toHaveCSS('background-color','rgba(0, 0, 0, 0)');await page.getByRole('treeitem',{name:'README.md',exact:true}).click();await expect(page.locator('.cm-editor')).toHaveCSS('background-color','rgba(0, 0, 0, 0)');await panel(page,'Diffs');await expect(page.locator('.zeron-diffs')).toHaveCSS('background-color','rgba(0, 0, 0, 0)');await panel(page,'Terminal');await page.getByLabel('New terminal',{exact:true}).click();await expect(page.locator('.terminal-workspace')).toHaveCSS('background-color','rgba(0, 0, 0, 0)');await expect(page.locator('.terminal-host').first()).toHaveCSS('background-color','rgba(0, 0, 0, 0)');await page.locator('.terminal-workspace').getByRole('button',{name:/^Close Terminal/}).click();
+ const session=await create(request,'Material throughout workspace');await ready(page);await page.getByLabel('Open settings').click();await page.getByRole('tab',{name:'Appearance',exact:true}).click();await choose(page,'Glass','frosted');await expect(page.locator('.main-shell')).toHaveCSS('background-color','rgba(0, 0, 0, 0)');await page.getByRole('button',{name:'Back',exact:true}).click();await open(page,'Material throughout workspace');await expect(page.locator('.conversation')).toHaveCSS('background-color','rgba(0, 0, 0, 0)');await expect(page.locator('.session-composer')).toHaveCSS('backdrop-filter','none');expect(await page.locator('.session-composer').evaluate(el=>getComputedStyle(el,'::before').backdropFilter)).toBe(await reducedTransparency(page)?'none':'blur(16px)');await page.getByLabel('Toggle files panel').click();await expect(page.locator('.files-panel-clip')).toHaveCSS('background-color','rgba(0, 0, 0, 0)');await page.getByRole('treeitem',{name:'README.md',exact:true}).click();await expect(page.locator('.cm-editor')).toHaveCSS('background-color','rgba(0, 0, 0, 0)');await panel(page,'Diffs');await expect(page.locator('.zeron-diffs')).toHaveCSS('background-color','rgba(0, 0, 0, 0)');await panel(page,'Terminal');await page.getByLabel('New terminal',{exact:true}).click();await expect(page.locator('.terminal-workspace')).toHaveCSS('background-color','rgba(0, 0, 0, 0)');await expect(page.locator('.terminal-host').first()).toHaveCSS('background-color','rgba(0, 0, 0, 0)');await page.locator('.terminal-workspace').getByRole('button',{name:/^Close Terminal/}).click();
 });
 
 test('skills and slash commands are discovered from the owning worktree',async({page,request})=>{
@@ -81,7 +83,7 @@ test('Liquid Glass persists and native accessibility changes restore solid surfa
  await choose(page,'Glass','frosted');await expect(page.locator('.ade')).toHaveAttribute('data-native-material','frosted');
  await expect(page.getByText('Native macOS frosted material',{exact:true})).toBeVisible();
  await expect(page.locator('.ade')).toHaveCSS('opacity','1');
- expect(await page.locator('.ade').evaluate(el=>getComputedStyle(el).getPropertyValue('--shell-fill'))).toContain('50%');
+ await expectMaterialWash(page);
  await expect(page.locator('html')).toHaveCSS('background-color','rgba(0, 0, 0, 0)');
  await page.reload();await page.getByLabel('Open settings').click();await page.getByRole('tab',{name:'Appearance',exact:true}).click();
  await expect(page.getByLabel('Glass',{exact:true})).toHaveAttribute('data-value','frosted');
@@ -95,9 +97,9 @@ test('Liquid Glass persists and native accessibility changes restore solid surfa
  await choose(page,'Glass','liquid');await expect(page.locator('.ade')).toHaveAttribute('data-native-material','liquid');
  await expect(page.getByText('Native macOS Liquid Glass',{exact:true})).toBeVisible();
  await expect(page.locator('.ade')).toHaveCSS('opacity','1');
- await choose(page,'Glass','default');expect(await page.locator('.ade').evaluate(el=>getComputedStyle(el).getPropertyValue('--shell-fill'))).toContain('50%');await choose(page,'Glass','liquid');
+ await choose(page,'Glass','default');await expectMaterialWash(page);await choose(page,'Glass','liquid');
  const fill=await page.locator('.ade').evaluate(el=>getComputedStyle(el).getPropertyValue('--shell-fill'));
- expect(fill).toContain('50%');
+ if(await reducedTransparency(page))expect(fill.trim()).toBe('var(--sidebar)');else expect(fill).toContain('50%');
  await page.reload();await page.getByLabel('Open settings').click();await page.getByRole('tab',{name:'Appearance',exact:true}).click();
  await expect(page.getByLabel('Glass',{exact:true})).toHaveAttribute('data-value','liquid');
  await page.getByLabel('Glass',{exact:true}).focus();

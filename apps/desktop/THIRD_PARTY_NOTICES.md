@@ -14,6 +14,12 @@ License 1.1. The full notice is retained in `licenses/Geist-OFL.txt`.
 
 Icons use the existing Phosphor React package and its MIT license.
 
+File and folder identity icons and their filename mapping come from the
+[Symbols VS Code icon theme](https://github.com/miguelsolorio/vscode-symbols),
+Copyright (c) 2020–22 Miguel Solorio, MIT licensed. The complete notice is
+bundled at `public/file-icons/LICENSE.symbols`. Dark variants brighten the
+same palette accents as the pinned Zeron implementation.
+
 The Claude, OpenAI, Cursor, Grok, Devin, Hermes, Pi, and Antigravity provider marks are adapted from Zeron’s MIT-licensed UI assets; the marks identify their respective providers. Gruvbox palette values follow Zeron’s bundled Gruvbox theme mapping.
 
 The Cursor JSONL shim adapts Zeron's MIT-licensed `crates/harness/src/cursor/shim.mjs` for OpenADE. Its notice is retained beside the shim in `internal/daemon/cursor_adapter/LICENSE.zeron`. The pinned `@cursor/sdk` package is installed separately from npm on first use and is not bundled in this repository or app archive.
