@@ -28,9 +28,27 @@ test('files search follows source keyboard reveal and the eye controls hidden an
  await expect(page.getByRole('tab',{name:'zebra-quick-xylophone.md'})).toHaveAttribute('aria-selected','true');
  await expect(tree.getByRole('treeitem',{name:'src/zebra-quick-xylophone.md'})).toBeVisible();
  await search.fill('zqx');await search.press('Escape');await expect(search).toHaveValue('');await expect(tree).toBeFocused();
+ await tree.press('ArrowUp');await expect(tree.getByRole('treeitem',{name:'src',exact:true})).toHaveAttribute('aria-selected','true');
+ await tree.press('ArrowLeft');await expect(tree.getByRole('treeitem',{name:'src',exact:true})).toHaveAttribute('aria-expanded','false');
+ await tree.press('ArrowRight');await expect(tree.getByRole('treeitem',{name:'src',exact:true})).toHaveAttribute('aria-expanded','true');
+ await tree.press('ArrowRight');await expect(tree.getByRole('treeitem',{name:'src/zebra-quick-xylophone.md'})).toHaveAttribute('aria-selected','true');
  await page.getByRole('button',{name:'Hide hidden and ignored files'}).click();
  await expect(tree.getByRole('treeitem',{name:'.hidden-note.md',exact:true})).toHaveCount(0);
  await expect(tree.getByRole('treeitem',{name:'ignored-secret.tmp',exact:true})).toHaveCount(0);
+});
+
+test('large file tree keeps rendered rows bounded and reveals the end on scroll',async({page,request})=>{
+ const session=await create(request,'Large source file tree');await expect.poll(()=>status(request,session.id)).toBe('completed');
+ for(let index=0;index<1200;index++)fs.writeFileSync(path.join(session.worktree_path,`file-${String(index).padStart(4,'0')}.md`),'# Fixture\n');
+ await ready(page);await open(page,'Large source file tree');await page.getByLabel('Toggle files panel').click();
+ const tree=page.getByRole('tree',{name:'Project files'});
+ await expect(tree.getByRole('treeitem',{name:'file-0000.md',exact:true})).toBeVisible();
+ await expect.poll(()=>tree.getByRole('treeitem').count()).toBeLessThan(250);
+ await tree.evaluate(element=>{element.scrollTop=element.scrollHeight;element.dispatchEvent(new Event('scroll',{bubbles:true}));});
+ await expect(tree.getByRole('treeitem',{name:'file-1199.md',exact:true})).toBeVisible();
+ await tree.evaluate(element=>{element.scrollTop=0;element.dispatchEvent(new Event('scroll',{bubbles:true}));});
+ await expect(tree.getByRole('treeitem',{name:'file-0000.md',exact:true})).toBeVisible();
+ await expect(tree.getByRole('treeitem',{name:'file-1199.md',exact:true})).toHaveCount(0);
 });
 
 test('files tree uses the pinned source icon identities and loads their native assets',async({page,request})=>{
