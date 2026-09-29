@@ -68,7 +68,29 @@ export function ChatTimeline({ session, output, outputOffset=0, outputCursor=0, 
   const visibleSubagentIDs=[...new Set(visibleTurns.flatMap(turn=>turn.activities.filter(activity=>activity.kind==="subagent").map(activity=>activity.docId).filter((id):id is string=>Boolean(id))))].slice(-128);
   const visibleSubagentKey=visibleSubagentIDs.join(",");
   const [subagentSummaries,setSubagentSummaries]=useState<Record<string,SubagentSummary>>({});
-  useEffect(()=>{if(!visibleSubagentKey){setSubagentSummaries({});return;}let active=true,busy=false;const ids=visibleSubagentKey.split(",");const read=()=>{if(busy)return;busy=true;void fetchSubagentSummaries(session.id,ids).then(items=>{if(!active)return;const next=Object.fromEntries(items.map(item=>[item.id,item]));setSubagentSummaries(current=>Object.keys(current).length===items.length&&items.every(item=>current[item.id]?.status===item.status&&current[item.id]?.child_thread_id===item.child_thread_id&&current[item.id]?.title===item.title)?current:next);}).catch(()=>{}).finally(()=>{busy=false;});};read();const timer=window.setInterval(()=>{if(!document.hidden)read();},1000);return()=>{active=false;window.clearInterval(timer);};},[session.id,visibleSubagentKey]);
+  useEffect(()=>{
+    if(!visibleSubagentKey){setSubagentSummaries({});return;}
+    let active=true,busy=false,timer:number|undefined;
+    const ids=visibleSubagentKey.split(",");
+    const parentSettled=!["starting","running","waiting"].includes(session.status);
+    const schedule=()=>{if(active&&timer===undefined)timer=window.setTimeout(()=>{timer=undefined;read();},1000);};
+    const read=()=>{
+      if(!active||busy||document.hidden)return;
+      busy=true;
+      void fetchSubagentSummaries(session.id,ids).then(items=>{
+        if(!active)return;
+        const next=Object.fromEntries(items.map(item=>[item.id,item]));
+        setSubagentSummaries(current=>Object.keys(current).length===items.length&&items.every(item=>current[item.id]?.status===item.status&&current[item.id]?.child_thread_id===item.child_thread_id&&current[item.id]?.title===item.title)?current:next);
+        // A child can outlive its parent. A new parent turn rechecks completed
+        // children because the provider may reopen one for another assignment.
+        if(!parentSettled||ids.some(id=>!next[id]||next[id].status==="running"))schedule();
+      }).catch(()=>{schedule();}).finally(()=>{busy=false;});
+    };
+    const onVisibility=()=>{if(document.hidden){if(timer!==undefined)window.clearTimeout(timer);timer=undefined;}else read();};
+    document.addEventListener("visibilitychange",onVisibility);
+    read();
+    return()=>{active=false;if(timer!==undefined)window.clearTimeout(timer);document.removeEventListener("visibilitychange",onVisibility);};
+  },[session.id,session.status,session.generation,visibleSubagentKey]);
   useLayoutEffect(()=>{const scroll=timeline.current?.closest<HTMLElement>(".messages");if(!scroll)return;if(jump.current){if(jump.current==="__top__"){scroll.scrollTop=0;jump.current=null;return;}const target=timeline.current?.querySelector<HTMLElement>(`[data-message-id="${jump.current}"]`);if(target){scroll.scrollTo({top:scroll.scrollTop+target.getBoundingClientRect().top-scroll.getBoundingClientRect().top-24,behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth"});jump.current=null;}}else if(visibleEnd!==null)scroll.scrollTop=0;},[visibleEnd,activeHistory]);
 
   const readHistory=(window:HistoryWindow)=>{const text=historyText(window),reader=createTranscriptParser(window.start===0?initialPrompt:"",session.created_at);reader.append(text);return reader.snapshot(running&&window.end===window.liveEnd);};
