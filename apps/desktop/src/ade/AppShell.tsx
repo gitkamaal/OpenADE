@@ -108,6 +108,7 @@ function AppShell() {
   const [switchingSessionId, setSwitchingSessionId] = useState<string | null>(null);
   const mountedRef = useRef(false);
   const focusTimerRef = useRef<number | undefined>(undefined);
+  const sidebarFocusTimerRef=useRef<number|undefined>(undefined);
   const legacyArchiveMigration = useRef(false);
 
   useEffect(() => {
@@ -124,6 +125,7 @@ function AppShell() {
       document.removeEventListener("focusin",focus);
       window.removeEventListener("beforeunload",beforeUnload);
       if (focusTimerRef.current !== undefined) window.clearTimeout(focusTimerRef.current);
+      if (sidebarFocusTimerRef.current !== undefined) window.clearTimeout(sidebarFocusTimerRef.current);
     };
   }, []);
 
@@ -284,7 +286,18 @@ function AppShell() {
     if(focusTimerRef.current!==undefined)window.clearTimeout(focusTimerRef.current);
     focusTimerRef.current=window.setTimeout(()=>{focusTimerRef.current=undefined;const target=contentFocus.current; if(target?.isConnected)target.focus();else document.querySelector<HTMLElement>("[data-main-composer]")?.focus();},0);
   };
-  const toggleSidebar = () => { window.dispatchEvent(new Event("openade-dismiss-menus"));setSidebarOpen(value=>!value); };
+  const toggleSidebar = (focusToggle=false) => {
+    const focused=document.activeElement;
+    const focusMoves=focusToggle||focused instanceof Element&&Boolean(focused.closest(".sidebar-clip,.sidebar-toggle"));
+    window.dispatchEvent(new Event("openade-dismiss-menus"));
+    setSidebarOpen(value=>!value);
+    if(sidebarFocusTimerRef.current!==undefined)window.clearTimeout(sidebarFocusTimerRef.current);
+    if(focusMoves)sidebarFocusTimerRef.current=window.setTimeout(()=>{
+      sidebarFocusTimerRef.current=undefined;
+      const collapsed=document.querySelector(".ade")?.classList.contains("sidebar-collapsed");
+      document.querySelector<HTMLElement>(collapsed?".sidebar-toggle":".sidebar-collapse-titlebar")?.focus({preventScroll:true});
+    },0);
+  };
   useEffect(() => {if(preferences.sidebar_open!==sidebarOpen)updatePreferences({...preferences,sidebar_open:sidebarOpen});}, [sidebarOpen]);
   useEffect(()=>{
     const native=window as typeof window&{go?:{main?:{App?:{BrowserSetShortcuts?:(bindings:string[])=>Promise<void>}}}};
@@ -388,7 +401,7 @@ function AppShell() {
         onNewProject={()=>{window.dispatchEvent(new Event("openade-dismiss-menus"));setProjectPaletteOpen(true);}}
         onSearch={()=>{window.dispatchEvent(new Event("openade-dismiss-menus"));setPaletteOpen(true);}}
         onNewSession={openComposer}
-        onToggle={toggleSidebar}
+        onToggle={()=>toggleSidebar(true)}
         onArchive={setArchived}
         onBeforeDelete={ids=>selectedId&&ids.includes(selectedId)&&editorDirty.current?"Save or discard your editor changes before deleting this chat.":null}
         onDeleted={id=>{forgetReviewComments(id);forgetWorkspacePanels(id);if(selectedId===id&&connected)void refresh();}}
@@ -399,7 +412,7 @@ function AppShell() {
       {projectPaletteOpen&&<ProjectPalette onClose={()=>setProjectPaletteOpen(false)} onCommands={()=>setPaletteOpen(true)} onAdded={path=>{void refresh();try{const draft=JSON.parse(sessionStorage.getItem("openade.home-draft")||"{}");sessionStorage.setItem("openade.home-draft",JSON.stringify({...draft,repo:path}));}catch{sessionStorage.setItem("openade.home-draft",JSON.stringify({repo:path}));}window.dispatchEvent(new CustomEvent("openade-select-project",{detail:path}));openComposer();}}/>}
       <main className="main-shell">
         {(!selected||page==="settings")&&<div className="window-titlebar-drag" aria-hidden="true"/>}
-        {!sidebarOpen && <button className="sidebar-toggle icon-button" onClick={() => setSidebarOpen(true)} aria-label="Toggle sidebar"><SidebarSimple size={18} /></button>}
+        {!sidebarOpen && <button className="sidebar-toggle icon-button" onClick={()=>toggleSidebar(true)} aria-label="Toggle sidebar"><SidebarSimple size={18} /></button>}
         {!connected && <div className="connection-banner"><SpinnerGap className="spin" /> {error || "Connecting to the local daemon…"}<button onClick={()=>{const bridge=window as typeof window & {go?:{main?:{App?:{Reconnect?:()=>Promise<void>}}}};void (bridge.go?.main?.App?.Reconnect?.()||Promise.resolve()).then(refresh).catch(reason=>setError(String(reason)));}}>Reconnect</button></div>}
         {connected && error && <button aria-label="Dismiss error" className="error-toast" onClick={() => setError(null)}><span role="alert">{error}</span><X /></button>}
         {selected&&<div className="retained-workspace" hidden={page==="settings"} inert={page==="settings"}><Suspense fallback={<div className="opening-session" role="status">Opening session…</div>}><SessionWorkspace activeView={page!=="settings"} key={selected.id} session={selected} projectLabel={projectNames[selected.repo_root]} appearance={activeTheme.appearance} preferences={preferences} onPreferences={updatePreferences} onArchive={()=>{if(editorDirty.current){setError("Save or discard file changes before archiving.");return;}void setArchived(selected.id,!selected.archived).then(done=>{if(done&&!selected.archived)setSelectedId(null);});}} onBack={() => {if(editorDirty.current){setError("Save or discard file changes before leaving this session.");return;}setSelectedId(null);}} onRefresh={refresh} /></Suspense></div>}
