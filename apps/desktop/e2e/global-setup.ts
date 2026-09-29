@@ -62,6 +62,11 @@ if structured:
   print('env: node: No such file or directory',flush=True);sys.exit(127)
  if name=='claude':emit({'type':'system','session_id':'claude-'+sid})
  else:emit({'type':'thread.started','thread_id':'codex-'+sid})
+ if name=='claude' and 'claude-context' in prompt:
+  emit({'type':'assistant','parent_tool_use_id':'child-only','message':{'model':'child','content':[],'usage':{'input_tokens':999999}}})
+  emit({'type':'assistant','message':{'model':'primary','content':[{'type':'text','text':'Claude context is available.'}],'usage':{'input_tokens':200,'cache_read_input_tokens':40000,'cache_creation_input_tokens':1800,'output_tokens':100}}})
+  emit({'type':'result','result':'Claude context is available.','usage':{'input_tokens':999999},'modelUsage':{'primary-alias':{'canonicalModel':'primary','contextWindow':200000},'child':{'contextWindow':1000000}}})
+  sys.exit(0)
  if name=='claude' and 'claude-child' in prompt:
   if '--forward-subagent-text' not in args:sys.exit(8)
   if 'early' in prompt:emit({'type':'assistant','parent_tool_use_id':'agent-one','message':{'content':[{'type':'text','text':'Early child output.'}]}})

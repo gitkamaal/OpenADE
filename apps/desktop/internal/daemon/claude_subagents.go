@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -20,10 +21,17 @@ type claudeSubagents struct {
 	tasks      map[string]string // Claude task ID -> Agent/Task tool_use ID
 	pending    map[string][][]byte
 	pendingLen int
+	lastModel  string
+	context    ProviderContext
 }
 
 func newClaudeSubagents(store *Store, dataDir, sessionID string, generation int64) *claudeSubagents {
-	return &claudeSubagents{codexSubagents: newCodexSubagents(store, dataDir, sessionID, ""), generation: generation, tasks: map[string]string{}, pending: map[string][][]byte{}}
+	s := &claudeSubagents{codexSubagents: newCodexSubagents(store, dataDir, sessionID, ""), generation: generation, tasks: map[string]string{}, pending: map[string][][]byte{}}
+	var saved string
+	if store.db.QueryRow(`SELECT state FROM provider_context WHERE session_id=?`, sessionID).Scan(&saved) == nil {
+		_ = json.Unmarshal([]byte(saved), &s.context)
+	}
+	return s
 }
 
 type claudeWireBlock struct {
@@ -36,8 +44,81 @@ type claudeWireBlock struct {
 type claudeWireFrame struct {
 	Type, Subtype, Parent, ToolUseID, TaskID, SubagentType, Status string
 	Message                                                        struct {
-		Content []claudeWireBlock `json:"content"`
+		Content []claudeWireBlock          `json:"content"`
+		Model   string                     `json:"model"`
+		Usage   map[string]json.RawMessage `json:"usage"`
 	} `json:"message"`
+	ModelUsage map[string]struct {
+		CanonicalModel string          `json:"canonicalModel"`
+		ContextWindow  json.RawMessage `json:"contextWindow"`
+	} `json:"modelUsage"`
+}
+
+func claudeCount(raw json.RawMessage) (uint64, bool) {
+	var count uint64
+	if len(raw) == 0 || json.Unmarshal(raw, &count) != nil {
+		return 0, false
+	}
+	return count, true
+}
+
+func (s *claudeSubagents) saveContext() {
+	encoded, err := json.Marshal(s.context)
+	if err == nil {
+		_, _ = s.store.db.Exec(`INSERT INTO provider_context(session_id,state) VALUES(?,?) ON CONFLICT(session_id) DO UPDATE SET state=excluded.state`, s.sessionID, string(encoded))
+	}
+}
+
+func (s *claudeSubagents) recordContext(frame *claudeWireFrame) {
+	if frame.Type == "assistant" {
+		if frame.Message.Model != "" {
+			s.lastModel = frame.Message.Model
+		}
+		var tokens uint64
+		var found bool
+		for _, field := range []string{"input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"} {
+			if count, ok := claudeCount(frame.Message.Usage[field]); ok {
+				found = true
+				if count > math.MaxUint64-tokens {
+					tokens = math.MaxUint64
+				} else {
+					tokens += count
+				}
+			}
+		}
+		if found && (s.context.Tokens == nil || *s.context.Tokens != tokens) {
+			s.context.Tokens = &tokens
+			s.saveContext()
+		}
+		return
+	}
+	if frame.Type != "result" || len(frame.ModelUsage) == 0 {
+		return
+	}
+	entry, ok := frame.ModelUsage[s.lastModel]
+	if !ok && s.lastModel != "" {
+		for _, candidate := range frame.ModelUsage {
+			if candidate.CanonicalModel == s.lastModel {
+				entry, ok = candidate, true
+				break
+			}
+		}
+	}
+	if !ok && len(frame.ModelUsage) == 1 {
+		for _, candidate := range frame.ModelUsage {
+			entry, ok = candidate, true
+		}
+	}
+	var window *uint64
+	if ok {
+		if count, valid := claudeCount(entry.ContextWindow); valid && count > 0 {
+			window = &count
+		}
+	}
+	if (s.context.Window == nil) != (window == nil) || (window != nil && *s.context.Window != *window) {
+		s.context.Window = window
+		s.saveContext()
+	}
 }
 
 func (s *claudeSubagents) consume(chunk []byte) []byte {
@@ -112,6 +193,7 @@ func (s *claudeSubagents) line(raw []byte) []byte {
 		}
 		return nil
 	}
+	s.recordContext(&frame)
 	out := append(raw, '\n')
 	if frame.Type == "user" {
 		s.settleToolResults(frame.Message.Content)

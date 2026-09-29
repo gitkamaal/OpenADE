@@ -26,6 +26,18 @@ test('the pinned Claude model catalog reaches both initial and resumed CLI turns
  expect((await request.post(`${daemon}/api/sessions/${s.id}/messages`,{data:{text:'Next Claude model turn'}})).status()).toBe(202);
  await expect.poll(()=>JSON.parse(fs.readFileSync(argsFile,'utf8')).slice(0,4)).toEqual(['--model','claude-sonnet-5','--effort','xhigh']);
 });
+test('Claude cached context usage excludes child traffic and persists in the chat indicator',async({request,page})=>{
+ const s=await create(request,'Claude context telemetry',{agent:'claude',prompt:'claude-context'});
+ await expect.poll(()=>status(request,s.id)).toBe('completed');
+ expect((await state(request,s.id)).context).toEqual({tokens:42000,window:200000});
+ await ready(page);await open(page,'Claude context telemetry');
+ const ring=page.getByRole('button',{name:'Context usage 21%'});await expect(ring).toBeVisible();await ring.click();
+ await expect(page.getByRole('dialog',{name:'Context usage details'})).toContainText('42,000 of 200,000');
+ await page.reload();await expect(page.getByRole('button',{name:'Context usage 21%'})).toBeVisible();
+ expect((await request.post(`${daemon}/api/sessions/${s.id}/messages`,{data:{text:'Follow-up without usage metadata'}})).status()).toBe(202);
+ await expect.poll(async()=>{const current=await(await request.get(`${daemon}/api/sessions/${s.id}`)).json();return current.generation===2?current.status:'previous';}).toBe('completed');
+ expect((await state(request,s.id)).context).toEqual({tokens:42000,window:200000});
+});
 test('Claude Agent/Task child output stays in its own document and SendMessage reopens it',async({request,page})=>{
  const s=await create(request,'Claude linked agent',{agent:'claude',prompt:'claude-child'});
  await expect.poll(()=>status(request,s.id)).toBe('completed');
