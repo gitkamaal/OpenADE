@@ -156,12 +156,16 @@ func (c *codexConversation) close() {
 	}
 	c.mu.Unlock()
 }
-func (m *SessionManager) providerState(id string) ProviderState {
-	state := ProviderState{Requests: []ProviderRequest{}}
+func (m *SessionManager) savedProviderContext(id string) ProviderContext {
+	var usage ProviderContext
 	var saved string
 	if m.store.db.QueryRow(`SELECT state FROM provider_context WHERE session_id=?`, id).Scan(&saved) == nil {
-		_ = json.Unmarshal([]byte(saved), &state.Context)
+		_ = json.Unmarshal([]byte(saved), &usage)
 	}
+	return usage
+}
+func (m *SessionManager) providerState(id string) ProviderState {
+	state := ProviderState{Requests: []ProviderRequest{}, Context: m.savedProviderContext(id)}
 	if c := m.codexClient(id); c != nil {
 		c.mu.Lock()
 		defer c.mu.Unlock()
@@ -291,7 +295,7 @@ func (m *SessionManager) startCodexTurn(session Session, program string) error {
 			rpc.stop()
 			return err
 		}
-		c = &codexConversation{manager: m, sessionID: session.ID, threadID: result.Thread.ID, rpc: rpc, requests: map[string]*ProviderRequest{}, subagents: newCodexSubagents(m.store, m.dataDir, session.ID, result.Thread.ID), progress: make(chan struct{})}
+		c = &codexConversation{manager: m, sessionID: session.ID, threadID: result.Thread.ID, rpc: rpc, requests: map[string]*ProviderRequest{}, subagents: newCodexSubagents(m.store, m.dataDir, session.ID, result.Thread.ID), context: m.savedProviderContext(session.ID), progress: make(chan struct{})}
 		m.providerMu.Lock()
 		m.codex[session.ID] = c
 		c.idle = time.AfterFunc(codexIdleTimeout, c.close)
@@ -912,9 +916,16 @@ func (c *codexConversation) handle(frame providerRPCFrame) {
 		if window != nil && *window == 0 {
 			window = nil
 		}
-		c.context = ProviderContext{Tokens: tokens, Window: window}
-		encoded, _ := json.Marshal(c.context)
-		_, _ = c.manager.store.db.Exec(`INSERT INTO provider_context(session_id,state) VALUES(?,?) ON CONFLICT(session_id) DO UPDATE SET state=excluded.state`, c.sessionID, string(encoded))
+		if tokens != nil {
+			c.context.Tokens = tokens
+		}
+		if window != nil {
+			c.context.Window = window
+		}
+		if tokens != nil || window != nil {
+			encoded, _ := json.Marshal(c.context)
+			_, _ = c.manager.store.db.Exec(`INSERT INTO provider_context(session_id,state) VALUES(?,?) ON CONFLICT(session_id) DO UPDATE SET state=excluded.state`, c.sessionID, string(encoded))
+		}
 	case "turn/completed":
 		if p.Turn.ID == "" || c.providerTurn == "" || p.Turn.ID != c.providerTurn {
 			return
