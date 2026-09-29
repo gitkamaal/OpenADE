@@ -61,6 +61,8 @@ test("active streamed chat remains visible when its transcript passes the scroll
   await expect(page.getByRole("button",{name:"Jump to latest"})).toBeVisible();
   await page.getByRole("button",{name:"Jump to latest"}).click();
   await expect.poll(()=>page.locator(".messages").evaluate(node=>node.scrollHeight-node.scrollTop-node.clientHeight),{timeout:3000}).toBeLessThan(80);
+  await page.locator(".messages").click({position:{x:5,y:5}});
+  await expect(page.getByRole("button",{name:"Jump to latest"})).toHaveCount(0);
   await page.getByRole("button",{name:"Collapse sidebar"}).click();
   await expect.poll(()=>page.locator(".ade").evaluate(node=>Number.parseFloat(getComputedStyle(node).gridTemplateColumns))).toBeLessThan(1);
   await expect.poll(()=>page.locator(".messages").evaluate(node=>node.scrollHeight-node.scrollTop-node.clientHeight),{timeout:3000}).toBeLessThan(80);
