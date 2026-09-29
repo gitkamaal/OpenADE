@@ -41,7 +41,11 @@ export function createTranscriptParser(initialPrompt:string,initialCreatedAt?:st
   let assistant = newAssistant(0);
   let partial = "";
   let finalMessage = "";
-  let providerMessages=new Map<string,string>();
+  let providerText="";
+  let streamedClaudeText=false;
+  let sawStreamedText=false;
+  let streamedMessageIDs=new Set<string>();
+  let completedMessageIDs=new Set<string>();
   let activityBoundaries:{at:number;ids:string[]}[]=[];
   let orderedText=true;
   const commitCurrent=()=>{
@@ -70,7 +74,7 @@ export function createTranscriptParser(initialPrompt:string,initialCreatedAt?:st
     if (event.type === "openade.fork_source") {
       commitCurrent();
       turns.push({id:`fork-${turns.length}`,role:"system",markdown:String(event.title??"Previous chat"),activities:[],generatedImages:[]});
-      assistant=newAssistant(turns.length);partial="";finalMessage="";providerMessages=new Map();activityBoundaries=[];orderedText=true;
+      assistant=newAssistant(turns.length);partial="";finalMessage="";providerText="";streamedClaudeText=false;sawStreamedText=false;streamedMessageIDs=new Set();completedMessageIDs=new Set();activityBoundaries=[];orderedText=true;
       return;
     }
 
@@ -90,7 +94,7 @@ export function createTranscriptParser(initialPrompt:string,initialCreatedAt?:st
       });
       assistant = newAssistant(turns.length);
       partial = "";
-      finalMessage = "";providerMessages=new Map();activityBoundaries=[];orderedText=true;
+      finalMessage = "";providerText="";streamedClaudeText=false;sawStreamedText=false;streamedMessageIDs=new Set();completedMessageIDs=new Set();activityBoundaries=[];orderedText=true;
       return;
     }
 
@@ -101,7 +105,7 @@ export function createTranscriptParser(initialPrompt:string,initialCreatedAt?:st
       assistant = newAssistant(turns.length);
       partial = "";
       finalMessage = "";
-      providerMessages = new Map();activityBoundaries=[];orderedText=true;
+      providerText = "";streamedClaudeText=false;sawStreamedText=false;streamedMessageIDs=new Set();completedMessageIDs=new Set();activityBoundaries=[];orderedText=true;
       return;
     }
 
@@ -110,7 +114,19 @@ export function createTranscriptParser(initialPrompt:string,initialCreatedAt?:st
     const type = String(event.type ?? "");
     if(type==="turn.completed")assistant.timestamp=parseTimestamp(event.created_at);
     if(type==="openade.turn_finished"&&assistant.timestamp===undefined)assistant.timestamp=parseTimestamp(event.created_at);
-    if(type==="openade.agent_delta"||type==="openade.agent_message"){const id=String(event.id??"message"),text=String(event.text??"");providerMessages.set(id,type==="openade.agent_delta"?(providerMessages.get(id)??"")+text:text);finalMessage=[...providerMessages.values()].filter(Boolean).join("\n\n");}
+    if(type==="openade.agent_delta"||type==="openade.agent_message"){
+      const id=String(event.id??"message"),text=String(event.text??"");
+      if(!completedMessageIDs.has(id)){
+        if(type==="openade.agent_delta"){
+          if(text){providerText+=text;streamedMessageIDs.add(id);}
+        }else{
+          if(!streamedMessageIDs.has(id))providerText+=text;
+          providerText+="\n\n";
+          completedMessageIDs.add(id);
+        }
+        if(providerText.trim())finalMessage=providerText;
+      }
+    }
 
     const item = isRecord(event.item) ? event.item : null;
     if (type === "error" || type === "turn.failed") {
@@ -184,7 +200,7 @@ export function createTranscriptParser(initialPrompt:string,initialCreatedAt?:st
 
     if (type === "stream_event" && isRecord(event.event)) {
       const delta = isRecord(event.event.delta) ? event.event.delta : null;
-      if (delta?.type === "text_delta") partial += String(delta.text ?? "");
+      if (delta?.type === "text_delta") {const text=String(delta.text??"");partial+=text;if(text){streamedClaudeText=true;sawStreamedText=true;}}
       if (delta?.type === "thinking_delta") appendThought(assistant, String(delta.thinking ?? delta.text ?? ""),false,Boolean(activityBoundaries.length&&activityBoundaries.at(-1)!.at<textBefore.length));
     }
     if (type === "assistant" && isRecord(event.message) && Array.isArray(event.message.content)) {
@@ -194,14 +210,18 @@ export function createTranscriptParser(initialPrompt:string,initialCreatedAt?:st
         .map((block) => String(block.text ?? ""))
         .join("\n")
         .trim();
-      if (text) finalMessage = text;
+      // Claude's assistant/result frames close a streamed message. Their
+      // text may be a revised snapshot; the deltas are the visible answer.
+      if(streamedClaudeText&&partial.trim())partial+="\n\n";
+      else if(text&&!sawStreamedText)partial+=`${partial.trim()?"\n\n":""}${text}`;
+      streamedClaudeText=false;
       for (const block of content) {
         if(block.type==="thinking")appendThought(assistant,String(block.thinking??""),true,Boolean(activityBoundaries.length&&activityBoundaries.at(-1)!.at<textBefore.length));
         if(block.type!=="tool_use"||block.name==="Agent"||block.name==="Task")continue;
         addActivity(assistant, "tool", toolTitle(String(block.name ?? "Use tool")));
       }
     }
-    if (type === "result" && typeof event.result === "string" && event.result.trim()) {
+    if (type === "result" && !sawStreamedText && !partial.trim() && typeof event.result === "string" && event.result.trim()) {
       finalMessage = event.result.trim();
     }
     if(assistant.activities.length>activityCount){

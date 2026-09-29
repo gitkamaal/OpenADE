@@ -52,6 +52,17 @@ test('known context capacity remains visible while token use is unavailable',asy
  await page.reload();await expect(ring).toBeVisible();
 });
 
+test('Codex snake case usage and zero-token reset keep the context meter accurate',async({request,page})=>{
+ const session=await create(request,'Snake case context',{agent:'codex',prompt:'context-snake-usage'});
+ await expect.poll(()=>status(request,session.id)).toBe('completed');await expect.poll(async()=>(await state(request,session.id)).context).toEqual({tokens:64000,window:256000});
+ await ready(page);await open(page,'Snake case context');await expect(page.getByRole('button',{name:'Context usage 25%'})).toBeVisible();
+ expect((await request.post(`${daemon}/api/sessions/${session.id}/messages`,{data:{text:'context-snake-total'}})).status()).toBe(202);
+ await expect.poll(()=>status(request,session.id)).toBe('completed');await expect.poll(async()=>(await state(request,session.id)).context).toEqual({tokens:90000,window:256000});await expect(page.getByRole('button',{name:'Context usage 35%'})).toBeVisible();
+ expect((await request.post(`${daemon}/api/sessions/${session.id}/messages`,{data:{text:'context-snake-reset'}})).status()).toBe(202);
+ await expect.poll(()=>status(request,session.id)).toBe('completed');await expect.poll(async()=>(await state(request,session.id)).context).toEqual({tokens:0,window:256000});
+ const ring=page.getByRole('button',{name:'Context usage 0%'});await expect(ring).toBeVisible();await ring.click();await expect(page.getByRole('dialog',{name:'Context usage details'})).toContainText('0 / 256,000 tokens');await page.reload();await expect(ring).toBeVisible();
+});
+
 test('delivered stream text becomes visible before the provider finishes',async({request,page})=>{
  const session=await create(request,'Live stream fidelity',{agent:'codex',prompt:'stream-visible-burst'});
  await ready(page);await open(page,'Live stream fidelity');
@@ -71,6 +82,56 @@ test('text and work keep provider event order in the chat timeline',async({reque
  await expect(parts.nth(2)).toHaveText('Second visible text.');
  await page.reload();
  await expect(parts).toHaveCount(3);
+});
+
+test('completed Codex text cannot replace streamed text around a work step',async({request,page})=>{
+ const session=await create(request,'Revised completion stream',{agent:'codex',prompt:'interleaved-revised-final'});
+ await expect.poll(()=>status(request,session.id)).toBe('completed');await ready(page);await open(page,'Revised completion stream');
+ const parts=page.locator('.chat-assistant-turn').last().locator(':scope > .markdown-body, :scope > .chat-activity-segment');
+ await expect(parts).toHaveCount(3);await expect(parts.nth(0)).toHaveText('First visible text.');await expect(parts.nth(1).locator('summary')).toHaveText('Ran 1 command');await expect(parts.nth(2)).toHaveText('Second visible text.');await expect(page.locator('.chat-assistant-turn').last()).not.toContainText('Rewritten completion payload.');
+ if(process.env.OPENADE_STREAM_CAPTURE_PATH)await page.screenshot({path:process.env.OPENADE_STREAM_CAPTURE_PATH});
+ await page.reload();await expect(parts).toHaveCount(3);
+});
+
+test('interleaved Codex message IDs retain delta arrival order',async({request,page})=>{
+ const session=await create(request,'Interleaved message IDs',{agent:'codex',prompt:'interleaved-message-ids'});
+ await expect.poll(()=>status(request,session.id)).toBe('completed');await ready(page);await open(page,'Interleaved message IDs');
+ await expect(page.locator('.chat-assistant-turn .markdown-body').last()).toHaveText('OneTwoThree');await page.reload();await expect(page.locator('.chat-assistant-turn .markdown-body').last()).toHaveText('OneTwoThree');
+});
+
+test('Claude keeps streamed text on both sides of a tool after completion frames',async({request,page})=>{
+ const session=await create(request,'Claude interleaved stream',{agent:'claude',prompt:'claude-interleaved-stream'});
+ await expect.poll(()=>status(request,session.id)).toBe('completed');await ready(page);await open(page,'Claude interleaved stream');
+ const turn=page.locator('.chat-assistant-turn').last(),parts=turn.locator(':scope > .markdown-body, :scope > .chat-activity-segment');
+ await expect(parts).toHaveCount(3);await expect(parts.nth(0)).toHaveText('Claude first visible text.');
+ await expect(parts.nth(1).locator('summary')).toContainText('Called 1 tool');await expect(parts.nth(2)).toHaveText('Claude second visible text.');
+ await expect(turn).not.toContainText('Rewritten');await page.reload();await expect(parts).toHaveCount(3);
+});
+
+test('Claude exposes each text and tool step before its turn completes',async({request,page})=>{
+ const session=await create(request,'Claude live stream order',{agent:'claude',prompt:'claude-interleaved-stream-live'});
+ const gate=path.join(tmp,'provider-home','claude-interleaved-live-'+session.id);
+ try{
+  await ready(page);await open(page,'Claude live stream order');
+  const parts=page.locator('.chat-assistant-turn').last().locator(':scope > .markdown-body, :scope > .chat-activity-segment');
+  await expect(parts).toHaveCount(1);await expect(parts.nth(0)).toHaveText('Claude first visible text.');
+  fs.writeFileSync(gate+'.tool','');await expect(parts).toHaveCount(2);await expect(parts.nth(1).locator('summary')).toHaveText('Called 1 tool');
+  fs.writeFileSync(gate+'.text','');await expect(parts).toHaveCount(3);await expect(parts.nth(2)).toHaveText('Claude second visible text.');
+  fs.writeFileSync(gate+'.done','');await expect.poll(()=>status(request,session.id)).toBe('completed');await expect(parts).toHaveCount(3);
+ }finally{for(const stage of ['tool','text','done'])fs.writeFileSync(gate+'.'+stage,'');await request.post(`${daemon}/api/sessions/${session.id}/stop`);}
+});
+
+test('streamed text and work appear in provider order before the turn completes',async({request,page})=>{
+ const session=await create(request,'Live interleaved stream',{agent:'codex',prompt:'interleaved-live'});
+ const gate=path.join(tmp,'provider-home','interleaved-live-'+session.id);
+ try{
+  await ready(page);await open(page,'Live interleaved stream');
+  const parts=page.locator('.chat-assistant-turn').last().locator(':scope > .markdown-body, :scope > .chat-activity-segment');
+  await expect(parts).toHaveCount(1);await expect(parts.nth(0)).toHaveText('First visible text.');
+  fs.writeFileSync(gate+'.tool','');await expect(parts).toHaveCount(2);await expect(parts.nth(1).locator('summary')).toHaveText('Ran 1 command');
+  fs.writeFileSync(gate+'.text','');await expect(parts).toHaveCount(3);await expect(parts.nth(2)).toHaveText('Second visible text.');
+  fs.writeFileSync(gate+'.done','');await expect.poll(()=>status(request,session.id)).toBe('completed');await expect(parts).toHaveCount(3);
+ }finally{await request.post(`${daemon}/api/sessions/${session.id}/stop`);}
 });
 
 test('thinking separated by assistant text remains in two ordered work groups',async({request,page})=>{
@@ -206,6 +267,8 @@ test('persistent stdio conversation, typed images, context and completion-before
  const upload=await request.post(`${daemon}/api/attachments?name=fixture.png`,{headers:{'Content-Type':'image/png'},data:fs.readFileSync(path.join(tmp,'../fixtures/preview-grid.png'))});expect(upload.status()).toBe(201);const image=await upload.json();
  expect((await request.post(`${daemon}/api/sessions/${s.id}/messages`,{data:{text:`Image follow-up\n\nAttached images (local files — open them to view):\n- ${image.path}`}})).status()).toBe(202);await expect.poll(()=>status(request,s.id)).toBe('completed');const methods=logs(s.id).filter(row=>row.method);expect(methods.filter(row=>row.method==='initialize')).toHaveLength(1);expect(methods.filter(row=>row.method==='thread/start')).toHaveLength(1);expect(methods.filter(row=>row.method==='turn/start')).toHaveLength(2);expect(new Set(methods.map(row=>row.pid)).size).toBe(1);expect(logs(s.id).some(row=>JSON.stringify(row.inputTypes)==='["text","localImage"]')).toBe(true);
  await ready(page);await open(page,'Persistent Codex');await expect(page.getByRole('button',{name:'Context usage 25%'})).toBeVisible();await page.getByRole('button',{name:'Context usage 25%'}).click();await expect(page.getByRole('dialog',{name:'Context usage details'})).toContainText('32,000 / 128,000 tokens');await expect(page.getByRole('dialog',{name:'Context usage details'})).toContainText('96,000 tokens remaining');expect(await page.getByRole('dialog',{name:'Context usage details'}).evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2));})).toBe(true);await page.keyboard.press('Escape');await expect(page.getByRole('dialog',{name:'Context usage details'})).toBeHidden();
+ expect((await request.post(`${daemon}/api/sessions/${s.id}/messages`,{data:{text:'context-window-only'}})).status()).toBe(202);await expect.poll(()=>status(request,s.id)).toBe('completed');await expect.poll(async()=>(await state(request,s.id)).context).toEqual({tokens:32000,window:200000});
+ const updatedRing=page.getByRole('button',{name:'Context usage 16%'});await expect(updatedRing).toBeVisible();await updatedRing.click();await expect(page.getByRole('dialog',{name:'Context usage details'})).toContainText('32,000 / 200,000 tokens');await page.reload();await expect(updatedRing).toBeVisible();
  const tail=await create(request,'Final tail',{prompt:'eof-final'});await expect.poll(()=>status(request,tail.id)).toBe('completed');expect(fs.readFileSync(path.join(tmp,'data/transcripts',tail.id+'.log'),'utf8')).toContain('Final tail survives EOF');
 });
 
@@ -412,6 +475,7 @@ test('restart invalidates unanswered questions, preserves context and quarantine
  const s=await(await send('/api/sessions','POST',{title:'Restart question',prompt:'question pending',agent:'codex',repo_root:path.join(tmp,'fixture-repo'),base_branch:'main'})).json();await expect.poll(async()=>(await(await send(`/api/sessions/${s.id}/provider-state`)).json()).requests.length).toBe(1);const q=(await(await send(`/api/sessions/${s.id}/provider-state`)).json()).requests[0];
  await stop(child,'SIGKILL');child=launch();await wait();expect((await(await send(`/api/sessions/${s.id}`)).json()).status).toBe('interrupted');const turns=(await(await send(`/api/sessions/${s.id}/turns`)).json()).turns;expect(turns[0].status).toBe('interrupted');expect((await send(`/api/sessions/${s.id}/provider-requests/${q.id}`,'POST',{generation:q.generation,answers:{approach:['Simple'],private:['x']}})).status).toBe(409);
  await send(`/api/sessions/${s.id}/messages`,'POST',{text:'regular after restart'});await expect.poll(async()=>(await(await send(`/api/sessions/${s.id}`)).json()).status).toBe('completed');expect((await(await send(`/api/sessions/${s.id}/provider-state`)).json()).context.tokens).toBe(32000);await stop(child);child=launch();await wait();expect((await(await send(`/api/sessions/${s.id}/provider-state`)).json()).context).toEqual({tokens:32000,window:128000});
+ await send(`/api/sessions/${s.id}/messages`,'POST',{text:'context-window-only'});await expect.poll(async()=>(await(await send(`/api/sessions/${s.id}`)).json()).status).toBe('completed');await expect.poll(async()=>(await(await send(`/api/sessions/${s.id}/provider-state`)).json()).context).toEqual({tokens:32000,window:200000});
  }finally{await stop(child);}
 });
 

@@ -24,7 +24,7 @@ test("custom naming settings generate a title in an isolated read-only provider 
   }).toMatchObject({ title: "Bespoke Fixture Name", status: "completed" });
   const payload = await (await request.get(`${daemon}/api/sessions`)).json();
   const named = payload.sessions.find((item: { prompt: string }) => item.prompt === prompt);
-  expect(named.branch).toMatch(/^ade\/bespoke-fixture-name-/);
+  await expect.poll(async () => (await (await request.get(`${daemon}/api/sessions/${named.id}`)).json()).branch).toMatch(/^ade\/bespoke-fixture-name-/);
   await expect(page.locator(".session-title h1")).toHaveText("Bespoke Fixture Name");
   const invocation = JSON.parse(fs.readFileSync(path.join(tmp, "provider-home/title-args.json"), "utf8"));
   expect(invocation.name).toBe("codex");

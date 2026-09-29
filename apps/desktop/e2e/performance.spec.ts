@@ -29,6 +29,28 @@ test("repeatable production-client performance with multiple projects and long i
  await context.close();
 });
 
+test("active streamed chat remains visible when its transcript passes the scrollback bound",async({page,request},testInfo)=>{
+ test.setTimeout(150000);
+ const session=await create(request,"Sliding transcript workload",{agent:"claude",prompt:"sliding-transcript"});
+ const gate=path.join(tmp,"provider-home","sliding-transcript-"+session.id);
+ try{
+  await ready(page);await open(page,"Sliding transcript workload");
+  await expect.poll(()=>fs.existsSync(gate+".ready")).toBe(true);
+  await expect(page.locator(".chat-assistant-turn").last()).toContainText("Historical answer 379");
+  await page.evaluate(()=>{const frames:number[]=[];let previous=performance.now(),running=true;const tick=(now:number)=>{if(!running)return;frames.push(now-previous);previous=now;requestAnimationFrame(tick);};requestAnimationFrame(tick);(window as typeof window&{__stopFrameProbe?:()=>number[]}).__stopFrameProbe=()=>{running=false;return frames;};});
+  fs.writeFileSync(gate+".go","");
+  await expect(page.locator(".chat-assistant-turn").last()).toContainText("Latest visible answer.");
+  await expect.poll(()=>status(request,session.id)).toBe("completed");
+  const frames=await page.evaluate(()=>(window as typeof window&{__stopFrameProbe:()=>number[]}).__stopFrameProbe());
+  const transcriptBytes=fs.statSync(path.join(tmp,"data","transcripts",session.id+".log")).size;
+  expect(transcriptBytes).toBeGreaterThan(2_000_000);
+  const report={environment:"Production Vite in Chromium; actual Go daemon and synthetic Claude, not native frame timing",historicalTurns:470,transcriptBytes,frames:frames.length,frameIntervalP50Ms:percentile(frames,.5),frameIntervalP95Ms:percentile(frames,.95),frameIntervalMaxMs:Math.max(...frames)};
+  const output=process.env.OPENADE_SCROLLBACK_PERF_OUTPUT??testInfo.outputPath("scrollback-performance.json");fs.mkdirSync(path.dirname(output),{recursive:true});fs.writeFileSync(output,JSON.stringify(report,null,2));await testInfo.attach("scrollback-performance",{path:output,contentType:"application/json"});
+  expect(await page.locator(".chat-timeline article").count()).toBeLessThanOrEqual(80);
+  await page.reload();await expect(page.locator(".chat-assistant-turn").last()).toContainText("Latest visible answer.");
+ }finally{fs.writeFileSync(gate+".go","");await request.post(`${daemon}/api/sessions/${session.id}/stop`);}
+});
+
 test("browser, terminal and panel cycles release renderer and daemon resources",async({page,request},testInfo)=>{
  test.setTimeout(120000);const baseline=Boolean(process.env.OPENADE_E2E_SOURCE);
  const session=await create(request,"Resource cycle fixture");await expect.poll(()=>status(request,session.id)).toBe("completed");

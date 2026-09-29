@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/google/uuid"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 const codexIdleTimeout = 2 * time.Minute
@@ -99,6 +101,27 @@ type ProviderContext struct {
 	Tokens *uint64 `json:"tokens"`
 	Window *uint64 `json:"window"`
 }
+type codexUsageCounts struct {
+	TotalTokens       *uint64 `json:"totalTokens"`
+	TotalTokensSnake  *uint64 `json:"total_tokens"`
+	InputTokens       *uint64 `json:"inputTokens"`
+	InputTokensSnake  *uint64 `json:"input_tokens"`
+	OutputTokens      *uint64 `json:"outputTokens"`
+	OutputTokensSnake *uint64 `json:"output_tokens"`
+}
+type codexTokenUsage struct {
+	Last                    codexUsageCounts `json:"last"`
+	ModelContextWindow      *uint64          `json:"modelContextWindow"`
+	ModelContextWindowSnake *uint64          `json:"model_context_window"`
+}
+
+func firstCodexCount(primary, fallback *uint64) *uint64 {
+	if primary != nil {
+		return primary
+	}
+	return fallback
+}
+
 type ProviderState struct {
 	Connected bool              `json:"connected"`
 	Steering  bool              `json:"steering"`
@@ -156,12 +179,16 @@ func (c *codexConversation) close() {
 	}
 	c.mu.Unlock()
 }
-func (m *SessionManager) providerState(id string) ProviderState {
-	state := ProviderState{Requests: []ProviderRequest{}}
+func (m *SessionManager) savedProviderContext(id string) ProviderContext {
+	var usage ProviderContext
 	var saved string
 	if m.store.db.QueryRow(`SELECT state FROM provider_context WHERE session_id=?`, id).Scan(&saved) == nil {
-		_ = json.Unmarshal([]byte(saved), &state.Context)
+		_ = json.Unmarshal([]byte(saved), &usage)
 	}
+	return usage
+}
+func (m *SessionManager) providerState(id string) ProviderState {
+	state := ProviderState{Requests: []ProviderRequest{}, Context: m.savedProviderContext(id)}
 	if c := m.codexClient(id); c != nil {
 		c.mu.Lock()
 		defer c.mu.Unlock()
@@ -291,7 +318,7 @@ func (m *SessionManager) startCodexTurn(session Session, program string) error {
 			rpc.stop()
 			return err
 		}
-		c = &codexConversation{manager: m, sessionID: session.ID, threadID: result.Thread.ID, rpc: rpc, requests: map[string]*ProviderRequest{}, subagents: newCodexSubagents(m.store, m.dataDir, session.ID, result.Thread.ID), progress: make(chan struct{})}
+		c = &codexConversation{manager: m, sessionID: session.ID, threadID: result.Thread.ID, rpc: rpc, requests: map[string]*ProviderRequest{}, subagents: newCodexSubagents(m.store, m.dataDir, session.ID, result.Thread.ID), context: m.savedProviderContext(session.ID), progress: make(chan struct{})}
 		m.providerMu.Lock()
 		m.codex[session.ID] = c
 		c.idle = time.AfterFunc(codexIdleTimeout, c.close)
@@ -619,10 +646,8 @@ func (c *codexConversation) handle(frame providerRPCFrame) {
 			SavedPathSnake                                          string                        `json:"saved_path"`
 			Failure                                                 json.RawMessage               `json:"failure"`
 		} `json:"item"`
-		TokenUsage struct {
-			Last               struct{ TotalTokens, InputTokens, OutputTokens *uint64 }
-			ModelContextWindow *uint64
-		} `json:"tokenUsage"`
+		TokenUsage                            *codexTokenUsage   `json:"tokenUsage"`
+		TokenUsageSnake                       *codexTokenUsage   `json:"token_usage"`
 		Questions                             []ProviderQuestion `json:"questions"`
 		Command, Reason, GrantRoot, Cwd, Kind string
 		NetworkApprovalContext                json.RawMessage   `json:"networkApprovalContext"`
@@ -900,21 +925,39 @@ func (c *codexConversation) handle(frame providerRPCFrame) {
 			c.emit(map[string]any{"type": "openade.tool", "id": p.Item.ID, "title": subagentControlTitle(p.Item.Tool), "detail": p.Item.Status})
 		}
 	case "thread/tokenUsage/updated":
-		tokens := p.TokenUsage.Last.TotalTokens
-		if tokens == nil && p.TokenUsage.Last.InputTokens != nil {
-			n := *p.TokenUsage.Last.InputTokens
-			if p.TokenUsage.Last.OutputTokens != nil {
-				n += *p.TokenUsage.Last.OutputTokens
+		usage := p.TokenUsage
+		if usage == nil {
+			usage = p.TokenUsageSnake
+		}
+		if usage == nil {
+			break
+		}
+		tokens := firstCodexCount(usage.Last.TotalTokens, usage.Last.TotalTokensSnake)
+		if input := firstCodexCount(usage.Last.InputTokens, usage.Last.InputTokensSnake); tokens == nil && input != nil {
+			n := *input
+			if output := firstCodexCount(usage.Last.OutputTokens, usage.Last.OutputTokensSnake); output != nil {
+				if *output > math.MaxUint64-n {
+					n = math.MaxUint64
+				} else {
+					n += *output
+				}
 			}
 			tokens = &n
 		}
-		window := p.TokenUsage.ModelContextWindow
+		window := firstCodexCount(usage.ModelContextWindow, usage.ModelContextWindowSnake)
 		if window != nil && *window == 0 {
 			window = nil
 		}
-		c.context = ProviderContext{Tokens: tokens, Window: window}
-		encoded, _ := json.Marshal(c.context)
-		_, _ = c.manager.store.db.Exec(`INSERT INTO provider_context(session_id,state) VALUES(?,?) ON CONFLICT(session_id) DO UPDATE SET state=excluded.state`, c.sessionID, string(encoded))
+		if tokens != nil {
+			c.context.Tokens = tokens
+		}
+		if window != nil {
+			c.context.Window = window
+		}
+		if tokens != nil || window != nil {
+			encoded, _ := json.Marshal(c.context)
+			_, _ = c.manager.store.db.Exec(`INSERT INTO provider_context(session_id,state) VALUES(?,?) ON CONFLICT(session_id) DO UPDATE SET state=excluded.state`, c.sessionID, string(encoded))
+		}
 	case "turn/completed":
 		if p.Turn.ID == "" || c.providerTurn == "" || p.Turn.ID != c.providerTurn {
 			return
