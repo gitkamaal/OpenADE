@@ -247,7 +247,7 @@ func (s *codexSubagents) record(doc *subagentDoc, frame providerRPCFrame) {
 		if doc.Status != "running" {
 			return
 		}
-		s.write(doc, map[string]any{"type": "stream_event", "event": map[string]any{"delta": map[string]string{"type": "thinking_delta"}}})
+		s.write(doc, map[string]any{"type": "stream_event", "event": map[string]any{"delta": map[string]string{"type": "thinking_delta", "thinking": clipSubagentText(p.Delta, 64*1024)}}})
 	case "item/started", "item/completed":
 		item := p.Item
 		if (item.Type == "userMessage" || item.Type == "user_message") && frame.Method == "item/completed" {

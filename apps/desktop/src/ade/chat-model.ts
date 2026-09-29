@@ -138,9 +138,6 @@ export function createTranscriptParser(initialPrompt:string,initialCreatedAt?:st
       const id=String(event.id??""),name=String(event.name??"Generated image"),mime=String(event.mime??""),size=Number(event.size??0);
       if(/^[0-9a-f]{64}$/.test(id)&&mime==="image/png"&&name.length<=256&&Number.isFinite(size)&&size>0&&size<=24*1024*1024&&!assistant.generatedImages.some(image=>image.id===id))assistant.generatedImages.push({id,name,mime,size});
     }
-    if (type === "thread.started" || type === "turn.started") {
-      addActivity(assistant, "thinking", "Thinking");
-    }
     if (type === "item.started" && item?.type === "command_execution") {
       addActivity(assistant, "command", commandTitle(String(item.command ?? "Run command")));
     }
@@ -160,7 +157,7 @@ export function createTranscriptParser(initialPrompt:string,initialCreatedAt?:st
     if (type === "stream_event" && isRecord(event.event)) {
       const delta = isRecord(event.event.delta) ? event.event.delta : null;
       if (delta?.type === "text_delta") partial += String(delta.text ?? "");
-      if (delta?.type === "thinking_delta") addActivity(assistant, "thinking", "Thinking");
+      if (delta?.type === "thinking_delta") appendThought(assistant, String(delta.thinking ?? delta.text ?? ""));
     }
     if (type === "assistant" && isRecord(event.message) && Array.isArray(event.message.content)) {
       const content = event.message.content.filter(isRecord);
@@ -170,8 +167,9 @@ export function createTranscriptParser(initialPrompt:string,initialCreatedAt?:st
         .join("\n")
         .trim();
       if (text) finalMessage = text;
-      for (const block of content.filter((entry) => entry.type === "tool_use")) {
-		if(block.name==="Agent"||block.name==="Task")continue;
+      for (const block of content) {
+        if(block.type==="thinking")appendThought(assistant,String(block.thinking??""),true);
+        if(block.type!=="tool_use"||block.name==="Agent"||block.name==="Task")continue;
         addActivity(assistant, "tool", toolTitle(String(block.name ?? "Use tool")));
       }
     }
@@ -240,6 +238,17 @@ function addActivity(
   const previous = turn.activities.at(-1);
   if (previous?.kind === kind && previous.title === title && previous.detail === detail) return;
   turn.activities.push({ id: `${turn.id}-activity-${turn.activities.length}`, kind, title, detail });
+}
+
+function appendThought(turn:ChatTurn,text:string,complete=false){
+  const bounded=text.slice(0,64*1024),previous=turn.activities.at(-1);
+  if(!bounded.trim())return;
+  if(previous?.kind==="thinking"){
+    if(complete){if(!previous.detail||bounded.startsWith(previous.detail))previous.detail=bounded||previous.detail;else if(bounded!==previous.detail)addActivity(turn,"thinking","Thought process",bounded);}
+    else if(bounded)previous.detail=((previous.detail??"")+bounded).slice(0,64*1024);
+    return;
+  }
+  addActivity(turn,"thinking","Thought process",bounded||undefined);
 }
 
 function completeActivity(

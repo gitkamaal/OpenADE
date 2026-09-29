@@ -934,6 +934,32 @@ img.provider-claude{filter:brightness(0) saturate(100%) invert(58%) sepia(44%) s
 .session-context>span{display:flex;align-items:center;gap:5px;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .session-context svg{width:12px;height:12px;flex-shrink:0}
 .session-context .runtime-chip{margin-left:auto;flex:0 1 auto;font-size:10px;overflow:hidden;text-overflow:ellipsis}
+.session-context .context-usage-anchor{margin-left:auto;flex:none}
+.session-status-announcement{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+/* Zeron transcript work tree: a quiet 26px disclosure above 32px linked steps. */
+.ade .activity-group>summary{height:26px;min-height:26px;box-sizing:border-box;padding:0 4px 0 0;gap:6px;font-size:12px}
+.ade .activity-group>summary .activity-caret{width:14px;height:14px;margin-left:5px;transform:rotate(-90deg);transition:transform 140ms ease-out}
+.ade .activity-group[open]>summary .activity-caret{transform:rotate(0)}
+.ade .activity-list{margin:0;padding:4px 0 0;border:0;display:flex;flex-direction:column;gap:0}
+.ade .activity-row{grid-template-columns:48px minmax(0,1fr);gap:8px;align-items:start;min-height:32px}
+.ade .activity-icon{position:relative;width:48px;height:32px;color:var(--muted);display:block}
+.ade .activity-icon::before{content:"";position:absolute;left:12px;top:0;bottom:0;width:1px;background:var(--line)}
+.ade .activity-row:last-child .activity-icon::before{bottom:16px}
+.ade .activity-icon::after{content:"";position:absolute;left:12px;top:10px;width:16px;height:7px;border-left:1px solid var(--line);border-bottom:1px solid var(--line);border-bottom-left-radius:6px}
+.ade .activity-icon svg{position:absolute;left:32px;top:8px;width:16px;height:16px}
+.ade .activity-row>strong,.ade .activity-detail>button{min-height:32px;display:flex;align-items:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;line-height:18px;font-weight:400;color:var(--muted)}
+.ade .activity-detail{min-width:0}
+.ade .activity-detail>button{width:100%;gap:8px;border:0;background:transparent;padding:0;text-align:left;cursor:pointer}
+.ade .activity-detail>button:hover{color:var(--text)}
+.ade .activity-detail>button:focus-visible{outline:2px solid var(--text);outline-offset:2px}
+.ade .activity-detail>button svg{width:12px;height:12px;flex:none;opacity:0;transform:rotate(-90deg)}
+.ade .activity-detail>button:hover svg,.ade .activity-detail>button:focus-visible svg,.ade .activity-detail>button[aria-expanded=true] svg{opacity:1}
+.ade .activity-detail>button[aria-expanded=true] svg{transform:rotate(0)}
+.ade .activity-detail>pre{max-height:260px;margin:0 0 8px;padding:0 12px 4px 0;border:0;border-radius:0;background:transparent;color:var(--muted);font:12px/1.5 var(--code-font);white-space:pre-wrap;overflow-wrap:anywhere;overflow:auto}
+@media(prefers-reduced-motion:no-preference){.ade .activity-group.streaming>summary>span{background:linear-gradient(105deg,var(--muted) 30%,var(--text) 50%,var(--muted) 70%);background-size:200% 100%;background-clip:text;-webkit-background-clip:text;color:transparent;animation:activity-shimmer 1.7s linear infinite}.ade .activity-group.streaming .activity-row{animation:activity-row-enter 140ms ease-out both}}
+@keyframes activity-shimmer{to{background-position:-200% 0}}
+@keyframes activity-row-enter{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:translateY(0)}}
+@media(prefers-reduced-motion:reduce){.ade .activity-group>summary .activity-caret{transition:none}}
 .ade .chat-user-turn{max-width:80%;margin:0 0 22px;align-self:flex-end;width:fit-content}
 .ade .chat-user-turn>div{max-width:100%;width:100%;box-sizing:border-box;padding:10px 16px;font-size:calc(14px * var(--interface-scale));line-height:calc(22px * var(--interface-scale));border:0;background:color-mix(in srgb,var(--text) 8%,transparent)}
 .ade.theme-light .chat-user-turn>div{background:color-mix(in srgb,var(--text) 4%,transparent)}

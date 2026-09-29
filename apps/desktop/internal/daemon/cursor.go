@@ -306,7 +306,7 @@ func (c *cursorConversation) handle(frame cursorFrame) {
 			}
 		}
 	case "thinking":
-		_ = c.emit(map[string]any{"type": "stream_event", "event": map[string]any{"delta": map[string]string{"type": "thinking_delta"}}})
+		_ = c.emit(map[string]any{"type": "stream_event", "event": map[string]any{"delta": map[string]string{"type": "thinking_delta", "thinking": frame.Text}}})
 	case "tool":
 		if frame.ID == "" || len(frame.ID) > 512 {
 			return

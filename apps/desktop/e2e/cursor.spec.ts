@@ -47,7 +47,7 @@ test("Cursor SDK driver discovers models, resumes turns and changes model throug
   await page.getByRole("button",{name:"Start session"}).click();
   await expect(page.getByText("Cursor SDK fixture: Cursor UI turn")).toBeVisible();
   await expect(page.getByLabel("Session message")).toBeVisible();
-  await expect(page.locator(".activity-group summary").first()).toContainText("1 tool");
+  await expect(page.locator(".activity-group summary").first()).toContainText("Thought process · read 1 file");
   await expect(page.locator(".activity-group summary").first()).not.toContainText("openade.usage");
   const created=((await(await request.get(`${daemon}/api/sessions`)).json()).sessions as {id:string;agent:string}[]).find(item=>item.agent==="cursor"&&!before.has(item.id));
   expect(created).toBeTruthy();

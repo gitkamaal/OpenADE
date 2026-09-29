@@ -511,7 +511,7 @@ func (c *acpConversation) handle(frame providerRPCFrame) {
 			_ = c.emit(map[string]any{"type": "openade.agent_delta", "id": c.live.turnID, "text": body.Content.Text})
 		}
 	case "agent_thought_chunk":
-		_ = c.emit(map[string]any{"type": "stream_event", "event": map[string]any{"delta": map[string]string{"type": "thinking_delta"}}})
+		_ = c.emit(map[string]any{"type": "stream_event", "event": map[string]any{"delta": map[string]string{"type": "thinking_delta", "thinking": body.Content.Text}}})
 	case "tool_call", "tool_call_update":
 		if body.Kind == "tool_call_update" && body.ToolID == "" {
 			return

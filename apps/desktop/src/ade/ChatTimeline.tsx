@@ -116,7 +116,7 @@ const AssistantTurn=memo(function AssistantTurn({
       {questions.map(question=><div className="transcript-question" role="note" aria-label={`Question: ${question.title}`} key={question.id}><span className="transcript-question-icon"><ChatCircleDots/></span><strong>Question</strong><span>{question.status==="pending"?"Awaiting your answer…":question.title}</span></div>)}
       {subagents.map(activity=><SubagentCard key={activity.id} activity={activity} summary={activity.docId?subagentSummaries[activity.docId]:undefined} onOpen={onOpenSubagent}/>)}
       {grouped.length > 0 && <ActivityGroup activities={grouped} streaming={streaming} expanded={activityExpanded} />}
-      {visibleMarkdown ? <MarkdownMessage session={session}>{visibleMarkdown}</MarkdownMessage> : streaming ? (
+      {visibleMarkdown ? <MarkdownMessage session={session}>{visibleMarkdown}</MarkdownMessage> : streaming&&grouped.length===0 ? (
         <div className="native-thinking"><SpinnerGap className="spin" /> Working through the task…</div>
       ) : null}
       {generatedImages.length>0&&<section className="generated-images" aria-label="Generated images">{generatedImages.map(image=><AttachmentImage key={image.id} image={{...image,path:""}} sourceURL={generatedImageMediaURL(session.id,image.id)} className="generated-image"/>)}</section>}
@@ -143,29 +143,53 @@ function TurnMetadata({timestamp,text,side}:{timestamp?:number;text:string;side:
 }
 
 function ActivityGroup({ activities, streaming, expanded }: { activities: ChatActivity[]; streaming: boolean; expanded: boolean }) {
-  const [open, setOpen] = useState(expanded && !streaming);
-  useEffect(() => setOpen(streaming ? false : expanded), [expanded, streaming]);
-  const toolCount = activities.filter(activity => activity.kind === "command" || activity.kind === "tool").length;
-  const thought = activities.some(activity => activity.kind === "thinking");
-  const summary = toolCount ? `${toolCount} tool${toolCount===1?"":"s"}${thought?" · Thought":""}` : thought ? "Thought" : "Activity";
+  const [open, setOpen] = useState(expanded);
+  useEffect(() => setOpen(expanded), [expanded]);
+  const summary=workSummary(activities);
   const notice = activities.filter(activity => activity.kind === "notice").at(-1);
   return (
-    <details className="activity-group" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+    <details className={`activity-group ${streaming?"streaming":""}`} open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
       <summary>
-        {streaming ? <SpinnerGap className="spin" /> : <Check />}
-        <span>{streaming ? activities.at(-1)?.title ?? "Working" : notice?.title ?? summary}</span>
         <CaretDown className="activity-caret" />
+        <span>{notice?.title ?? summary}</span>
       </summary>
       <div className="activity-list">
-        {activities.map((activity) => (
-          <div className="activity-row" key={activity.id}>
-            <span className={`activity-icon ${activity.kind}`}>{activityIcon(activity)}</span>
-            {activity.detail ? <details className="activity-detail"><summary>{activity.title}</summary><pre>{activity.detail}</pre></details> : <strong>{activity.title}</strong>}
-          </div>
-        ))}
+        {activities.map(activity=><ActivityRow key={activity.id} activity={activity} streaming={streaming} expanded={expanded}/>)}
       </div>
     </details>
   );
+}
+
+function workSummary(activities:ChatActivity[]):string{
+ const thoughts=activities.filter(activity=>activity.kind==="thinking").length;
+ const commands=activities.filter(activity=>activity.kind==="command").length;
+ const counts={edited:0,read:0,searched:0,fetched:0,todos:0,other:0};
+ for(const activity of activities.filter(item=>item.kind==="tool")){
+  const title=activity.title.toLowerCase();
+  if(/^(edit|write|apply patch|changed files)/.test(title))counts.edited++;
+  else if(/^(read|open file)/.test(title))counts.read++;
+  else if(/^(search|grep|glob|web search)/.test(title))counts.searched++;
+  else if(/^(web fetch|fetch)/.test(title))counts.fetched++;
+  else if(/^(todo|update plan)/.test(title))counts.todos++;
+  else counts.other++;
+ }
+ const plural=(count:number,single:string,many:string)=>`${count} ${count===1?single:many}`;
+ const parts:string[]=[];
+ if(thoughts)parts.push(thoughts===1?"Thought process":`Thought ${thoughts} times`);
+ if(commands)parts.push(`Ran ${plural(commands,"command","commands")}`);
+ if(counts.edited)parts.push(`edited ${plural(counts.edited,"file","files")}`);
+ if(counts.read)parts.push(`read ${plural(counts.read,"file","files")}`);
+ if(counts.searched)parts.push(`searched ${plural(counts.searched,"time","times")}`);
+ if(counts.fetched)parts.push(`fetched ${plural(counts.fetched,"page","pages")}`);
+ if(counts.todos)parts.push("updated todos");
+ if(counts.other)parts.push(`called ${plural(counts.other,"tool","tools")}`);
+ return parts.join(" · ").replace(/^./,letter=>letter.toUpperCase())||"Activity";
+}
+
+function ActivityRow({activity,streaming,expanded}:{activity:ChatActivity;streaming:boolean;expanded:boolean}){
+ const [manual,setManual]=useState<boolean|null>(null);
+ const detailOpen=manual??(activity.kind==="thinking"&&streaming&&expanded);
+ return <div className="activity-row"><span className={`activity-icon ${activity.kind}`}>{activityIcon(activity)}</span>{activity.detail?<div className="activity-detail"><button type="button" aria-expanded={detailOpen} onClick={()=>setManual(!detailOpen)}>{activity.title}<CaretDown/></button>{detailOpen&&<pre>{activity.detail}</pre>}</div>:<strong>{activity.title}</strong>}</div>;
 }
 
 function useProgressiveMarkdown(markdown: string, streaming: boolean): string {
@@ -195,6 +219,7 @@ function useProgressiveMarkdown(markdown: string, streaming: boolean): string {
 }
 
 function activityIcon(activity: ChatActivity) {
+  if (activity.kind === "thinking") return <ChatCircleDots />;
   if (activity.kind === "command") return <TerminalWindow />;
   if (activity.kind === "tool") return <Wrench />;
   return <Lightning />;

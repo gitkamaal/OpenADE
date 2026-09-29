@@ -806,7 +806,7 @@ func (c *codexConversation) handle(frame providerRPCFrame) {
 	case "item/agentMessage/delta":
 		c.emit(map[string]any{"type": "openade.agent_delta", "id": p.ItemID, "text": p.Delta})
 	case "item/reasoning/textDelta", "item/reasoning/summaryTextDelta":
-		c.emit(map[string]any{"type": "stream_event", "event": map[string]any{"delta": map[string]string{"type": "thinking_delta"}}})
+		c.emit(map[string]any{"type": "stream_event", "event": map[string]any{"delta": map[string]string{"type": "thinking_delta", "thinking": p.Delta}}})
 	case "item/started", "item/completed":
 		if c.subagents != nil && c.subagents.parentItem(frame, c.live.generation, c.emit) {
 			return

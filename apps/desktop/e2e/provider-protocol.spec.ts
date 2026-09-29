@@ -38,6 +38,16 @@ test('Claude cached context usage excludes child traffic and persists in the cha
  await expect.poll(async()=>{const current=await(await request.get(`${daemon}/api/sessions/${s.id}`)).json();return current.generation===2?current.status:'previous';}).toBe('completed');
  expect((await state(request,s.id)).context).toEqual({tokens:42000,window:200000});
 });
+
+test('Codex app-server reasoning text reaches the native work accordion',async({request,page})=>{
+ const session=await create(request,'reasoning-content',{agent:'codex'});
+ await expect.poll(()=>status(request,session.id)).toBe('completed');
+ await ready(page);await open(page,'reasoning-content');
+ const group=page.locator('.activity-group').last();await expect(group.locator('summary')).toHaveText('Thought process');
+ await group.locator('summary').click();await group.getByRole('button',{name:'Thought process'}).click();
+ await expect(group).toContainText('First, inspect the files.');
+});
+
 test('Claude stdio questions use the custom multi-page wizard and return answers to the same run',async({request,page})=>{
  const s=await create(request,'Claude stdio question',{agent:'claude',prompt:'claude-question'});
  await expect.poll(async()=>(await state(request,s.id)).requests.length).toBe(1);
@@ -356,7 +366,7 @@ test('atomic queue edit/steer claims send the winning text; early mismatched sta
 
 test('question and context surfaces follow Frosted/Opaque materials without fading text',async({request,page})=>{
  const s=await create(request,'Question materials',{prompt:'question materials'});try{await ready(page);await open(page,'Question materials');await expect(page.getByRole('dialog',{name:'Your input is needed'})).toBeVisible();await page.getByLabel('Open settings').click();await page.getByRole('tab',{name:'Appearance',exact:true}).click();await choose(page,'Glass','frosted');await page.getByRole('button',{name:'Back',exact:true}).click();const form=page.getByRole('dialog',{name:'Your input is needed'});await expect(form).toHaveCSS('opacity','1');expect(await form.evaluate(el=>getComputedStyle(el,'::before').backdropFilter)).toBe('blur(16px)');expect(await form.evaluate(el=>{const canvas=document.createElement('canvas');canvas.width=canvas.height=1;const ctx=canvas.getContext('2d')!;ctx.fillStyle=getComputedStyle(el,'::before').backgroundColor;ctx.fillRect(0,0,1,1);return ctx.getImageData(0,0,1,1).data[3];})).toBeLessThan(255);
- await page.getByLabel('Open settings').click();await page.getByRole('tab',{name:'Appearance',exact:true}).click();await choose(page,'Glass','opaque');await page.getByRole('button',{name:'Back',exact:true}).click();await expect(form).toHaveCSS('opacity','1');expect(await form.evaluate(el=>{const canvas=document.createElement('canvas');canvas.width=canvas.height=1;const ctx=canvas.getContext('2d')!;ctx.fillStyle=getComputedStyle(el,'::before').backgroundColor;ctx.fillRect(0,0,1,1);return ctx.getImageData(0,0,1,1).data[3];})).toBe(255);await page.getByRole('button',{name:'Context usage —'}).click();await expect(page.getByRole('dialog',{name:'Context usage details'})).toBeVisible();await page.keyboard.press('Escape');await expect(page.getByRole('dialog',{name:'Context usage details'})).toBeHidden();}finally{await request.post(`${daemon}/api/sessions/${s.id}/stop`);}
+ await page.getByLabel('Open settings').click();await page.getByRole('tab',{name:'Appearance',exact:true}).click();await choose(page,'Glass','opaque');await page.getByRole('button',{name:'Back',exact:true}).click();await expect(form).toHaveCSS('opacity','1');expect(await form.evaluate(el=>{const canvas=document.createElement('canvas');canvas.width=canvas.height=1;const ctx=canvas.getContext('2d')!;ctx.fillStyle=getComputedStyle(el,'::before').backgroundColor;ctx.fillRect(0,0,1,1);return ctx.getImageData(0,0,1,1).data[3];})).toBe(255);await expect(page.getByRole('button',{name:'Context usage —'})).toHaveCount(0);}finally{await request.post(`${daemon}/api/sessions/${s.id}/stop`);}
 });
 
 

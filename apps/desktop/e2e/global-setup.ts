@@ -107,6 +107,21 @@ if structured:
   for i in range(260):
    emit({'type':'item.completed','item':{'type':'agent_message','text':'Historical response '+str(i)+' '+('detail '*400)}})
    emit({'type':'openade.user_message','text':'Historical question '+str(i)})
+ if 'thinking-step-parity' in prompt:
+  if name=='claude':
+   emit({'type':'assistant','message':{'content':[{'type':'thinking','thinking':'Plan the first step.'},{'type':'tool_use','name':'Read','id':'read-one','input':{'file_path':'README.md'}},{'type':'thinking','thinking':'Check the result.'},{'type':'text','text':'The work is complete.'}]}})
+   emit({'type':'result','result':'The work is complete.'})
+  else:
+   emit({'type':'stream_event','event':{'delta':{'type':'thinking_delta','thinking':'Plan the '}}})
+   emit({'type':'stream_event','event':{'delta':{'type':'thinking_delta','thinking':'first step.'}}})
+   emit({'type':'item.started','item':{'type':'command_execution','command':'git status'}})
+   emit({'type':'item.completed','item':{'type':'command_execution','command':'git status','aggregated_output':'clean'}})
+   emit({'type':'stream_event','event':{'delta':{'type':'thinking_delta','thinking':'Check the result.'}}})
+   emit({'type':'item.started','item':{'type':'command_execution','command':'pwd'}})
+   emit({'type':'item.completed','item':{'type':'command_execution','command':'pwd','aggregated_output':'/fixture'}})
+   emit({'type':'item.completed','item':{'type':'agent_message','text':'The work is complete.'}})
+   emit({'type':'turn.completed'})
+  sys.exit(0)
  if name=='claude':
   for text in ['Native ','chat ','streams ','correctly.']:
    emit({'type':'stream_event','event':{'delta':{'type':'text_delta','text':text}}});time.sleep(.04)

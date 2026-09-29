@@ -30,6 +30,10 @@ def work(turn,prompt):
  if 'flood' in prompt:
   for _ in range(40):notify('item/agentMessage/delta',{'threadId':thread,'turnId':turn,'delta':'x'*300000})
   return
+ if 'reasoning-content' in prompt:
+  notify('item/reasoning/summaryTextDelta',{'threadId':thread,'turnId':turn,'itemId':'reasoning-one','delta':'First, inspect the files.'})
+  complete(turn,'Reasoning reached the native transcript.')
+  return
  if 'huge-nonimage' in prompt:
   notify('item/completed',{'threadId':thread,'turnId':turn,'item':{'id':'huge-tool','type':'mcpToolCall','result':'UNRETAINED_NONIMAGE_SENTINEL'*400000}})
   return
