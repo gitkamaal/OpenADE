@@ -246,4 +246,7 @@ test('native titlebar drag targets keep the traffic-light lane and sidebar toggl
  await page.keyboard.press('Control+b');
  await expect(page.locator('.ade')).toHaveClass(/sidebar-collapsed/);
  await expect(composer).toBeFocused();
+ await page.getByLabel('Toggle right sidebar').click();
+ await page.getByLabel('Close right sidebar').click();
+ await expect(composer).toBeFocused();
 });
