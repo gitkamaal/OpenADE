@@ -41,7 +41,9 @@ export function createTranscriptParser(initialPrompt:string,initialCreatedAt?:st
   let assistant = newAssistant(0);
   let partial = "";
   let finalMessage = "";
-  let providerMessages=new Map<string,string>();
+  let providerText="";
+  let streamedMessageIDs=new Set<string>();
+  let completedMessageIDs=new Set<string>();
   let activityBoundaries:{at:number;ids:string[]}[]=[];
   let orderedText=true;
   const commitCurrent=()=>{
@@ -70,7 +72,7 @@ export function createTranscriptParser(initialPrompt:string,initialCreatedAt?:st
     if (event.type === "openade.fork_source") {
       commitCurrent();
       turns.push({id:`fork-${turns.length}`,role:"system",markdown:String(event.title??"Previous chat"),activities:[],generatedImages:[]});
-      assistant=newAssistant(turns.length);partial="";finalMessage="";providerMessages=new Map();activityBoundaries=[];orderedText=true;
+      assistant=newAssistant(turns.length);partial="";finalMessage="";providerText="";streamedMessageIDs=new Set();completedMessageIDs=new Set();activityBoundaries=[];orderedText=true;
       return;
     }
 
@@ -90,7 +92,7 @@ export function createTranscriptParser(initialPrompt:string,initialCreatedAt?:st
       });
       assistant = newAssistant(turns.length);
       partial = "";
-      finalMessage = "";providerMessages=new Map();activityBoundaries=[];orderedText=true;
+      finalMessage = "";providerText="";streamedMessageIDs=new Set();completedMessageIDs=new Set();activityBoundaries=[];orderedText=true;
       return;
     }
 
@@ -101,7 +103,7 @@ export function createTranscriptParser(initialPrompt:string,initialCreatedAt?:st
       assistant = newAssistant(turns.length);
       partial = "";
       finalMessage = "";
-      providerMessages = new Map();activityBoundaries=[];orderedText=true;
+      providerText = "";streamedMessageIDs=new Set();completedMessageIDs=new Set();activityBoundaries=[];orderedText=true;
       return;
     }
 
@@ -110,7 +112,19 @@ export function createTranscriptParser(initialPrompt:string,initialCreatedAt?:st
     const type = String(event.type ?? "");
     if(type==="turn.completed")assistant.timestamp=parseTimestamp(event.created_at);
     if(type==="openade.turn_finished"&&assistant.timestamp===undefined)assistant.timestamp=parseTimestamp(event.created_at);
-    if(type==="openade.agent_delta"||type==="openade.agent_message"){const id=String(event.id??"message"),text=String(event.text??"");providerMessages.set(id,type==="openade.agent_delta"?(providerMessages.get(id)??"")+text:text);finalMessage=[...providerMessages.values()].filter(Boolean).join("\n\n");}
+    if(type==="openade.agent_delta"||type==="openade.agent_message"){
+      const id=String(event.id??"message"),text=String(event.text??"");
+      if(!completedMessageIDs.has(id)){
+        if(type==="openade.agent_delta"){
+          if(text){providerText+=text;streamedMessageIDs.add(id);}
+        }else{
+          if(!streamedMessageIDs.has(id))providerText+=text;
+          providerText+="\n\n";
+          completedMessageIDs.add(id);
+        }
+        if(providerText.trim())finalMessage=providerText;
+      }
+    }
 
     const item = isRecord(event.item) ? event.item : null;
     if (type === "error" || type === "turn.failed") {

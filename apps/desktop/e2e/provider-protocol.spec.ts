@@ -84,6 +84,21 @@ test('text and work keep provider event order in the chat timeline',async({reque
  await expect(parts).toHaveCount(3);
 });
 
+test('completed Codex text cannot replace streamed text around a work step',async({request,page})=>{
+ const session=await create(request,'Revised completion stream',{agent:'codex',prompt:'interleaved-revised-final'});
+ await expect.poll(()=>status(request,session.id)).toBe('completed');await ready(page);await open(page,'Revised completion stream');
+ const parts=page.locator('.chat-assistant-turn').last().locator(':scope > .markdown-body, :scope > .chat-activity-segment');
+ await expect(parts).toHaveCount(3);await expect(parts.nth(0)).toHaveText('First visible text.');await expect(parts.nth(1).locator('summary')).toHaveText('Ran 1 command');await expect(parts.nth(2)).toHaveText('Second visible text.');await expect(page.locator('.chat-assistant-turn').last()).not.toContainText('Rewritten completion payload.');
+ if(process.env.OPENADE_STREAM_CAPTURE_PATH)await page.screenshot({path:process.env.OPENADE_STREAM_CAPTURE_PATH});
+ await page.reload();await expect(parts).toHaveCount(3);
+});
+
+test('interleaved Codex message IDs retain delta arrival order',async({request,page})=>{
+ const session=await create(request,'Interleaved message IDs',{agent:'codex',prompt:'interleaved-message-ids'});
+ await expect.poll(()=>status(request,session.id)).toBe('completed');await ready(page);await open(page,'Interleaved message IDs');
+ await expect(page.locator('.chat-assistant-turn .markdown-body').last()).toHaveText('OneTwoThree');await page.reload();await expect(page.locator('.chat-assistant-turn .markdown-body').last()).toHaveText('OneTwoThree');
+});
+
 test('streamed text and work appear in provider order before the turn completes',async({request,page})=>{
  const session=await create(request,'Live interleaved stream',{agent:'codex',prompt:'interleaved-live'});
  const gate=path.join(tmp,'provider-home','interleaved-live-'+session.id);

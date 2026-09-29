@@ -74,6 +74,23 @@ def work(turn,prompt):
   notify('item/completed',{'threadId':thread,'turnId':turn,'item':{'id':'message','type':'agentMessage','text':'First visible text. Second visible text.'}})
   notify('turn/completed',{'threadId':thread,'turn':{'id':turn,'status':'completed'}})
   return
+ if 'interleaved-revised-final' in prompt:
+  state[turn]['active']=False
+  notify('item/agentMessage/delta',{'threadId':thread,'turnId':turn,'itemId':'message','delta':'First visible text. '})
+  notify('item/started',{'threadId':thread,'turnId':turn,'item':{'id':'inspect','type':'commandExecution','command':'printf inspected'}})
+  notify('item/completed',{'threadId':thread,'turnId':turn,'item':{'id':'inspect','type':'commandExecution','command':'printf inspected','aggregatedOutput':'inspected'}})
+  notify('item/agentMessage/delta',{'threadId':thread,'turnId':turn,'itemId':'message','delta':'Second visible text.'})
+  notify('item/completed',{'threadId':thread,'turnId':turn,'item':{'id':'message','type':'agentMessage','text':'Rewritten completion payload.'}})
+  notify('turn/completed',{'threadId':thread,'turn':{'id':turn,'status':'completed'}})
+  return
+ if 'interleaved-message-ids' in prompt:
+  state[turn]['active']=False
+  for item_id,text in [('first','One'),('second','Two'),('first','Three')]:
+   notify('item/agentMessage/delta',{'threadId':thread,'turnId':turn,'itemId':item_id,'delta':text})
+  for item_id,text in [('first','OneThree'),('second','Two')]:
+   notify('item/completed',{'threadId':thread,'turnId':turn,'item':{'id':item_id,'type':'agentMessage','text':text}})
+  notify('turn/completed',{'threadId':thread,'turn':{'id':turn,'status':'completed'}})
+  return
  if 'interleaved-thinking' in prompt:
   state[turn]['active']=False
   notify('item/agentMessage/delta',{'threadId':thread,'turnId':turn,'itemId':'message','delta':'First text. '})
