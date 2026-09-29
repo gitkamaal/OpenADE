@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { execFileSync } from "node:child_process";
 import { createServer } from "node:http";
-import { create,daemon,open,otherRepo,panel,ready,repo,status,tmp } from "./helpers";
+import { create,daemon,open,otherRepo,panel,ready,repo,status,tmp,token } from "./helpers";
 const percentile=(values:number[],p:number)=>[...values].sort((a,b)=>a-b)[Math.min(values.length-1,Math.ceil(values.length*p)-1)];
 test("repeatable production-client performance with multiple projects and long inactive transcripts",async({browser,request},testInfo)=>{
  test.setTimeout(180000);const baseline=Boolean(process.env.OPENADE_E2E_SOURCE);const sessions=[];
@@ -31,12 +31,17 @@ test("repeatable production-client performance with multiple projects and long i
 
 test("active streamed chat remains visible when its transcript passes the scrollback bound",async({page,request},testInfo)=>{
  test.setTimeout(150000);
- const session=await create(request,"Sliding transcript workload",{agent:"claude",prompt:"sliding-transcript"});
+ const stress=process.env.OPENADE_SCROLLBACK_STRESS==="1",historical=stress?950:380;
+ const session=await create(request,"Sliding transcript workload",{agent:"claude",prompt:stress?"sliding-transcript-stress":"sliding-transcript"});
  const gate=path.join(tmp,"provider-home","sliding-transcript-"+session.id);
  try{
   await ready(page);await open(page,"Sliding transcript workload");
   await expect.poll(()=>fs.existsSync(gate+".ready")).toBe(true);
-  await expect(page.locator(".chat-assistant-turn").last()).toContainText("Historical answer 379");
+  await expect(page.locator(".chat-assistant-turn").last()).toContainText(`Historical answer ${historical-1}`);
+  await page.locator(".messages").hover();await page.mouse.wheel(0,-100000);
+  await expect(page.getByRole("button",{name:"Jump to latest"})).toBeVisible();
+  await page.getByRole("button",{name:"Jump to latest"}).click();
+  await expect.poll(()=>page.locator(".messages").evaluate(node=>node.scrollHeight-node.scrollTop-node.clientHeight),{timeout:3000}).toBeLessThan(80);
   await page.evaluate(()=>{const frames:number[]=[];let previous=performance.now(),running=true;const tick=(now:number)=>{if(!running)return;frames.push(now-previous);previous=now;requestAnimationFrame(tick);};requestAnimationFrame(tick);(window as typeof window&{__stopFrameProbe?:()=>number[]}).__stopFrameProbe=()=>{running=false;return frames;};});
   fs.writeFileSync(gate+".go","");
   await expect(page.locator(".chat-assistant-turn").last()).toContainText("Latest visible answer.");
@@ -44,10 +49,49 @@ test("active streamed chat remains visible when its transcript passes the scroll
   const frames=await page.evaluate(()=>(window as typeof window&{__stopFrameProbe:()=>number[]}).__stopFrameProbe());
   const transcriptBytes=fs.statSync(path.join(tmp,"data","transcripts",session.id+".log")).size;
   expect(transcriptBytes).toBeGreaterThan(2_000_000);
-  const report={environment:"Production Vite in Chromium; actual Go daemon and synthetic Claude, not native frame timing",historicalTurns:470,transcriptBytes,frames:frames.length,frameIntervalP50Ms:percentile(frames,.5),frameIntervalP95Ms:percentile(frames,.95),frameIntervalMaxMs:Math.max(...frames)};
+  const replay=await page.evaluate(({id,token})=>new Promise<{first:string;offset:number;cursor:number}>((resolve,reject)=>{const socket=new WebSocket(`ws://127.0.0.1:7455/api/sessions/${id}/stream?token=${encodeURIComponent(token)}`);const timer=setTimeout(()=>{socket.close();reject(Error("replay timed out"));},10000);socket.onmessage=event=>{const frame=JSON.parse(String(event.data)) as {type:string;data:string;offset:number;cursor:number};if(frame.type!=="output")return;clearTimeout(timer);socket.close();resolve({first:frame.data.slice(0,32),offset:frame.offset,cursor:frame.cursor});};socket.onerror=()=>{clearTimeout(timer);reject(Error("replay failed"));};}),{id:session.id,token});
+  expect(replay.first.startsWith("{")).toBe(true);
+  expect(replay.cursor).toBe(transcriptBytes);
+  expect(fs.readFileSync(path.join(tmp,"data","transcripts",session.id+".log"))[replay.offset-1]).toBe(10);
+  const report={environment:"Production Vite in Chromium; actual Go daemon and synthetic Claude, not native frame timing",historicalTurns:historical+90,transcriptBytes,frames:frames.length,frameIntervalP50Ms:percentile(frames,.5),frameIntervalP95Ms:percentile(frames,.95),frameIntervalMaxMs:Math.max(...frames)};
   const output=process.env.OPENADE_SCROLLBACK_PERF_OUTPUT??testInfo.outputPath("scrollback-performance.json");fs.mkdirSync(path.dirname(output),{recursive:true});fs.writeFileSync(output,JSON.stringify(report,null,2));await testInfo.attach("scrollback-performance",{path:output,contentType:"application/json"});
   expect(await page.locator(".chat-timeline article").count()).toBeLessThanOrEqual(80);
   await page.reload();await expect(page.locator(".chat-assistant-turn").last()).toContainText("Latest visible answer.");
+  await page.locator(".messages").hover();await page.mouse.wheel(0,-100000);
+  await expect(page.getByRole("button",{name:"Jump to latest"})).toBeVisible();
+  await page.getByRole("button",{name:"Jump to latest"}).click();
+  await expect.poll(()=>page.locator(".messages").evaluate(node=>node.scrollHeight-node.scrollTop-node.clientHeight),{timeout:3000}).toBeLessThan(80);
+  await page.locator(".messages").click({position:{x:5,y:5}});
+  await expect(page.getByRole("button",{name:"Jump to latest"})).toHaveCount(0);
+  await page.getByRole("button",{name:"Collapse sidebar"}).click();
+  await expect.poll(()=>page.locator(".ade").evaluate(node=>Number.parseFloat(getComputedStyle(node).gridTemplateColumns))).toBeLessThan(1);
+  await expect.poll(()=>page.locator(".messages").evaluate(node=>node.scrollHeight-node.scrollTop-node.clientHeight),{timeout:3000}).toBeLessThan(80);
+  await page.getByRole("button",{name:"Toggle sidebar"}).click();
+  await expect.poll(()=>page.locator(".ade").evaluate(node=>Number.parseFloat(getComputedStyle(node).gridTemplateColumns))).toBeGreaterThan(255);
+  await expect.poll(()=>page.locator(".messages").evaluate(node=>node.scrollHeight-node.scrollTop-node.clientHeight),{timeout:3000}).toBeLessThan(80);
+  await page.getByLabel("Toggle right sidebar").click();
+  await page.getByLabel("Toggle files panel").click();
+  await expect.poll(()=>page.locator(".messages").evaluate(node=>node.scrollHeight-node.scrollTop-node.clientHeight),{timeout:3000}).toBeLessThan(80);
+  await page.getByRole("button",{name:"Show earlier messages"}).click();
+  await expect(page.locator(".messages")).not.toHaveClass(/jump-layout/);
+  await page.getByRole("button",{name:"Collapse sidebar"}).click();
+  await expect.poll(()=>page.locator(".ade").evaluate(node=>Number.parseFloat(getComputedStyle(node).gridTemplateColumns))).toBeLessThan(1);
+  await expect(page.getByRole("button",{name:"Jump to latest"})).toBeVisible();
+  let before:number|undefined;const pages:Buffer[]=[];
+  do{
+   const response=await request.get(`${daemon}/api/sessions/${session.id}/transcript-page${before===undefined?"":`?before=${before}`}`);
+   expect(response.status()).toBe(200);
+   expect(response.headers()["cache-control"]).toBe("no-store");
+   const chunk=await response.json() as {data:string;offset:number;cursor:number;has_more:boolean};
+   const bytes=Buffer.from(chunk.data,"base64");expect(bytes.length).toBeLessThanOrEqual(1024*1024);
+   expect(chunk.cursor-chunk.offset).toBe(bytes.length);
+   pages.unshift(bytes);before=chunk.offset;
+   if(!chunk.has_more)break;
+  }while(before>0);
+  expect(Buffer.concat(pages)).toEqual(fs.readFileSync(path.join(tmp,"data","transcripts",session.id+".log")));
+  expect((await request.get(`${daemon}/api/sessions/${session.id}/transcript-page?before=-1`)).status()).toBe(400);
+  expect((await request.get(`${daemon}/api/sessions/${session.id}/transcript-page`,{headers:{Authorization:"Bearer invalid"}})).status()).toBe(401);
+  expect((await request.get(`${daemon}/api/sessions/not-a-session/transcript-page`)).status()).toBe(404);
  }finally{fs.writeFileSync(gate+".go","");await request.post(`${daemon}/api/sessions/${session.id}/stop`);}
 });
 

@@ -449,7 +449,7 @@ func (d *Daemon) handleGetSubagent(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, fmt.Errorf("subagent transcript is unavailable"))
 			return
 		}
-		replay, readErr := readReplay(path, after)
+		replay, readErr := readLineReplay(path, after)
 		if readErr != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Errorf("subagent transcript is unavailable"))
 			return

@@ -161,8 +161,11 @@ export function SessionWorkspace({ activeView=true, session, projectLabel, appea
   const outputRef = useRef<HTMLDivElement>(null);
   const reconnectStreamRef = useRef(false);
  const byteCursor=useRef(0);
- const followLatest=useRef(true);
- const [following,setFollowing]=useState(true);
+  const followLatest=useRef(true);
+  const pointerScroll=useRef<{id:number;startY:number;startTop:number}|null>(null);
+  const [following,setFollowing]=useState(true);
+  const releaseFollow=()=>{followLatest.current=false;setFollowing(false);};
+  const jumpToLatest=()=>{const scroll=outputRef.current;if(!scroll)return;followLatest.current=true;setFollowing(true);scroll.classList.add("jump-layout");scroll.scrollTop=scroll.scrollHeight;};
   const mountedRef = useRef(false);
   const focusTimerRef = useRef<number | undefined>(undefined);
   const active = ["running", "starting", "waiting"].includes(session.status);
@@ -250,6 +253,8 @@ export function SessionWorkspace({ activeView=true, session, projectLabel, appea
   useEffect(() => {
     if(followLatest.current)outputRef.current?.scrollTo({ top: outputRef.current.scrollHeight, behavior: "auto" });
   }, [output]);
+
+  useEffect(()=>{const scroll=outputRef.current;if(!scroll||!chatCapable)return;let width=scroll.clientWidth,height=scroll.clientHeight;const observer=new ResizeObserver(()=>{const nextWidth=scroll.clientWidth,nextHeight=scroll.clientHeight;if(nextWidth===width&&nextHeight===height)return;width=nextWidth;height=nextHeight;if(followLatest.current){scroll.classList.add("jump-layout");scroll.scrollTop=scroll.scrollHeight;}});observer.observe(scroll);return()=>observer.disconnect();},[chatCapable,session.id]);
 
   useEffect(() => {
     let stale = false;
@@ -429,10 +434,10 @@ export function SessionWorkspace({ activeView=true, session, projectLabel, appea
       {detailsEditor&&<div className="chat-details-overlay"><form role="dialog" aria-modal="true" onKeyDown={event=>{if(event.key!=="Tab")return;const controls=[...event.currentTarget.querySelectorAll<HTMLElement>("input,textarea,button:not(:disabled)")];const first=controls[0],last=controls.at(-1);if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus();}}} aria-label={detailsEditor==="title"?"Rename chat":"Chat instructions"} onSubmit={event=>{event.preventDefault();void updateSessionDetails(session.id,{[detailsEditor]:detailsValue}).then(onRefresh).then(()=>setDetailsEditor(null)).catch(reason=>setPanelError(String(reason)));}}>{panelError&&<p role="alert">{panelError}</p>}<h2>{detailsEditor==="title"?"Rename chat":"Chat instructions"}</h2>{detailsEditor==="title"?<input aria-label="Chat title" maxLength={240} value={detailsValue} onChange={e=>setDetailsValue(e.target.value)} autoFocus/>:<><textarea aria-label="Chat instructions" value={detailsValue} maxLength={16384} onChange={e=>setDetailsValue(e.target.value)} autoFocus/><p>Applied to your next message in this conversation.</p></>}<div><button type="button" onClick={()=>setDetailsEditor(null)}>Cancel</button><button disabled={detailsEditor==="title"&&!detailsValue.trim()}>Save</button></div></form></div>}
       <section className={`conversation ${tuiMode ? "tui-conversation" : ""}`}>
         {tuiMode ? <Suspense fallback={<div role="status">Opening terminal…</div>}><DirectTUIWorkspace session={session} onRefresh={onRefresh} preferences={preferences} /></Suspense> : <>
-        <div className="messages" ref={outputRef} onScroll={event=>{const el=event.currentTarget;const following=el.scrollHeight-el.scrollTop-el.clientHeight<80;followLatest.current=following;setFollowing(following);}}>
-          {chatCapable ? <ChatTimeline session={session} output={output} activityExpanded={preferences.activity_detail === "expanded"} onOpenSubagent={openSubagent} /> : <div className="shell-session-note"><TerminalWindow /><div><strong>Terminal run</strong><p>This run stays in the terminal so command output never gets mixed into chat.</p></div></div>}
+        <div className="messages" ref={outputRef} onWheelCapture={event=>{if(event.deltaY<0)releaseFollow();}} onTouchStartCapture={releaseFollow} onPointerDownCapture={event=>{if(event.button===0)pointerScroll.current={id:event.pointerId,startY:event.clientY,startTop:event.currentTarget.scrollTop};}} onPointerMoveCapture={event=>{const gesture=pointerScroll.current;if(gesture?.id===event.pointerId&&(event.buttons&1)!==0&&event.clientY<gesture.startY-5)releaseFollow();}} onPointerUpCapture={()=>{pointerScroll.current=null;}} onPointerCancelCapture={()=>{pointerScroll.current=null;}} onKeyDownCapture={event=>{if(["ArrowUp","PageUp","Home"].includes(event.key)||(event.key===" "&&event.shiftKey))releaseFollow();}} onScroll={event=>{const el=event.currentTarget;if(pointerScroll.current&&el.scrollTop<pointerScroll.current.startTop-2)releaseFollow();if(el.scrollHeight-el.scrollTop-el.clientHeight<80){followLatest.current=true;setFollowing(true);}else if(!followLatest.current)setFollowing(false);}}>
+          {chatCapable ? <ChatTimeline session={session} output={output} activityExpanded={preferences.activity_detail === "expanded"} onOpenSubagent={openSubagent} onNavigate={()=>{releaseFollow();outputRef.current?.classList.remove("jump-layout");}} /> : <div className="shell-session-note"><TerminalWindow /><div><strong>Terminal run</strong><p>This run stays in the terminal so command output never gets mixed into chat.</p></div></div>}
         </div>
-        {!following&&<button className="jump-latest" onClick={()=>{followLatest.current=true;setFollowing(true);outputRef.current?.scrollTo({top:outputRef.current.scrollHeight,behavior:"auto"});}}>Jump to latest</button>}
+        {!following&&<button className="jump-latest" onClick={jumpToLatest}>Jump to latest</button>}
         {canMessage ? <div className={`session-composer-dock ${queuedMessages.length ? "with-queue" : ""}`}>
           <MessageQueue steering={provider.state.steering} messages={queuedMessages} sendingId={queuedMessages.find((item) => item.status === "dispatching")?.id ?? null} onSteer={(id) => void steerQueuedMessage(id)} onRemove={(id) => void removeQueuedMessage(id)} onEdit={(id) => void editQueuedMessage(id)} />
 
