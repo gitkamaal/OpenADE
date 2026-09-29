@@ -49,6 +49,9 @@ test('large file tree keeps rendered rows bounded and reveals the end on scroll'
  await tree.evaluate(element=>{element.scrollTop=0;element.dispatchEvent(new Event('scroll',{bubbles:true}));});
  await expect(tree.getByRole('treeitem',{name:'file-0000.md',exact:true})).toBeVisible();
  await expect(tree.getByRole('treeitem',{name:'file-1199.md',exact:true})).toHaveCount(0);
+ await page.evaluate(()=>{window.requestAnimationFrame=()=>0;});
+ await tree.evaluate(element=>{element.scrollTop=element.scrollHeight;element.dispatchEvent(new Event('scroll',{bubbles:true}));});
+ await expect(tree.getByRole('treeitem',{name:'file-1199.md',exact:true})).toBeVisible();
 });
 
 test('reopening files reads external changes without polling a hidden panel',async({page,request})=>{
