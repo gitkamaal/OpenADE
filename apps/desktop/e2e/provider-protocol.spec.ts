@@ -589,6 +589,16 @@ test('a failed spawn stays a non-link card and never claims a child document',as
  const s=await create(request,'Failed agent spawn',{prompt:'subagent failed-spawn'});await expect.poll(()=>status(request,s.id)).toBe('completed');
  await ready(page);await open(page,'Failed agent spawn');await expect(page.getByRole('button',{name:/Open agent/})).toHaveCount(0);await expect(page.getByRole('note',{name:/Agent Inspect the fixture child/})).toContainText('Failed');
 });
+test('settled child cards stop requesting summaries while the parent chat is idle',async({request,page})=>{
+ const s=await create(request,'Settled child summary',{prompt:'subagent early'});await expect.poll(()=>status(request,s.id)).toBe('completed');
+ let summaryReads=0,transcriptReads=0;page.on('request',request=>{if(request.url().includes(`/api/sessions/${s.id}/subagents?`))summaryReads++;else if(request.url().includes(`/api/sessions/${s.id}/subagents/`))transcriptReads++;});
+ await ready(page);await open(page,'Settled child summary');const chip=page.getByRole('button',{name:/Open agent/});await expect(chip).toContainText('Done');
+ const afterSummary=summaryReads;expect(afterSummary).toBeGreaterThan(0);
+ await page.waitForTimeout(2200);expect(summaryReads).toBe(afterSummary);
+ await chip.click();await expect(page.getByLabel('Agent panel').locator('.subagent-pane-status')).toHaveText('done');
+ const afterTranscript=transcriptReads;expect(afterTranscript).toBeGreaterThan(0);
+ await page.waitForTimeout(2200);expect(transcriptReads).toBe(afterTranscript);
+});
 test('a child remains live after its parent completes and updates the open agent panel',async({request,page})=>{
  const s=await create(request,'Live linked agent',{prompt:'subagent held'});await expect.poll(()=>status(request,s.id)).toBe('completed');
  const parent=fs.readFileSync(path.join(tmp,'data/transcripts',s.id+'.log'),'utf8');const spawn=parent.split('\n').filter(Boolean).map(line=>JSON.parse(line)).find(event=>event.type==='openade.subagent');const endpoint=`${daemon}/api/sessions/${s.id}/subagents/${spawn.doc_id}`;
