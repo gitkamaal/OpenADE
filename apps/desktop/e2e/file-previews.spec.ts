@@ -28,7 +28,7 @@ test('files search follows source keyboard reveal and the eye controls hidden an
  await expect(page.getByRole('tab',{name:'zebra-quick-xylophone.md'})).toHaveAttribute('aria-selected','true');
  await expect(tree.getByRole('treeitem',{name:'src/zebra-quick-xylophone.md'})).toBeVisible();
  await search.fill('zqx');await search.press('Escape');await expect(search).toHaveValue('');await expect(tree).toBeFocused();
- await tree.press('ArrowUp');await expect(tree.getByRole('treeitem',{name:'src',exact:true})).toHaveAttribute('aria-selected','true');
+ await page.keyboard.press('ArrowUp');await expect(tree.getByRole('treeitem',{name:'src',exact:true})).toHaveAttribute('aria-selected','true');
  await tree.press('ArrowLeft');await expect(tree.getByRole('treeitem',{name:'src',exact:true})).toHaveAttribute('aria-expanded','false');
  await tree.press('ArrowRight');await expect(tree.getByRole('treeitem',{name:'src',exact:true})).toHaveAttribute('aria-expanded','true');
  await tree.press('ArrowRight');await expect(tree.getByRole('treeitem',{name:'src/zebra-quick-xylophone.md'})).toHaveAttribute('aria-selected','true');
