@@ -99,6 +99,28 @@ test('interleaved Codex message IDs retain delta arrival order',async({request,p
  await expect(page.locator('.chat-assistant-turn .markdown-body').last()).toHaveText('OneTwoThree');await page.reload();await expect(page.locator('.chat-assistant-turn .markdown-body').last()).toHaveText('OneTwoThree');
 });
 
+test('Claude keeps streamed text on both sides of a tool after completion frames',async({request,page})=>{
+ const session=await create(request,'Claude interleaved stream',{agent:'claude',prompt:'claude-interleaved-stream'});
+ await expect.poll(()=>status(request,session.id)).toBe('completed');await ready(page);await open(page,'Claude interleaved stream');
+ const turn=page.locator('.chat-assistant-turn').last(),parts=turn.locator(':scope > .markdown-body, :scope > .chat-activity-segment');
+ await expect(parts).toHaveCount(3);await expect(parts.nth(0)).toHaveText('Claude first visible text.');
+ await expect(parts.nth(1).locator('summary')).toContainText('Called 1 tool');await expect(parts.nth(2)).toHaveText('Claude second visible text.');
+ await expect(turn).not.toContainText('Rewritten');await page.reload();await expect(parts).toHaveCount(3);
+});
+
+test('Claude exposes each text and tool step before its turn completes',async({request,page})=>{
+ const session=await create(request,'Claude live stream order',{agent:'claude',prompt:'claude-interleaved-stream-live'});
+ const gate=path.join(tmp,'provider-home','claude-interleaved-live-'+session.id);
+ try{
+  await ready(page);await open(page,'Claude live stream order');
+  const parts=page.locator('.chat-assistant-turn').last().locator(':scope > .markdown-body, :scope > .chat-activity-segment');
+  await expect(parts).toHaveCount(1);await expect(parts.nth(0)).toHaveText('Claude first visible text.');
+  fs.writeFileSync(gate+'.tool','');await expect(parts).toHaveCount(2);await expect(parts.nth(1).locator('summary')).toHaveText('Called 1 tool');
+  fs.writeFileSync(gate+'.text','');await expect(parts).toHaveCount(3);await expect(parts.nth(2)).toHaveText('Claude second visible text.');
+  fs.writeFileSync(gate+'.done','');await expect.poll(()=>status(request,session.id)).toBe('completed');await expect(parts).toHaveCount(3);
+ }finally{for(const stage of ['tool','text','done'])fs.writeFileSync(gate+'.'+stage,'');await request.post(`${daemon}/api/sessions/${session.id}/stop`);}
+});
+
 test('streamed text and work appear in provider order before the turn completes',async({request,page})=>{
  const session=await create(request,'Live interleaved stream',{agent:'codex',prompt:'interleaved-live'});
  const gate=path.join(tmp,'provider-home','interleaved-live-'+session.id);
