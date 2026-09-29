@@ -2,7 +2,7 @@ import {choose,setRepository} from "./helpers";
 import {test,create,ready,open,panel,daemon,status,repo,tmp} from './helpers';
 import {expect,Page} from '@playwright/test';
 const reducedTransparency=(page:Page)=>page.evaluate(()=>matchMedia('(prefers-reduced-transparency: reduce)').matches);
-const expectMaterialWash=async(page:Page)=>{const fill=await page.locator('.ade').evaluate(el=>getComputedStyle(el).getPropertyValue('--shell-fill').trim());if(await reducedTransparency(page))expect(fill).toBe('var(--sidebar)');else expect(fill).toContain('50%');};
+const expectMaterialWash=async(page:Page)=>{const {fill,solid}=await page.locator('.ade').evaluate(el=>{const style=getComputedStyle(el);return {fill:style.getPropertyValue('--shell-fill').trim(),solid:style.getPropertyValue('--sidebar').trim()};});if(await reducedTransparency(page))expect(fill).toBe(solid);else expect(fill).toContain('50%');};
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {spawn,execFileSync} from 'node:child_process';
@@ -98,8 +98,7 @@ test('Liquid Glass persists and native accessibility changes restore solid surfa
  await expect(page.getByText('Native macOS Liquid Glass',{exact:true})).toBeVisible();
  await expect(page.locator('.ade')).toHaveCSS('opacity','1');
  await choose(page,'Glass','default');await expectMaterialWash(page);await choose(page,'Glass','liquid');
- const fill=await page.locator('.ade').evaluate(el=>getComputedStyle(el).getPropertyValue('--shell-fill'));
- if(await reducedTransparency(page))expect(fill.trim()).toBe('var(--sidebar)');else expect(fill).toContain('50%');
+ await expectMaterialWash(page);
  await page.reload();await page.getByLabel('Open settings').click();await page.getByRole('tab',{name:'Appearance',exact:true}).click();
  await expect(page.getByLabel('Glass',{exact:true})).toHaveAttribute('data-value','liquid');
  await page.getByLabel('Glass',{exact:true}).focus();
