@@ -389,6 +389,10 @@ func (m *SessionManager) probeACPState(ctx context.Context, agent string, refres
 
 func (d *Daemon) handleACPModels(w http.ResponseWriter, r *http.Request) {
 	agent := r.PathValue("agent")
+	if agent == "claude" {
+		d.handleClaudeModels(w, r)
+		return
+	}
 	if agent == "cursor" {
 		d.handleCursorModels(w, r)
 		return

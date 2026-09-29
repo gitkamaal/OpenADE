@@ -12,11 +12,11 @@ export function ModelPicker({models=[],model,effort,onChange,disabled=false,prov
  const [favorites,setFavorites]=useState<string[]>(()=>{try{const value=JSON.parse(localStorage.getItem("openade.favorite-models")||"[]");return Array.isArray(value)?value.filter(x=>typeof x==="string"):[];}catch{return [];}});
  const ref=useRef<HTMLDivElement>(null),input=useRef<HTMLInputElement>(null),trigger=useRef<HTMLButtonElement>(null),menuRef=useRef<HTMLDivElement>(null);
  const acp=["grok","devin","hermes","pi","antigravity"].includes(provider);
- const dynamic=acp||provider==="cursor";
+ const dynamic=acp||provider==="cursor"||provider==="claude";
  const loadCatalog=(refresh=false)=>{setCatalogBusy(current=>({...current,[provider]:true}));setCatalogError(current=>({...current,[provider]:""}));void getProviderModels(provider,refresh).then(value=>setCatalog(current=>({...current,[provider]:value}))).catch(reason=>{setCatalog(current=>({...current,[provider]:[]}));setCatalogError(current=>({...current,[provider]:reason instanceof Error?reason.message:String(reason)}));}).finally(()=>setCatalogBusy(current=>({...current,[provider]:false})));};
  useEffect(()=>{if(open&&dynamic&&catalog[provider]===undefined&&!catalogBusy[provider])loadCatalog();},[open,provider,dynamic,catalog,catalogBusy]);
  const displayModels=dynamic?catalog[provider]??models:models;
- const defaultLabel=dynamic?"Agent default":"CLI default";
+ const defaultLabel=dynamic&&provider!=="claude"?"Agent default":"CLI default";
  const all=[...(!acp||!model?[{id:"",label:defaultLabel,description:dynamic?"Use the provider’s default model.":"Use your provider’s configuration.",efforts:[]}]:[]),...displayModels];
  const visible=all.filter(item=>(!favoritesOnly||favorites.includes(`${provider}:${item.id}`))&&`${item.label} ${item.id}`.toLowerCase().includes(query.toLowerCase()));
  const providerLabel=providers?.find(item=>item.id===provider)?.label||({codex:"Codex",claude:"Claude"} as Record<string,string>)[provider]||provider;

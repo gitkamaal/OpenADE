@@ -8,9 +8,28 @@ const state=async(request:any,id:string)=>(await(await request.get(`${daemon}/ap
 const logs=(id:string)=>fs.readFileSync(path.join(tmp,'provider-home/rpc-log',id+'.jsonl'),'utf8').trim().split('\n').map(line=>JSON.parse(line));
 test.beforeAll(async({request})=>{original=fs.readFileSync(program);fs.copyFileSync(path.join(tmp,'../codex-app-server-fixture.py'),program);fs.writeFileSync(program,'#!/usr/bin/env python3\n'+fs.readFileSync(program,'utf8'),{mode:0o755});fs.chmodSync(program,0o755);const meta=await(await request.get(daemon+'/api/meta')).json();expect(meta.agents.find((agent:any)=>agent.id==='codex').path).toBe(program);});
 test.afterAll(()=>{fs.writeFileSync(program,original,{mode:0o755});fs.chmodSync(program,0o755);});
+test('the pinned Claude model catalog reaches both initial and resumed CLI turns',async({request,page})=>{
+ const meta=await(await request.get(`${daemon}/api/meta`)).json();
+ const models=meta.agents.find((agent:any)=>agent.id==='claude').models;
+ expect(models.map((model:any)=>model.id)).toEqual(['claude-fable-5-1','claude-fable-5','claude-opus-5-5','claude-opus-4-8','claude-opus-4-7','claude-sonnet-5','claude-haiku-4-5']);
+ const probeFile=path.join(tmp,'provider-home/claude-model-probes.log');const probes=()=>fs.existsSync(probeFile)?fs.readFileSync(probeFile,'utf8').trim().split('\n').filter(Boolean).length:0;const before=probes();
+ const discovered=(await(await request.get(`${daemon}/api/providers/claude/models?refresh=1`)).json()).models;
+ expect(probes()).toBe(before+1);expect((await request.get(`${daemon}/api/providers/claude/models`)).ok()).toBe(true);expect(probes()).toBe(before+1);
+ expect((await request.get(`${daemon}/api/providers/claude/models?refresh=1`)).ok()).toBe(true);expect(probes()).toBe(before+2);
+ expect(discovered.map((model:any)=>model.id)).toEqual(['claude-opus-5-5','claude-fable-5-1','claude-fable-5','claude-opus-4-8','claude-opus-4-7','claude-sonnet-5','claude-haiku-4-5','gateway/claude-custom']);
+ expect(discovered.at(-1).efforts).toEqual(['low','high']);
+ const s=await create(request,'Claude model catalog',{agent:'claude',model:'claude-opus-5-5',effort:'high'});await expect.poll(()=>status(request,s.id)).toBe('completed');
+ const argsFile=path.join(tmp,'provider-home/args',s.id+'.json');
+ expect(JSON.parse(fs.readFileSync(argsFile,'utf8')).slice(0,4)).toEqual(['--model','claude-opus-5-5','--effort','high']);
+ await ready(page);await open(page,'Claude model catalog');await page.getByLabel('Choose model').click();await expect(page.getByRole('option',{name:/^Fable 5.1/})).toBeVisible();await expect(page.getByRole('option',{name:/^Haiku 4.5/})).toBeVisible();await expect(page.getByRole('option',{name:/^Work Claude/})).toBeVisible();await page.keyboard.press('Escape');
+ expect((await request.post(`${daemon}/api/sessions/${s.id}/model`,{data:{model:'claude-sonnet-5',effort:'xhigh'}})).ok()).toBe(true);
+ expect((await request.post(`${daemon}/api/sessions/${s.id}/messages`,{data:{text:'Next Claude model turn'}})).status()).toBe(202);
+ await expect.poll(()=>JSON.parse(fs.readFileSync(argsFile,'utf8')).slice(0,4)).toEqual(['--model','claude-sonnet-5','--effort','xhigh']);
+});
 test('Claude Agent/Task child output stays in its own document and SendMessage reopens it',async({request,page})=>{
  const s=await create(request,'Claude linked agent',{agent:'claude',prompt:'claude-child'});
  await expect.poll(()=>status(request,s.id)).toBe('completed');
+ expect(JSON.parse(fs.readFileSync(path.join(tmp,'provider-home/args',s.id+'.json'),'utf8'))).toContain('--forward-subagent-text');
  const parent=fs.readFileSync(path.join(tmp,'data/transcripts',s.id+'.log'),'utf8');
  expect(parent).toContain('Parent finished independently.');expect(parent).not.toContain('Child found the answer.');
  const markers=parent.trim().split('\n').map(line=>JSON.parse(line)).filter(event=>event.type==='openade.subagent');expect(markers).toHaveLength(1);
@@ -30,6 +49,15 @@ test('Claude child tool IDs reused by a later CLI process still create a new own
  await expect.poll(async()=>{const current=await(await request.get(`${daemon}/api/sessions/${s.id}`)).json();return current.generation===2?current.status:'previous';}).toBe('completed');
  const parent=fs.readFileSync(path.join(tmp,'data/transcripts',s.id+'.log'),'utf8');const markers=parent.trim().split('\n').map(line=>JSON.parse(line)).filter(event=>event.type==='openade.subagent');expect(markers).toHaveLength(2);expect(new Set(markers.map(event=>event.doc_id)).size).toBe(2);
  for(const marker of markers){const child=await(await request.get(`${daemon}/api/sessions/${s.id}/subagents/${marker.doc_id}`)).json();expect(child.status).toBe('done');}
+});
+test('nested Claude Agent output opens from the owning child tab without entering the parent chat',async({request,page})=>{
+ const s=await create(request,'Claude nested agent',{agent:'claude',prompt:'claude-child nested'});await expect.poll(()=>status(request,s.id)).toBe('completed');
+ const parent=fs.readFileSync(path.join(tmp,'data/transcripts',s.id+'.log'),'utf8');expect(parent).not.toContain('Nested child found the detail.');
+ const first=parent.trim().split('\n').map(line=>JSON.parse(line)).find(event=>event.type==='openade.subagent');expect(first).toBeTruthy();
+ const child=await(await request.get(`${daemon}/api/sessions/${s.id}/subagents/${first.doc_id}`)).json();expect(child.status).toBe('done');expect(child.output).not.toContain('Nested child found the detail.');
+ const nested=child.output.trim().split('\n').map((line:string)=>JSON.parse(line)).find((event:any)=>event.type==='openade.subagent');expect(nested).toMatchObject({title:'Inspect nested fixture'});
+ const grandchild=await(await request.get(`${daemon}/api/sessions/${s.id}/subagents/${nested.doc_id}`)).json();expect(grandchild.status).toBe('done');expect(grandchild.output).toContain('Inspect one level deeper');expect(grandchild.output).toContain('Nested child found the detail.');
+ await ready(page);await open(page,'Claude nested agent');await page.getByRole('button',{name:'Open agent Inspect Claude child'}).click();const panel=page.getByLabel('Agent panel');const nestedCard=panel.getByRole('button',{name:'Open agent Inspect nested fixture'});await expect(nestedCard).toContainText('Done');await nestedCard.click();await expect(panel.getByLabel('Agent transcript Inspect nested fixture')).toContainText('Nested child found the detail.');
 });
 test('Copilot CLI opens an interactive prompt with a stable session ID and resumes it',async({request})=>{
  const s=await create(request,'Copilot interactive',{agent:'copilot',mode:'tui'});

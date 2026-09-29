@@ -60,7 +60,16 @@ type ModelChoice struct {
 
 func providerModels(agent string) []ModelChoice {
 	if agent == "claude" {
-		return []ModelChoice{{ID: "sonnet", Label: "Sonnet", Efforts: []string{"low", "medium", "high", "xhigh", "max"}}, {ID: "opus", Label: "Opus", Efforts: []string{"low", "medium", "high", "xhigh", "max"}}, {ID: "fable", Label: "Fable", Efforts: []string{"low", "medium", "high", "xhigh", "max"}}}
+		efforts := []string{"low", "medium", "high", "xhigh", "max"}
+		return []ModelChoice{
+			{ID: "claude-fable-5-1", Label: "Fable 5.1", Description: "Most intelligent model for building agents", Efforts: efforts},
+			{ID: "claude-fable-5", Label: "Fable 5", Description: "Previous generation Fable", Efforts: efforts},
+			{ID: "claude-opus-5-5", Label: "Opus 5.5", Description: "Best for everyday, complex tasks", Efforts: efforts},
+			{ID: "claude-opus-4-8", Label: "Opus 4.8", Description: "Previous generation Opus", Efforts: efforts},
+			{ID: "claude-opus-4-7", Label: "Opus 4.7", Description: "Older generation Opus", Efforts: efforts},
+			{ID: "claude-sonnet-5", Label: "Sonnet 5", Description: "Balanced speed and intelligence", Efforts: efforts},
+			{ID: "claude-haiku-4-5", Label: "Haiku 4.5", Description: "Fastest model for everyday tasks"},
+		}
 	}
 	if agent != "codex" {
 		return []ModelChoice{}

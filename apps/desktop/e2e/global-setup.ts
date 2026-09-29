@@ -14,6 +14,16 @@ name=os.path.basename(sys.argv[0]);args=sys.argv[1:];sid=os.environ.get('OPENADE
 structured='--json' in args or '--output-format' in args
 signal.signal(signal.SIGTERM,lambda *_:sys.exit(0))
 def emit(value): print(json.dumps(value),flush=True)
+if name=='claude' and args==['--help']:
+ print('--forward-subagent-text',flush=True);sys.exit(0)
+if name=='claude' and '--input-format' in args:
+ for raw in sys.stdin:
+  frame=json.loads(raw)
+  if frame.get('type')=='control_request' and frame.get('request',{}).get('subtype')=='initialize':
+   with open(os.path.join(os.environ['OPENADE_PROVIDER_HOME'],'claude-model-probes.log'),'a') as probe_log:probe_log.write('initialize\\n')
+   emit({'type':'control_response','response':{'subtype':'success','request_id':frame['request_id'],'response':{'models':[{'value':'default','resolvedModel':'claude-opus-5-5','displayName':'Opus 5.5'},{'value':'gateway/claude-custom','resolvedModel':'gateway/claude-custom','displayName':'Work Claude','description':'Custom organization model','supportedEffortLevels':['low','high','high','unknown']},{'value':'sonnet'},{'value':'bad model id'}]}}})
+   break
+ sys.exit(0)
 if name=='codex' and args==['app-server'] and sid=='account-probe':
  email='fixture@example.test'
  connected=False
@@ -53,9 +63,16 @@ if structured:
  if name=='claude':emit({'type':'system','session_id':'claude-'+sid})
  else:emit({'type':'thread.started','thread_id':'codex-'+sid})
  if name=='claude' and 'claude-child' in prompt:
+  if '--forward-subagent-text' not in args:sys.exit(8)
   if 'early' in prompt:emit({'type':'assistant','parent_tool_use_id':'agent-one','message':{'content':[{'type':'text','text':'Early child output.'}]}})
   emit({'type':'assistant','message':{'content':[{'type':'tool_use','id':'agent-one','name':'Agent','input':{'description':'Inspect Claude child','prompt':'Inspect the fixture child'}}]}})
   emit({'type':'system','subtype':'task_started','task_id':'task-one','tool_use_id':'agent-one','subagent_type':'Explore'})
+  if 'nested' in prompt:
+   emit({'type':'assistant','parent_tool_use_id':'agent-one','message':{'content':[{'type':'tool_use','id':'grand-one','name':'Agent','input':{'description':'Inspect nested fixture','prompt':'Inspect one level deeper'}}]}})
+   emit({'type':'system','subtype':'task_started','task_id':'grand-task','tool_use_id':'grand-one','subagent_type':'Explore'})
+   emit({'type':'assistant','parent_tool_use_id':'grand-one','message':{'content':[{'type':'text','text':'Nested child found the detail.'}]}})
+   emit({'type':'system','subtype':'task_notification','tool_use_id':'grand-one','status':'completed'})
+   emit({'type':'user','parent_tool_use_id':'agent-one','message':{'content':[{'type':'tool_result','tool_use_id':'grand-one','content':'Nested done','is_error':False}]}})
   emit({'type':'assistant','parent_tool_use_id':'agent-one','message':{'content':[{'type':'text','text':'Child found the answer.'}]}})
   if 'foreground' in prompt:
    emit({'type':'user','message':{'content':[{'type':'tool_result','tool_use_id':'agent-one','content':'Done','is_error':False}]}})

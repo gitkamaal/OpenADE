@@ -99,6 +99,9 @@ func (s *claudeSubagents) line(raw []byte) []byte {
 		}
 	}
 	if frame.Parent != "" {
+		if len(frame.Parent) > 256 {
+			return nil
+		}
 		if s.bySpawn[frame.Parent] == nil {
 			if len(raw) <= maxPendingChildBytes && s.pendingLen+len(raw) <= maxPendingChildBytes && (len(s.pending) < 32 || s.pending[frame.Parent] != nil) {
 				s.pending[frame.Parent] = append(s.pending[frame.Parent], append([]byte(nil), raw...))
@@ -111,72 +114,94 @@ func (s *claudeSubagents) line(raw []byte) []byte {
 	}
 	out := append(raw, '\n')
 	if frame.Type == "user" {
-		for _, block := range frame.Message.Content {
-			if block.Type == "tool_result" {
-				if doc := s.bySpawn[block.ToolUseID]; doc != nil {
-					if block.IsError {
-						s.setStatus(doc, "failed")
-					} else {
-						s.setStatus(doc, "done")
-					}
-				}
-			}
-		}
+		s.settleToolResults(frame.Message.Content)
 		return out
 	}
 	if frame.Type != "assistant" {
 		return out
 	}
 	for _, block := range frame.Message.Content {
-		if block.Type != "tool_use" || block.ID == "" {
+		if block.Type != "tool_use" || block.ID == "" || len(block.ID) > 256 {
 			continue
 		}
 		if block.Name == "SendMessage" {
-			to, _ := block.Input["to"].(string)
-			if to == "" {
-				to, _ = block.Input["recipient"].(string)
-			}
-			message, _ := block.Input["message"].(string)
-			if message == "" {
-				message, _ = block.Input["content"].(string)
-			}
-			if doc := s.bySpawn[s.tasks[to]]; doc != nil && strings.TrimSpace(message) != "" {
-				s.setStatus(doc, "running")
-				s.write(doc, map[string]any{"type": "openade.user_message", "text": clipSubagentText(message, 64*1024)})
-			}
+			s.forwardMessage(block)
 			continue
 		}
-		if block.Name != "Agent" && block.Name != "Task" {
-			continue
+		if (block.Name == "Agent" || block.Name == "Task") && s.spawn(block) != nil {
+			marker, _ := json.Marshal(s.spawnMarker(s.bySpawn[block.ID]))
+			out = append(out, marker...)
+			out = append(out, '\n')
 		}
-		doc := s.bySpawn[block.ID]
-		if doc == nil {
-			title, _ := block.Input["description"].(string)
-			if title == "" {
-				title = "Agent"
-			}
-			doc = &subagentDoc{ID: uuid.NewString(), SpawnID: block.ID, ChildThreadID: fmt.Sprintf("claude-tool:%d:%s", s.generation, block.ID), Title: clipSubagentText(title, 100), Status: "running"}
-			if _, err := s.store.db.Exec(`INSERT INTO subagent_docs(id,session_id,generation,spawn_item_id,child_thread_id,title,status,updated_at) VALUES(?,?,?,?,?,?,?,?)`, doc.ID, s.sessionID, s.generation, doc.SpawnID, doc.ChildThreadID, doc.Title, doc.Status, encodeTime(time.Now())); err != nil {
-				continue
-			}
-			s.bySpawn[block.ID] = doc
-			if prompt, _ := block.Input["prompt"].(string); strings.TrimSpace(prompt) != "" {
-				s.write(doc, map[string]any{"type": "openade.user_message", "text": clipSubagentText(prompt, 64*1024)})
-			}
-		}
-		for _, early := range s.pending[block.ID] {
-			var earlyFrame claudeWireFrame
-			if json.Unmarshal(early, &earlyFrame) == nil {
-				s.childLine(block.ID, early, &earlyFrame)
-			}
-			s.pendingLen -= len(early)
-		}
-		delete(s.pending, block.ID)
-		marker, _ := json.Marshal(map[string]string{"type": "openade.subagent", "id": block.ID, "doc_id": doc.ID, "title": doc.Title})
-		out = append(out, marker...)
-		out = append(out, '\n')
 	}
 	return out
+}
+
+func (s *claudeSubagents) spawn(block claudeWireBlock) *subagentDoc {
+	if block.ID == "" || len(block.ID) > 256 {
+		return nil
+	}
+	if doc := s.bySpawn[block.ID]; doc != nil {
+		return doc
+	}
+	if len(s.bySpawn) >= 128 {
+		return nil
+	}
+	title, _ := block.Input["description"].(string)
+	if title == "" {
+		title = "Agent"
+	}
+	doc := &subagentDoc{ID: uuid.NewString(), SpawnID: block.ID, ChildThreadID: fmt.Sprintf("claude-tool:%d:%s", s.generation, block.ID), Title: clipSubagentText(title, 100), Status: "running"}
+	if _, err := s.store.db.Exec(`INSERT INTO subagent_docs(id,session_id,generation,spawn_item_id,child_thread_id,title,status,updated_at) VALUES(?,?,?,?,?,?,?,?)`, doc.ID, s.sessionID, s.generation, doc.SpawnID, doc.ChildThreadID, doc.Title, doc.Status, encodeTime(time.Now())); err != nil {
+		return nil
+	}
+	s.bySpawn[block.ID] = doc
+	if prompt, _ := block.Input["prompt"].(string); strings.TrimSpace(prompt) != "" {
+		s.write(doc, map[string]any{"type": "openade.user_message", "text": clipSubagentText(prompt, 64*1024)})
+	}
+	for _, early := range s.pending[block.ID] {
+		var earlyFrame claudeWireFrame
+		if json.Unmarshal(early, &earlyFrame) == nil {
+			s.childLine(block.ID, early, &earlyFrame)
+		}
+		s.pendingLen -= len(early)
+	}
+	delete(s.pending, block.ID)
+	return doc
+}
+
+func (s *claudeSubagents) spawnMarker(doc *subagentDoc) map[string]string {
+	return map[string]string{"type": "openade.subagent", "id": doc.SpawnID, "doc_id": doc.ID, "title": doc.Title}
+}
+
+func (s *claudeSubagents) settleToolResults(blocks []claudeWireBlock) {
+	for _, block := range blocks {
+		if block.Type != "tool_result" {
+			continue
+		}
+		if doc := s.bySpawn[block.ToolUseID]; doc != nil {
+			if block.IsError {
+				s.setStatus(doc, "failed")
+			} else {
+				s.setStatus(doc, "done")
+			}
+		}
+	}
+}
+
+func (s *claudeSubagents) forwardMessage(block claudeWireBlock) {
+	to, _ := block.Input["to"].(string)
+	if to == "" {
+		to, _ = block.Input["recipient"].(string)
+	}
+	message, _ := block.Input["message"].(string)
+	if message == "" {
+		message, _ = block.Input["content"].(string)
+	}
+	if doc := s.bySpawn[s.tasks[to]]; doc != nil && strings.TrimSpace(message) != "" {
+		s.setStatus(doc, "running")
+		s.write(doc, map[string]any{"type": "openade.user_message", "text": clipSubagentText(message, 64*1024)})
+	}
 }
 
 func (s *claudeSubagents) childLine(spawnID string, raw []byte, frame *claudeWireFrame) {
@@ -202,13 +227,20 @@ func (s *claudeSubagents) childLine(spawnID string, raw []byte, frame *claudeWir
 	}
 	if frame.Type == "assistant" {
 		for _, block := range frame.Message.Content {
-			if block.Type == "tool_use" && (block.Name == "Agent" || block.Name == "Task") {
-				title, _ := block.Input["description"].(string)
-				s.write(doc, map[string]any{"type": "openade.unlinked_agent", "id": block.ID, "title": clipSubagentText(title, 100), "status": "spawned"})
+			if block.Type != "tool_use" || block.ID == "" || len(block.ID) > 256 {
+				continue
+			}
+			if block.Name == "SendMessage" {
+				s.forwardMessage(block)
+			} else if (block.Name == "Agent" || block.Name == "Task") && block.ID != spawnID {
+				if nested := s.spawn(block); nested != nil {
+					s.write(doc, s.spawnMarker(nested))
+				}
 			}
 		}
 	}
 	if frame.Type == "user" {
+		s.settleToolResults(frame.Message.Content)
 		for _, block := range frame.Message.Content {
 			if block.Type == "text" && strings.TrimSpace(block.Text) != "" && !strings.HasPrefix(block.Text, "[Request interrupted") && !strings.HasPrefix(block.Text, "<system-reminder>") {
 				s.write(doc, map[string]any{"type": "openade.user_message", "text": clipSubagentText(block.Text, 64*1024)})

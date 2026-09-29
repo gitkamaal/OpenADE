@@ -79,6 +79,8 @@ type SessionManager struct {
 	cursor           map[string]*cursorConversation
 	acpCatalogMu     sync.Mutex
 	acpCatalog       map[string]acpCatalogEntry
+	claudeCatalogMu  sync.Mutex
+	claudeCatalog    claudeCatalogEntry
 	cursorCatalogMu  sync.Mutex
 	cursorCatalog    cursorCatalogEntry
 	deletions        *deletionFence
@@ -583,7 +585,7 @@ func resumeAgentCommand(session Session, providerID, prompt string) (string, []s
 	}
 	switch name {
 	case "claude":
-		return program, []string{"--resume", providerID, "--print", "--verbose", "--output-format", "stream-json", "--include-partial-messages", "--permission-mode", "acceptEdits", prompt}, nil
+		return program, claudePrintArgs(program, []string{"--resume", providerID}, prompt), nil
 	case "codex":
 		return program, codexExecArgs(session, providerID, prompt), nil
 	default:
@@ -597,7 +599,34 @@ func startClaudeAgentCommand(session Session, providerID, prompt string) (string
 	if err != nil {
 		return "", nil, err
 	}
-	return program, []string{"--session-id", providerID, "--print", "--verbose", "--output-format", "stream-json", "--include-partial-messages", "--permission-mode", "acceptEdits", prompt}, nil
+	return program, claudePrintArgs(program, []string{"--session-id", providerID}, prompt), nil
+}
+
+var claudeForwardSupport sync.Map
+
+func claudePrintArgs(program string, prefix []string, prompt string) []string {
+	args := append([]string{}, prefix...)
+	args = append(args, "--print", "--verbose", "--output-format", "stream-json", "--include-partial-messages")
+	if supportsClaudeForwardSubagentText(program) {
+		args = append(args, "--forward-subagent-text")
+	}
+	return append(args, "--permission-mode", "acceptEdits", prompt)
+}
+
+func supportsClaudeForwardSubagentText(program string) bool {
+	key := program
+	if info, err := os.Stat(program); err == nil {
+		key = fmt.Sprintf("%s:%d:%d", program, info.Size(), info.ModTime().UnixNano())
+	}
+	if cached, ok := claudeForwardSupport.Load(key); ok {
+		return cached.(bool)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	output, err := exec.CommandContext(ctx, program, "--help").CombinedOutput()
+	supported := err == nil && strings.Contains(string(output), "--forward-subagent-text")
+	claudeForwardSupport.Store(key, supported)
+	return supported
 }
 
 // A provider identity belongs to the session. Read a bounded prefix once for
@@ -706,7 +735,7 @@ func agentCommand(session Session) (string, []string, error) {
 		}
 	case "claude":
 		if session.Prompt != "" {
-			return program, []string{"--name", session.Title, "--print", "--verbose", "--output-format", "stream-json", "--include-partial-messages", "--permission-mode", "acceptEdits", session.Prompt}, nil
+			return program, claudePrintArgs(program, []string{"--name", session.Title}, session.Prompt), nil
 		}
 		return program, []string{"--name", session.Title}, nil
 	case "codex":
