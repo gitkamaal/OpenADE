@@ -1078,8 +1078,8 @@ html[data-input-modality="pointer"] .ade[data-native-material="increased-contras
 .side-chat-messages{flex:1;min-height:0;padding:22px 18px 12px}.side-chat-messages .chat-timeline{max-width:100%;width:100%}.side-chat-messages .chat-user-turn{max-width:94%}.side-chat-messages .chat-assistant-turn{margin-bottom:30px}
 .side-chat-composer{flex:none;width:calc(100% - 24px);max-width:none;margin:0 12px 12px}.side-chat-composer .session-composer{width:100%}
 .fork-seam{align-self:center;max-width:100%;display:flex;align-items:center;gap:4px;padding:5px 10px;border:1px solid var(--line-soft);border-radius:999px;background:var(--surface-2);color:var(--muted);font-size:10px}.fork-seam strong{font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.session-workspace.with-panel.with-files.with-side-chat{grid-template-columns:minmax(300px,1fr) minmax(340px,min(var(--panel-width),45%)) 220px}
-.with-side-chat.with-files .panel-resizer{right:calc(max(340px,min(var(--panel-width),45%)) + 217px)}
+.session-workspace.with-panel.with-files.with-side-chat{grid-template-columns:minmax(300px,1fr) minmax(340px,min(var(--panel-width),45%,calc(100% - 520px))) 220px}
+.with-side-chat.with-files .panel-resizer{right:calc(max(340px,min(var(--panel-width),45%,calc(100% - 520px))) + 217px)}
 .side-chat-messages .chat-timeline{gap:16px}.side-chat-messages .chat-assistant-turn{margin-bottom:12px}
 .subagent-pane{height:100%;min-height:0;display:flex;flex-direction:column;background:transparent}.subagent-pane>header{min-height:48px;display:flex;align-items:center;gap:9px;padding:5px 14px;border-bottom:1px solid var(--line-soft)}.subagent-pane>header strong{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}.subagent-pane-status{color:var(--muted);font-size:10px;text-transform:capitalize}.subagent-pane-status.failed,.subagent-pane-status.interrupted{color:var(--red)}.subagent-pane-messages{flex:1;min-height:0;padding:22px 18px 12px}.subagent-pane-messages .chat-timeline{max-width:100%;width:100%;gap:16px}.subagent-pane-messages .chat-user-turn{max-width:94%}.subagent-pane-messages .chat-assistant-turn{margin-bottom:12px}
 @media(max-width:900px){.session-workspace.with-panel.with-files.with-side-chat{grid-template-columns:0 minmax(0,1fr) 230px}.with-side-chat.with-files .panel-resizer{display:none}}
@@ -1104,12 +1104,17 @@ html[data-input-modality="pointer"] .ade[data-native-material="increased-contras
 /* Size the three live surfaces from the actual workspace width. A narrow
    window keeps both right panels usable and lets the chat return on resize. */
 .main-shell{container:workspace / inline-size}
-.session-workspace.with-panel.with-files{grid-template-columns:minmax(300px,1fr) minmax(340px,min(var(--panel-width),calc(100% - 520px))) clamp(200px,22%,286px)}
-.session-workspace.with-panel.with-files .panel-resizer{right:calc(max(340px,min(var(--panel-width),calc(100% - 520px))) + clamp(200px,22%,286px) - 3px)}
+.session-workspace.with-panel.with-files{grid-template-columns:minmax(300px,1fr) minmax(340px,min(var(--panel-width),45%,calc(100% - 520px))) clamp(200px,22%,286px)}
+.session-workspace.with-panel.with-files .panel-resizer{right:calc(max(340px,min(var(--panel-width),45%,calc(100% - 520px))) + clamp(200px,22%,286px) - 3px)}
 @container workspace (max-width:840px){
  .session-workspace.with-panel.with-files{grid-template-columns:0 minmax(0,1fr) clamp(200px,28%,230px)}
  .session-workspace.with-panel.with-files .conversation{visibility:hidden}
  .session-workspace.with-panel.with-files .panel-resizer{opacity:0;pointer-events:none}
+}
+@container workspace (max-width:860px){
+ .session-workspace.with-panel.with-files.with-side-chat{grid-template-columns:0 minmax(0,1fr) clamp(200px,28%,230px)}
+ .session-workspace.with-panel.with-files.with-side-chat .conversation{visibility:hidden}
+ .session-workspace.with-panel.with-files.with-side-chat .panel-resizer{opacity:0;pointer-events:none}
 }
 .file-identity-icon{display:block;flex:none;width:16px;height:16px;object-fit:contain}
 .file-list .file-identity-icon{width:16px;height:16px}

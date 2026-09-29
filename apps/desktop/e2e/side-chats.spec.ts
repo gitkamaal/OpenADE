@@ -91,6 +91,18 @@ test("native-shaped controls open child tabs, preserve drafts and keep transcrip
   await expect(page.getByRole("region",{name:"Side chats"}).getByRole("button",{name:/Open side chat/})).toHaveCount(3);
 });
 
+test('side chat and files stay within the minimum native window width',async({request,page})=>{
+ await page.setViewportSize({width:1040,height:680});const source=await create(request,'Narrow side chat panels');await expect.poll(()=>status(request,source.id)).toBe('completed');await ready(page);await open(page,'Narrow side chat panels');await page.getByRole('button',{name:'Toggle files panel'}).click();await page.locator('.session-header').getByRole('button',{name:'New side chat'}).click();
+ await expect.poll(async()=>Math.round((await page.locator('.side-chat-pane').boundingBox())!.width)).toBeGreaterThanOrEqual(300);
+ await expect.poll(async()=>{const workspace=(await page.locator('.session-workspace').boundingBox())!,files=(await page.locator('.files-index').boundingBox())!;return Math.round(files.x+files.width-workspace.x-workspace.width);}).toBeLessThanOrEqual(1);
+ await expect.poll(async()=>page.locator('.conversation').evaluate(el=>getComputedStyle(el).visibility)).toBe('hidden');
+ await page.getByRole('button',{name:'Collapse sidebar'}).click();await expect.poll(async()=>page.locator('.conversation').evaluate(el=>getComputedStyle(el).visibility)).toBe('visible');
+ const right=page.getByRole('separator',{name:'Resize right sidebar',exact:true});
+ await expect.poll(async()=>Math.abs(Math.round((await page.locator('.work-panel').boundingBox())!.width)-Number(await right.getAttribute('aria-valuenow')))).toBeLessThanOrEqual(1);
+ await page.getByRole('button',{name:'Toggle sidebar'}).click();await expect.poll(async()=>page.locator('.conversation').evaluate(el=>getComputedStyle(el).visibility)).toBe('hidden');
+ await page.setViewportSize({width:1280,height:800});await expect.poll(async()=>page.locator('.conversation').evaluate(el=>getComputedStyle(el).visibility)).toBe('visible');
+});
+
 test("fork freezes the last completed response while the parent continues working",async({request})=>{
   const source=await create(request,"Earlier completed answer");
   await expect.poll(()=>status(request,source.id)).toBe("completed");

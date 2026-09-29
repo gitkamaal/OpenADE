@@ -2,7 +2,7 @@ import {useEffect,useRef,useState} from "react";
 
 // Pointer capture keeps the seam usable without a painted drag indicator.
 // Persist only on completion; coalesce layout changes to one per animation frame.
-export function ResizeBoundary({className,label,width,min,max,defaultWidth,fraction,direction=1,onResize,onCommit}:{className:string;label:string;width:number;min:number;max:number;defaultWidth:number;fraction?:number;direction?:number;onResize:(width:number)=>void;onCommit:(width:number)=>void}) {
+export function ResizeBoundary({className,label,width,min,max,defaultWidth,fraction,reserve=0,collapseAt=0,direction=1,onResize,onCommit}:{className:string;label:string;width:number;min:number;max:number;defaultWidth:number;fraction?:number;reserve?:number;collapseAt?:number;direction?:number;onResize:(width:number)=>void;onCommit:(width:number)=>void}) {
  const element=useRef<HTMLDivElement>(null);
  const drag=useRef<{x:number;width:number;pending:number;frame:number|null;fallback:number|null;root:Element|null}|null>(null);
  const [limit,setLimit]=useState(max);
@@ -10,9 +10,9 @@ export function ResizeBoundary({className,label,width,min,max,defaultWidth,fract
  const clamp=(value:number)=>Math.round(Math.max(effectiveMin,Math.min(limit,value)));
  useEffect(()=>{
   const parent=element.current?.parentElement;if(!parent||!fraction){setLimit(max);return;}
-  const measure=()=>setLimit(Math.max(0,Math.min(max,Math.floor(parent.getBoundingClientRect().width*fraction))));
+  const measure=()=>{const available=parent.getBoundingClientRect().width;setLimit(available<=collapseAt?0:Math.max(0,Math.min(max,Math.floor(available*fraction),reserve?Math.max(min,Math.floor(available-reserve)):max)));};
   measure();const observer=new ResizeObserver(measure);observer.observe(parent);return()=>observer.disconnect();
- },[fraction,min,max]);
+ },[fraction,min,max,reserve,collapseAt]);
  const finish=()=>{
   const current=drag.current;if(!current)return;
   drag.current=null;if(current.frame!==null)cancelAnimationFrame(current.frame);
