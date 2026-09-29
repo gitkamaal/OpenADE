@@ -73,6 +73,19 @@ test('text and work keep provider event order in the chat timeline',async({reque
  await expect(parts).toHaveCount(3);
 });
 
+test('streamed text and work appear in provider order before the turn completes',async({request,page})=>{
+ const session=await create(request,'Live interleaved stream',{agent:'codex',prompt:'interleaved-live'});
+ const gate=path.join(tmp,'provider-home','interleaved-live-'+session.id);
+ try{
+  await ready(page);await open(page,'Live interleaved stream');
+  const parts=page.locator('.chat-assistant-turn').last().locator(':scope > .markdown-body, :scope > .chat-activity-segment');
+  await expect(parts).toHaveCount(1);await expect(parts.nth(0)).toHaveText('First visible text.');
+  fs.writeFileSync(gate+'.tool','');await expect(parts).toHaveCount(2);await expect(parts.nth(1).locator('summary')).toHaveText('Ran 1 command');
+  fs.writeFileSync(gate+'.text','');await expect(parts).toHaveCount(3);await expect(parts.nth(2)).toHaveText('Second visible text.');
+  fs.writeFileSync(gate+'.done','');await expect.poll(()=>status(request,session.id)).toBe('completed');await expect(parts).toHaveCount(3);
+ }finally{await request.post(`${daemon}/api/sessions/${session.id}/stop`);}
+});
+
 test('thinking separated by assistant text remains in two ordered work groups',async({request,page})=>{
  const session=await create(request,'Interleaved thinking',{agent:'codex',prompt:'interleaved-thinking'});
  await expect.poll(()=>status(request,session.id)).toBe('completed');

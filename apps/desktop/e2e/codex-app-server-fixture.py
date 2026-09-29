@@ -32,6 +32,23 @@ def work(turn,prompt):
   notify('thread/tokenUsage/updated',{'threadId':thread,'turnId':turn,'tokenUsage':{'last':{},'modelContextWindow':200000}})
   notify('turn/completed',{'threadId':thread,'turn':{'id':turn,'status':'completed'}})
   return
+ if 'interleaved-live' in prompt:
+  gate=os.path.join(os.environ['OPENADE_PROVIDER_HOME'],'interleaved-live-'+sid)
+  notify('item/agentMessage/delta',{'threadId':thread,'turnId':turn,'itemId':'message','delta':'First visible text. '})
+  for phase in ('tool','text','done'):
+   deadline=time.monotonic()+10
+   while not os.path.exists(gate+'.'+phase) and time.monotonic()<deadline and state.get(turn,{}).get('active'):
+    time.sleep(.02)
+   if not state.get(turn,{}).get('active'):return
+   if phase=='tool':
+    notify('item/started',{'threadId':thread,'turnId':turn,'item':{'id':'inspect','type':'commandExecution','command':'printf inspected'}})
+    notify('item/completed',{'threadId':thread,'turnId':turn,'item':{'id':'inspect','type':'commandExecution','command':'printf inspected','aggregatedOutput':'inspected'}})
+   elif phase=='text':
+    notify('item/agentMessage/delta',{'threadId':thread,'turnId':turn,'itemId':'message','delta':'Second visible text.'})
+  state[turn]['active']=False
+  notify('item/completed',{'threadId':thread,'turnId':turn,'item':{'id':'message','type':'agentMessage','text':'First visible text. Second visible text.'}})
+  notify('turn/completed',{'threadId':thread,'turn':{'id':turn,'status':'completed'}})
+  return
  if 'stream-visible-burst' in prompt:
   notify('item/agentMessage/delta',{'threadId':thread,'turnId':turn,'itemId':'message','delta':'Live stream '+('chunk '*1800)+'FIRST_CHUNK_END'})
   time.sleep(4)
