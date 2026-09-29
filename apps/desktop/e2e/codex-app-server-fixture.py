@@ -32,6 +32,17 @@ def work(turn,prompt):
   notify('thread/tokenUsage/updated',{'threadId':thread,'turnId':turn,'tokenUsage':{'last':{},'modelContextWindow':200000}})
   notify('turn/completed',{'threadId':thread,'turn':{'id':turn,'status':'completed'}})
   return
+ if 'context-snake-usage' in prompt or 'context-snake-reset' in prompt:
+  state[turn]['active']=False
+  reset='context-snake-reset' in prompt
+  notify('thread/tokenUsage/updated',{'threadId':thread,'turnId':turn,'token_usage':{'last':{'input_tokens':0 if reset else 61000,'output_tokens':0 if reset else 3000},'model_context_window':0 if reset else 256000}})
+  notify('turn/completed',{'threadId':thread,'turn':{'id':turn,'status':'completed'}})
+  return
+ if 'context-snake-total' in prompt:
+  state[turn]['active']=False
+  notify('thread/tokenUsage/updated',{'threadId':thread,'turnId':turn,'token_usage':{'last':{'total_tokens':90000,'input_tokens':100,'output_tokens':100}}})
+  notify('turn/completed',{'threadId':thread,'turn':{'id':turn,'status':'completed'}})
+  return
  if 'interleaved-live' in prompt:
   gate=os.path.join(os.environ['OPENADE_PROVIDER_HOME'],'interleaved-live-'+sid)
   notify('item/agentMessage/delta',{'threadId':thread,'turnId':turn,'itemId':'message','delta':'First visible text. '})

@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/google/uuid"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 const codexIdleTimeout = 2 * time.Minute
@@ -99,6 +101,27 @@ type ProviderContext struct {
 	Tokens *uint64 `json:"tokens"`
 	Window *uint64 `json:"window"`
 }
+type codexUsageCounts struct {
+	TotalTokens       *uint64 `json:"totalTokens"`
+	TotalTokensSnake  *uint64 `json:"total_tokens"`
+	InputTokens       *uint64 `json:"inputTokens"`
+	InputTokensSnake  *uint64 `json:"input_tokens"`
+	OutputTokens      *uint64 `json:"outputTokens"`
+	OutputTokensSnake *uint64 `json:"output_tokens"`
+}
+type codexTokenUsage struct {
+	Last                    codexUsageCounts `json:"last"`
+	ModelContextWindow      *uint64          `json:"modelContextWindow"`
+	ModelContextWindowSnake *uint64          `json:"model_context_window"`
+}
+
+func firstCodexCount(primary, fallback *uint64) *uint64 {
+	if primary != nil {
+		return primary
+	}
+	return fallback
+}
+
 type ProviderState struct {
 	Connected bool              `json:"connected"`
 	Steering  bool              `json:"steering"`
@@ -623,10 +646,8 @@ func (c *codexConversation) handle(frame providerRPCFrame) {
 			SavedPathSnake                                          string                        `json:"saved_path"`
 			Failure                                                 json.RawMessage               `json:"failure"`
 		} `json:"item"`
-		TokenUsage struct {
-			Last               struct{ TotalTokens, InputTokens, OutputTokens *uint64 }
-			ModelContextWindow *uint64
-		} `json:"tokenUsage"`
+		TokenUsage                            *codexTokenUsage   `json:"tokenUsage"`
+		TokenUsageSnake                       *codexTokenUsage   `json:"token_usage"`
 		Questions                             []ProviderQuestion `json:"questions"`
 		Command, Reason, GrantRoot, Cwd, Kind string
 		NetworkApprovalContext                json.RawMessage   `json:"networkApprovalContext"`
@@ -904,15 +925,26 @@ func (c *codexConversation) handle(frame providerRPCFrame) {
 			c.emit(map[string]any{"type": "openade.tool", "id": p.Item.ID, "title": subagentControlTitle(p.Item.Tool), "detail": p.Item.Status})
 		}
 	case "thread/tokenUsage/updated":
-		tokens := p.TokenUsage.Last.TotalTokens
-		if tokens == nil && p.TokenUsage.Last.InputTokens != nil {
-			n := *p.TokenUsage.Last.InputTokens
-			if p.TokenUsage.Last.OutputTokens != nil {
-				n += *p.TokenUsage.Last.OutputTokens
+		usage := p.TokenUsage
+		if usage == nil {
+			usage = p.TokenUsageSnake
+		}
+		if usage == nil {
+			break
+		}
+		tokens := firstCodexCount(usage.Last.TotalTokens, usage.Last.TotalTokensSnake)
+		if input := firstCodexCount(usage.Last.InputTokens, usage.Last.InputTokensSnake); tokens == nil && input != nil {
+			n := *input
+			if output := firstCodexCount(usage.Last.OutputTokens, usage.Last.OutputTokensSnake); output != nil {
+				if *output > math.MaxUint64-n {
+					n = math.MaxUint64
+				} else {
+					n += *output
+				}
 			}
 			tokens = &n
 		}
-		window := p.TokenUsage.ModelContextWindow
+		window := firstCodexCount(usage.ModelContextWindow, usage.ModelContextWindowSnake)
 		if window != nil && *window == 0 {
 			window = nil
 		}

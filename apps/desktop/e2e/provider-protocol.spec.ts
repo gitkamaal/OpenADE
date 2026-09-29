@@ -52,6 +52,17 @@ test('known context capacity remains visible while token use is unavailable',asy
  await page.reload();await expect(ring).toBeVisible();
 });
 
+test('Codex snake case usage and zero-token reset keep the context meter accurate',async({request,page})=>{
+ const session=await create(request,'Snake case context',{agent:'codex',prompt:'context-snake-usage'});
+ await expect.poll(()=>status(request,session.id)).toBe('completed');await expect.poll(async()=>(await state(request,session.id)).context).toEqual({tokens:64000,window:256000});
+ await ready(page);await open(page,'Snake case context');await expect(page.getByRole('button',{name:'Context usage 25%'})).toBeVisible();
+ expect((await request.post(`${daemon}/api/sessions/${session.id}/messages`,{data:{text:'context-snake-total'}})).status()).toBe(202);
+ await expect.poll(()=>status(request,session.id)).toBe('completed');await expect.poll(async()=>(await state(request,session.id)).context).toEqual({tokens:90000,window:256000});await expect(page.getByRole('button',{name:'Context usage 35%'})).toBeVisible();
+ expect((await request.post(`${daemon}/api/sessions/${session.id}/messages`,{data:{text:'context-snake-reset'}})).status()).toBe(202);
+ await expect.poll(()=>status(request,session.id)).toBe('completed');await expect.poll(async()=>(await state(request,session.id)).context).toEqual({tokens:0,window:256000});
+ const ring=page.getByRole('button',{name:'Context usage 0%'});await expect(ring).toBeVisible();await ring.click();await expect(page.getByRole('dialog',{name:'Context usage details'})).toContainText('0 / 256,000 tokens');await page.reload();await expect(ring).toBeVisible();
+});
+
 test('delivered stream text becomes visible before the provider finishes',async({request,page})=>{
  const session=await create(request,'Live stream fidelity',{agent:'codex',prompt:'stream-visible-burst'});
  await ready(page);await open(page,'Live stream fidelity');
