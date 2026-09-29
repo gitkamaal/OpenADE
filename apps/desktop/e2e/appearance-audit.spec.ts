@@ -54,6 +54,9 @@ test('seamless pointer and keyboard resize preserve focus, avoid selection and c
  await page.reload();await expect(seam).toHaveAttribute('aria-valuenow','400');await seam.dblclick();await expect(seam).toHaveAttribute('aria-valuenow','256');
  await panel(page,'Terminal');const right=page.getByRole('separator',{name:'Resize right sidebar',exact:true});await right.focus();const before=Number(await right.getAttribute('aria-valuenow'));await right.press('ArrowLeft');await expect(right).toHaveAttribute('aria-valuenow',String(before+8));await right.press('End');const max=await right.getAttribute('aria-valuemax');await expect(right).toHaveAttribute('aria-valuenow',max!);await right.dblclick();await expect(right).toHaveAttribute('aria-valuenow','520');
  await page.getByLabel('Close right sidebar',{exact:true}).click();await expect(page.locator('.resize-boundary:focus')).toHaveCount(0);
+ const stalled=(await seam.boundingBox())!;await page.evaluate(()=>{window.requestAnimationFrame=()=>0;});
+ await page.mouse.move(stalled.x+stalled.width/2,stalled.y+80);await page.mouse.down();await page.mouse.move(stalled.x+stalled.width/2+48,stalled.y+80);
+ await expect(seam).toHaveAttribute('aria-valuenow','304');await page.mouse.up();await expect(page.locator('.ade')).not.toHaveClass(/is-resizing/);
 });
 
 test('live themes reach editor and terminal while accessibility fallbacks preserve shell input focus',async({page,request})=>{
