@@ -655,6 +655,14 @@ func (d *Daemon) handleSteerQueuedMessage(w http.ResponseWriter, r *http.Request
 		}
 		return
 	}
+	if handled, err := d.sessions.steerClaude(sessionID, r.PathValue("messageID")); handled {
+		if err != nil {
+			writeError(w, http.StatusConflict, err)
+		} else {
+			w.WriteHeader(http.StatusNoContent)
+		}
+		return
+	}
 	if err := d.store.PromoteQueuedMessage(sessionID, r.PathValue("messageID")); err != nil {
 		writeError(w, http.StatusConflict, err)
 		return

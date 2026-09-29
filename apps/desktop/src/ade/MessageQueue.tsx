@@ -23,10 +23,12 @@ export function MessageQueue({
 }) {
   if (messages.length === 0) return null;
  const uncertain=messages.filter(message=>message.status==="uncertain").length;
+ const sending=messages.filter(message=>message.status==="steering"||message.status==="provider-starting"||message.status==="dispatching").length;
+ const queued=messages.length-uncertain-sending;
 
   return (
     <section className="message-queue" aria-label="Queued messages">
-      <span className="queue-progress">{uncertain?`${uncertain} unconfirmed · review before resending`:`${messages.length} queued · sends after this turn`}</span>
+      <span className="queue-progress">{uncertain?`${uncertain} unconfirmed · review before resending`:sending?`${sending} sending now${queued?` · ${queued} queued`:""}`:`${queued} queued · sends after this turn`}</span>
       <div className="queue-list">
         {messages.map((message, index) => (
           <article className={`queue-item ${message.status} ${sendingId === message.id ? "sending" : ""}`} key={message.id}>

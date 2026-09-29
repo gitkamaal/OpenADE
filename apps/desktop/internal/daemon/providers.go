@@ -34,7 +34,9 @@ func providerCapabilities(agent string) ProviderCapabilities {
 		return ProviderCapabilities{NativeChat: true, Resume: true, PersistentTurns: true, Interrupt: true, Usage: true, Transport: "cursor-sdk-jsonl"}
 	}
 	switch agent {
-	case "claude", "claude-code", "codex", "codex-cli":
+	case "claude", "claude-code":
+		return ProviderCapabilities{NativeChat: true, DirectTUI: true, Resume: true, Interrupt: true, MidTurnSteering: true, Permissions: true, Usage: true, Transport: "structured-pipe"}
+	case "codex", "codex-cli":
 		return ProviderCapabilities{NativeChat: true, DirectTUI: true, Resume: true, Interrupt: true, Transport: "structured-pipe"}
 	case "copilot", "github-copilot":
 		return ProviderCapabilities{DirectTUI: true, Resume: true, Interrupt: true, Transport: "raw-pty"}

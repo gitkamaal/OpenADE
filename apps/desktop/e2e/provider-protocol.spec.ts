@@ -68,6 +68,153 @@ test('Claude clears the old window when its actual model changes mid-conversatio
  }finally{fs.writeFileSync(gate+'.go','');await request.post(`${daemon}/api/sessions/${session.id}/stop`);}
 });
 
+test('Claude accepts a queued message into the active stream only after replay confirms it',async({request,page})=>{
+ const session=await create(request,'Claude live steering',{agent:'claude',prompt:'claude-steer-hold'});
+ const gate=path.join(tmp,'provider-home','claude-steer-'+session.id);
+ try{
+  await expect.poll(()=>fs.existsSync(gate+'.ready')).toBe(true);
+  await ready(page);await open(page,'Claude live steering');
+  await expect(page.getByText('Before steering.',{exact:true})).toBeVisible();
+  const response=await request.post(`${daemon}/api/sessions/${session.id}/message-queue`,{data:{text:'Steer into Claude'}});expect(response.status()).toBe(202);
+  const queued=await response.json();
+  const row=page.getByRole('region',{name:'Queued messages'}).filter({hasText:'Steer into Claude'});
+  await expect(row.getByRole('button',{name:'Send now'})).toBeVisible();
+  await row.getByRole('button',{name:'Send now'}).click();
+  await expect.poll(()=>fs.existsSync(gate+'.seen')).toBe(true);
+  const frame=JSON.parse(fs.readFileSync(gate+'.jsonl','utf8').trim());
+  expect(frame).toMatchObject({type:'user',priority:'now',message:{role:'user',content:'Steer into Claude'}});
+  expect(frame.uuid).toMatch(/^[0-9a-f-]{36}$/);
+  await expect.poll(async()=>{const queue=await(await request.get(`${daemon}/api/sessions/${session.id}/message-queue`)).json();return queue.messages.find((item:any)=>item.id===queued.id)?.status;}).toBe('steering');
+  await expect(page.getByText('Steer into Claude',{exact:true})).toHaveCount(1);
+  fs.writeFileSync(gate+'.go','');
+  await expect.poll(()=>status(request,session.id)).toBe('completed');
+  await expect.poll(async()=>{const queue=await(await request.get(`${daemon}/api/sessions/${session.id}/message-queue`)).json();return queue.messages.length;}).toBe(0);
+  await expect(page.getByText('After steering.',{exact:true})).toBeVisible();
+  const events=fs.readFileSync(path.join(tmp,'data/transcripts',session.id+'.log'),'utf8').split('\n').filter(Boolean).map(line=>JSON.parse(line));
+  expect(events.filter(event=>event.type==='openade.user_message').map(event=>event.text).at(-1)).toBe('Steer into Claude');
+  await page.reload();await expect(page.getByText('After steering.',{exact:true})).toBeVisible();
+ }finally{fs.writeFileSync(gate+'.go','');await request.post(`${daemon}/api/sessions/${session.id}/stop`);}
+});
+
+test('Claude waits for an open tool before steering and keeps a result boundary until replay',async({request})=>{
+ for(const variant of ['tool','boundary']){
+  const session=await create(request,`Claude steer ${variant}`,{agent:'claude',prompt:`claude-steer-${variant}`});
+  const gate=path.join(tmp,'provider-home','claude-steer-'+session.id);
+  try{
+   await expect.poll(()=>fs.existsSync(gate+'.ready')).toBe(true);
+   const queued=await(await request.post(`${daemon}/api/sessions/${session.id}/message-queue`,{data:{text:`During ${variant}`}})).json();
+   expect((await request.post(`${daemon}/api/sessions/${session.id}/message-queue/${queued.id}/steer`)).status()).toBe(204);
+   await expect.poll(()=>fs.existsSync(gate+'.seen')).toBe(true);
+   const frame=JSON.parse(fs.readFileSync(gate+'.jsonl','utf8').trim());
+   expect(frame.priority).toBe(variant==='tool'?'next':'now');
+   await expect.poll(async()=>{const queue=await(await request.get(`${daemon}/api/sessions/${session.id}/message-queue`)).json();return queue.messages.find((item:any)=>item.id===queued.id)?.status;}).toBe('steering');
+   expect(await status(request,session.id)).toBe('running');
+   fs.writeFileSync(gate+'.go','');
+   await expect.poll(()=>status(request,session.id)).toBe('completed');
+   const events=fs.readFileSync(path.join(tmp,'data/transcripts',session.id+'.log'),'utf8').split('\n').filter(Boolean).map(line=>JSON.parse(line));
+   expect(events.filter(event=>event.type==='openade.user_message').map(event=>event.text).at(-1)).toBe(`During ${variant}`);
+   expect(events.filter(event=>event.type==='result')).toHaveLength(1);
+  }finally{fs.writeFileSync(gate+'.go','');await request.post(`${daemon}/api/sessions/${session.id}/stop`);}
+ }
+});
+
+test('one replay confirms rapid Claude steers in their queued order',async({request})=>{
+ const session=await create(request,'Claude rapid steers',{agent:'claude',prompt:'claude-steer-rapid'});
+ const gate=path.join(tmp,'provider-home','claude-steer-'+session.id);
+ try{
+  await expect.poll(()=>fs.existsSync(gate+'.ready')).toBe(true);
+  const ids=[] as string[];
+  for(const text of ['First steer','Second steer']){
+   const queued=await(await request.post(`${daemon}/api/sessions/${session.id}/message-queue`,{data:{text}})).json();ids.push(queued.id);
+   expect((await request.post(`${daemon}/api/sessions/${session.id}/message-queue/${queued.id}/steer`)).status()).toBe(204);
+  }
+  await expect.poll(()=>fs.existsSync(gate+'.seen')).toBe(true);
+  const frames=fs.readFileSync(gate+'.jsonl','utf8').trim().split('\n').map(line=>JSON.parse(line));
+  expect(frames.map(frame=>frame.message.content)).toEqual(['First steer','Second steer']);
+  fs.writeFileSync(gate+'.go','');
+  await expect.poll(()=>status(request,session.id)).toBe('completed');
+  await expect.poll(async()=>{const queue=await(await request.get(`${daemon}/api/sessions/${session.id}/message-queue`)).json();return queue.messages.length;}).toBe(0);
+  const events=fs.readFileSync(path.join(tmp,'data/transcripts',session.id+'.log'),'utf8').split('\n').filter(Boolean).map(line=>JSON.parse(line));
+  expect(events.filter(event=>event.type==='openade.user_message').map(event=>event.text).slice(-2)).toEqual(['First steer','Second steer']);
+ }finally{fs.writeFileSync(gate+'.go','');await request.post(`${daemon}/api/sessions/${session.id}/stop`);}
+});
+
+test('editing a Claude queue entry races safely with its steering claim',async({request})=>{
+ const session=await create(request,'Claude atomic steer',{agent:'claude',prompt:'claude-steer-hold'});
+ const gate=path.join(tmp,'provider-home','claude-steer-'+session.id);
+ try{
+  await expect.poll(()=>fs.existsSync(gate+'.ready')).toBe(true);
+  const queued=await(await request.post(`${daemon}/api/sessions/${session.id}/message-queue`,{data:{text:'Original Claude steer'}})).json();
+  const [edit,steer]=await Promise.all([
+   request.put(`${daemon}/api/sessions/${session.id}/message-queue/${queued.id}`,{data:{text:'Edited Claude steer'}}),
+   request.post(`${daemon}/api/sessions/${session.id}/message-queue/${queued.id}/steer`),
+  ]);
+  expect([204,409]).toContain(edit.status());expect(steer.status()).toBe(204);
+  await expect.poll(()=>fs.existsSync(gate+'.seen')).toBe(true);
+  const expected=edit.status()===204?'Edited Claude steer':'Original Claude steer';
+  const frame=JSON.parse(fs.readFileSync(gate+'.jsonl','utf8').trim());expect(frame.message.content).toBe(expected);
+  fs.writeFileSync(gate+'.go','');await expect.poll(()=>status(request,session.id)).toBe('completed');
+  const events=fs.readFileSync(path.join(tmp,'data/transcripts',session.id+'.log'),'utf8').split('\n').filter(Boolean).map(line=>JSON.parse(line));
+  expect(events.filter(event=>event.type==='openade.user_message').map(event=>event.text).at(-1)).toBe(expected);
+ }finally{fs.writeFileSync(gate+'.go','');await request.post(`${daemon}/api/sessions/${session.id}/stop`);}
+});
+
+test('Claude exit without user replay keeps the attempted steer unconfirmed',async({request})=>{
+ const session=await create(request,'Claude lost replay',{agent:'claude',prompt:'claude-steer-lost'});
+ const gate=path.join(tmp,'provider-home','claude-steer-'+session.id);
+ try{
+  await expect.poll(()=>fs.existsSync(gate+'.ready')).toBe(true);
+  const queued=await(await request.post(`${daemon}/api/sessions/${session.id}/message-queue`,{data:{text:'Do not resend automatically'}})).json();
+  expect((await request.post(`${daemon}/api/sessions/${session.id}/message-queue/${queued.id}/steer`)).status()).toBe(204);
+  await expect.poll(()=>fs.existsSync(gate+'.seen')).toBe(true);
+  fs.writeFileSync(gate+'.go','');
+  await expect.poll(()=>status(request,session.id)).toBe('completed');
+  await expect.poll(async()=>{const queue=await(await request.get(`${daemon}/api/sessions/${session.id}/message-queue`)).json();return queue.messages.find((item:any)=>item.id===queued.id)?.status;}).toBe('uncertain');
+  const transcript=fs.readFileSync(path.join(tmp,'data/transcripts',session.id+'.log'),'utf8');
+  expect(transcript).toContain('Claude did not replay 1 queued message');
+  const events=transcript.split('\n').filter(Boolean).map(line=>JSON.parse(line));
+  expect(events.filter(event=>event.type==='openade.user_message').map(event=>event.text)).not.toContain('Do not resend automatically');
+ }finally{fs.writeFileSync(gate+'.go','');await request.post(`${daemon}/api/sessions/${session.id}/stop`);}
+});
+
+test('Claude closes a stalled steering input and releases the process after the bounded wait',async({request})=>{
+ const session=await create(request,'Claude stalled replay',{agent:'claude',prompt:'claude-steer-timeout'});
+ const gate=path.join(tmp,'provider-home','claude-steer-'+session.id);
+ try{
+  await expect.poll(()=>fs.existsSync(gate+'.ready')).toBe(true);
+  const queued=await(await request.post(`${daemon}/api/sessions/${session.id}/message-queue`,{data:{text:'Stalled replay'}})).json();
+  expect((await request.post(`${daemon}/api/sessions/${session.id}/message-queue/${queued.id}/steer`)).status()).toBe(204);
+  await expect.poll(()=>fs.existsSync(gate+'.seen')).toBe(true);
+  await expect.poll(()=>fs.existsSync(gate+'.input-closed'),{timeout:12000}).toBe(true);
+  await expect.poll(()=>status(request,session.id)).toBe('completed');
+  await expect.poll(async()=>{const queue=await(await request.get(`${daemon}/api/sessions/${session.id}/message-queue`)).json();return queue.messages.find((item:any)=>item.id===queued.id)?.status;}).toBe('uncertain');
+ }finally{fs.writeFileSync(gate+'.go','');await request.post(`${daemon}/api/sessions/${session.id}/stop`);}
+});
+
+test('daemon restart does not resend an unconfirmed Claude steer',async()=>{
+ const port=await freePort(),base=`http://127.0.0.1:${port}`,data=path.join(tmp,'claude-steer-restart');
+ const headers={Authorization:`Bearer ${token}`,'Content-Type':'application/json'};
+ const launch=()=>spawn(path.join(tmp,'openade-e2e'),['--daemon','--addr',`127.0.0.1:${port}`,'--data-dir',data],{env:{...process.env,PATH:path.join(tmp,'bin')+':'+process.env.PATH,OPENADE_PROVIDER_HOME:path.join(tmp,'provider-home'),OPENADE_AUTH_TOKEN:token},stdio:'ignore'});
+ const send=(url:string,method='GET',body?:unknown)=>fetch(base+url,{method,headers,body:body===undefined?undefined:JSON.stringify(body)});
+ const ready=()=>expect.poll(async()=>{try{return(await fetch(base+'/api/health')).status;}catch{return 0;}}).toBe(200);
+ const stop=async(child:ReturnType<typeof launch>)=>{if(child.exitCode!==null)return;const ended=new Promise<void>(resolve=>child.once('exit',()=>resolve()));child.kill('SIGTERM');await ended;};
+ let child=launch(),gate='';
+ try{
+  await ready();
+  const response=await send('/api/sessions','POST',{title:'Claude steer restart',prompt:'claude-steer-hold',agent:'claude',mode:'chat',repo_root:''});
+  expect(response.status).toBe(201);const session=await response.json();gate=path.join(tmp,'provider-home','claude-steer-'+session.id);
+  await expect.poll(()=>fs.existsSync(gate+'.ready')).toBe(true);
+  const queued=await(await send(`/api/sessions/${session.id}/message-queue`,'POST',{text:'Unconfirmed restart message'})).json();
+  expect((await send(`/api/sessions/${session.id}/message-queue/${queued.id}/steer`,'POST')).status).toBe(204);
+  await expect.poll(()=>fs.existsSync(gate+'.seen')).toBe(true);
+  await stop(child);child=launch();await ready();
+  await expect.poll(async()=>{const queue=await(await send(`/api/sessions/${session.id}/message-queue`)).json();return queue.messages.find((item:any)=>item.id===queued.id)?.status;}).toBe('uncertain');
+  const current=await(await send(`/api/sessions/${session.id}`)).json();expect(current.generation).toBe(1);
+  const transcript=fs.readFileSync(path.join(data,'transcripts',session.id+'.log'),'utf8');
+  expect(transcript.split('\n').filter(Boolean).map(line=>JSON.parse(line)).filter(event=>event.type==='openade.user_message').map(event=>event.text)).not.toContain('Unconfirmed restart message');
+ }finally{if(gate)fs.writeFileSync(gate+'.go','');await stop(child);}
+});
+
 test('known context capacity remains visible while token use is unavailable',async({request,page})=>{
  const session=await create(request,'Context capacity without usage',{agent:'codex',prompt:'context-window-only'});
  await expect.poll(()=>status(request,session.id)).toBe('completed');

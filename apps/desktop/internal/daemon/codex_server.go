@@ -243,6 +243,7 @@ func (m *SessionManager) providerState(session Session) ProviderState {
 	}
 	if c := m.claudeClient(id); c != nil {
 		state.Connected = true
+		state.Steering = c.steeringAvailable()
 		state.Requests = append(state.Requests, c.providerRequests()...)
 	}
 	sort.Slice(state.Requests, func(i, j int) bool { return state.Requests[i].order < state.Requests[j].order })
