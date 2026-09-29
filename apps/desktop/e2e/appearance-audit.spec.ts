@@ -106,7 +106,7 @@ test('action menus open visibly, navigate with arrows, return focus and perform 
 
 test('narrow panes retain readable diff choices, reachable actions and truthful resize limits',async({page,request})=>{
  await create(request,'Narrow pane audit');await page.setViewportSize({width:1280,height:720});await ready(page);await open(page,'Narrow pane audit');await panel(page,'Diffs');await page.getByLabel('Toggle files panel').click();const scope=page.getByRole('combobox',{name:'Diff scope',exact:true});await expect(scope).toBeVisible();expect(await scope.locator('span').evaluate(el=>el.clientWidth>=el.scrollWidth)).toBe(true);await choose(page,'Diff scope','turn');await expect(scope).toHaveAttribute('data-value','turn');const composer=page.locator('.session-composer');const cr=(await composer.boundingBox())!;const send=(await page.getByLabel('Send message').boundingBox())!;expect(send.x+send.width).toBeLessThanOrEqual(cr.x+cr.width);await expect(page.locator('.session-status-announcement')).toBeAttached();await expect(page.locator('.session-context .runtime-chip,.session-context .skills-shortcut')).toHaveCount(0);await shot(page,'15-narrow-workspace');
- await page.setViewportSize({width:1040,height:680});const left=page.getByRole('separator',{name:'Resize sidebar',exact:true});await left.focus();await left.press('End');const right=page.getByRole('separator',{name:'Resize right sidebar',exact:true});await expect(right).toHaveAttribute('aria-disabled','true');await expect.poll(()=>right.evaluate(el=>el.getAttribute('aria-valuenow')===el.getAttribute('aria-valuemax')&&el.getAttribute('aria-valuemin')===el.getAttribute('aria-valuemax'))).toBe(true);await expect(right).toHaveAttribute('tabindex','-1');await page.setViewportSize({width:1480,height:920});await expect(right).toHaveAttribute('aria-disabled','false');await expect(scope).toBeVisible();
+ await page.setViewportSize({width:1040,height:680});const left=page.getByRole('separator',{name:'Resize sidebar',exact:true});await left.focus();await left.press('End');const right=page.getByRole('separator',{name:'Resize right sidebar',exact:true});await expect(right).toHaveAttribute('aria-disabled','true');await expect.poll(async()=>Math.abs(Math.round((await page.locator('.work-panel-clip').boundingBox())!.width)-Number(await right.getAttribute('aria-valuenow')))).toBeLessThanOrEqual(1);await expect(right).toHaveAttribute('tabindex','-1');await expect(page.locator('.conversation')).toBeVisible();await page.setViewportSize({width:1480,height:920});await expect(right).toHaveAttribute('aria-disabled','false');await expect(scope).toBeVisible();
 });
 
 test('two right panels report the width they actually draw near the narrow breakpoint',async({page,request})=>{
@@ -220,14 +220,28 @@ test('chat, workspace and files reflow together when the window and sidebar chan
  const widths=async()=>({chat:(await conversation.boundingBox())!.width,work:(await work.boundingBox())!.width,files:(await files.boundingBox())!.width});
  await expect.poll(async()=>{const size=await widths();return size.chat>=300&&size.work>=340&&size.files>=200&&await workspace.evaluate(el=>el.scrollWidth<=el.clientWidth+1);}).toBe(true);
  await page.setViewportSize({width:1040,height:800});
- await expect.poll(async()=>{const size=await widths();return size.chat===0&&size.work>=500&&size.files>=200&&await workspace.evaluate(el=>el.scrollWidth<=el.clientWidth+1);}).toBe(true);
+ await expect.poll(async()=>{const size=await widths();return size.chat>=250&&size.work>=300&&size.files>=180&&await workspace.evaluate(el=>el.scrollWidth<=el.clientWidth+1);}).toBe(true);
+ await expect(conversation).toBeVisible();await expect(page.getByLabel('Session message')).toBeVisible();
  await page.getByLabel('Collapse sidebar').click();
  await expect.poll(async()=>{const size=await widths();return size.chat>=300&&size.work>=340&&size.files>=200&&await workspace.evaluate(el=>el.scrollWidth<=el.clientWidth+1);}).toBe(true);
  expect((await page.getByLabel('Toggle sidebar').boundingBox())!.x).toBeGreaterThanOrEqual(96);
  await page.getByLabel('Toggle sidebar').click();
- await expect.poll(async()=>{const size=await widths();return size.chat===0&&size.work>=500&&size.files>=200;}).toBe(true);
+ await expect.poll(async()=>{const size=await widths();return size.chat>=250&&size.work>=300&&size.files>=180;}).toBe(true);
+ await expect(conversation).toBeVisible();await expect(page.getByLabel('Session message')).toBeVisible();
+ await page.getByLabel('Close right sidebar').click();await page.getByLabel('Toggle right sidebar').click();
+ const right=page.getByRole('separator',{name:'Resize right sidebar',exact:true});
+ await expect.poll(async()=>Math.abs(Math.round((await work.boundingBox())!.width)-Number(await right.getAttribute('aria-valuenow')))).toBeLessThanOrEqual(1);
  await page.getByLabel('Close right sidebar').click();await page.getByLabel('Toggle files panel').click();
  await expect(conversation).toBeVisible();await expect.poll(async()=>(await conversation.boundingBox())!.width).toBeGreaterThan(600);
+});
+
+test('minimum-width first open reports the workspace width after its column animates',async({page,request})=>{
+ await page.setViewportSize({width:1040,height:680});await create(request,'Minimum first-open panels');await ready(page);await open(page,'Minimum first-open panels');
+ await page.getByLabel('Toggle files panel').click();await panel(page,'Browser');
+ const work=page.locator('.work-panel-clip'),right=page.getByRole('separator',{name:'Resize right sidebar',exact:true});
+ await expect.poll(async()=>Math.round((await work.boundingBox())!.width)).toBeGreaterThan(300);
+ await expect.poll(async()=>Math.abs(Math.round((await work.boundingBox())!.width)-Number(await right.getAttribute('aria-valuenow')))).toBeLessThanOrEqual(1);
+ await expect(right).toHaveAttribute('aria-disabled','true');await expect(page.getByLabel('Session message')).toBeVisible();
 });
 
 test('native titlebar drag targets keep the traffic-light lane and sidebar toggle separate',async({page,request})=>{
