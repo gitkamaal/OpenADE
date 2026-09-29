@@ -17,11 +17,12 @@ import (
 )
 
 type TerminalManager struct {
-	store    *Store
-	dataDir  string
-	mu       sync.RWMutex
-	live     map[string]*liveSession
-	stopping map[string]bool
+	store     *Store
+	dataDir   string
+	mu        sync.RWMutex
+	live      map[string]*liveSession
+	stopping  map[string]bool
+	deletions *deletionFence
 }
 
 type TerminalLaunch struct {
@@ -30,14 +31,24 @@ type TerminalLaunch struct {
 	Resume bool   `json:"resume"`
 }
 
-func NewTerminalManager(store *Store, dataDir string) *TerminalManager {
+func NewTerminalManager(store *Store, dataDir string, deletions *deletionFence) *TerminalManager {
 	return &TerminalManager{
 		store: store, dataDir: dataDir,
-		live: make(map[string]*liveSession), stopping: make(map[string]bool),
+		live: make(map[string]*liveSession), stopping: make(map[string]bool), deletions: deletions,
 	}
 }
 
 func (m *TerminalManager) Create(session Session, title string, launches ...TerminalLaunch) (TerminalSession, error) {
+	release, err := m.deletions.admit(session.ID)
+	if err != nil {
+		return TerminalSession{}, err
+	}
+	defer release()
+	fresh, err := m.store.GetSession(session.ID)
+	if err != nil {
+		return TerminalSession{}, err
+	}
+	session = fresh
 	terminals, err := m.store.ListTerminals(session.ID)
 	if err != nil {
 		return TerminalSession{}, err
@@ -61,7 +72,7 @@ func (m *TerminalManager) Create(session Session, title string, launches ...Term
 	}
 	cmd := exec.Command(program, args...)
 	cmd.Dir = session.WorktreePath
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "COLORTERM=truecolor", "OPENADE_SESSION_ID="+session.ID, "OPENADE_TERMINAL_KIND="+launch.Kind)
+	cmd.Env = processEnvironment("TERM=xterm-256color", "COLORTERM=truecolor", "OPENADE_SESSION_ID="+session.ID, "OPENADE_TERMINAL_KIND="+launch.Kind)
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 32, Cols: 100})
 	if err != nil {
 		return TerminalSession{}, fmt.Errorf("start project terminal: %w", err)
@@ -153,18 +164,22 @@ func (m *TerminalManager) readOutput(id string, live *liveSession, transcript *o
 		n, err := reader.Read(buf)
 		if n > 0 {
 			chunk := append([]byte(nil), buf[:n]...)
+			live.mu.Lock()
 			if transcript != nil {
 				_, _ = transcript.Write(chunk)
 			}
-			live.mu.Lock()
 			live.scrollback = append(live.scrollback, chunk...)
-			if len(live.scrollback) > maxScrollback {
-				live.scrollback = live.scrollback[len(live.scrollback)-maxScrollback:]
+			if len(live.scrollback) > 256*1024 {
+				copy(live.scrollback, live.scrollback[len(live.scrollback)-128*1024:])
+				live.scrollback = live.scrollback[:128*1024]
 			}
+
 			for subscriber := range live.subscribers {
 				select {
 				case subscriber <- chunk:
 				default:
+					delete(live.subscribers, subscriber)
+					close(subscriber)
 				}
 			}
 			live.mu.Unlock()
@@ -189,7 +204,6 @@ func (m *TerminalManager) wait(id string, live *liveSession, transcript *os.File
 	} else if err != nil {
 		status = "failed"
 	}
-	delete(m.live, id)
 	m.mu.Unlock()
 	if exitErr, ok := err.(*exec.ExitError); ok {
 		code = exitErr.ExitCode()
@@ -206,6 +220,12 @@ func (m *TerminalManager) wait(id string, live *liveSession, transcript *os.File
 	}
 	live.subscribers = make(map[chan []byte]struct{})
 	live.mu.Unlock()
+	// Keep the live entry until its persisted status is terminal. StopSession
+	// must never observe neither a process to wait for nor a completed row.
+	m.mu.Lock()
+	delete(m.live, id)
+	delete(m.stopping, id)
+	m.mu.Unlock()
 	close(live.done)
 }
 
@@ -241,11 +261,35 @@ func (m *TerminalManager) Stop(id string) error {
 	if live.cmd.Process == nil {
 		return nil
 	}
-	if err := signalProcessGroup(live, syscall.SIGTERM); err != nil {
+	if err := stopProcessGroup(live); err != nil {
 		m.mu.Lock()
 		delete(m.stopping, id)
 		m.mu.Unlock()
 		return err
+	}
+	return nil
+}
+
+// StopSession releases every owned terminal before its parent session is
+// removed. Terminal rows cascade with the session, but processes must finish
+// first so they cannot continue against a deleted conversation.
+func (m *TerminalManager) StopSession(sessionID string, timeout time.Duration) error {
+	terminals, err := m.store.ListTerminals(sessionID)
+	if err != nil {
+		return err
+	}
+	for _, terminal := range terminals {
+		if err := m.Stop(terminal.ID); err != nil {
+			return err
+		}
+		live, liveErr := m.getLive(terminal.ID)
+		if liveErr == nil {
+			select {
+			case <-live.done:
+			case <-time.After(timeout):
+				return fmt.Errorf("terminal did not stop in time")
+			}
+		}
 	}
 	return nil
 }
@@ -261,20 +305,20 @@ func (m *TerminalManager) Shutdown(ctx context.Context) {
 	shutdownLiveProcesses(ctx, lives)
 }
 
-func (m *TerminalManager) Subscribe(id string) ([]byte, <-chan []byte, func(), error) {
+func (m *TerminalManager) Subscribe(id string, after int64) (Replay, <-chan []byte, func(), error) {
 	live, err := m.getLive(id)
 	if err != nil {
 		if _, storeErr := m.store.GetTerminal(id); storeErr != nil {
-			return nil, nil, nil, storeErr
+			return Replay{}, nil, nil, storeErr
 		}
-		transcript, _ := os.ReadFile(filepath.Join(m.dataDir, "terminal-transcripts", id+".log"))
+		transcript, _ := readReplay(filepath.Join(m.dataDir, "terminal-transcripts", id+".log"), after)
 		closed := make(chan []byte)
 		close(closed)
 		return transcript, closed, func() {}, nil
 	}
 	ch := make(chan []byte, 128)
 	live.mu.Lock()
-	initial := append([]byte(nil), live.scrollback...)
+	initial, _ := readReplay(filepath.Join(m.dataDir, "terminal-transcripts", id+".log"), after)
 	live.subscribers[ch] = struct{}{}
 	live.mu.Unlock()
 	cancel := func() {

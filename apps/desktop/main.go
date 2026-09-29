@@ -26,19 +26,21 @@ func main() {
 
 	app := NewApp()
 	err := wails.Run(&options.App{
-		Title:            "OpenADE",
-		Width:            1480,
-		Height:           920,
-		MinWidth:         1040,
-		MinHeight:        680,
-		DisableResize:    false,
-		Fullscreen:       false,
-		BackgroundColour: &options.RGBA{R: 14, G: 16, B: 19, A: 1},
-		Mac:              &mac.Options{TitleBar: mac.TitleBarHiddenInset()},
-		AssetServer:      &assetserver.Options{Assets: assets},
-		OnStartup:        app.startup,
-		OnShutdown:       app.shutdown,
-		Bind:             []interface{}{app},
+		Title:                            "OpenADE",
+		EnableFraudulentWebsiteDetection: true,
+		Width:                            1480,
+		Height:                           920,
+		MinWidth:                         1040,
+		MinHeight:                        680,
+		DisableResize:                    false,
+		Fullscreen:                       false,
+		BackgroundColour:                 &options.RGBA{R: 0, G: 0, B: 0, A: 0},
+		Mac:                              &mac.Options{TitleBar: mac.TitleBarHiddenInset(), WebviewIsTransparent: true, WindowIsTranslucent: true},
+		AssetServer:                      &assetserver.Options{Assets: assets},
+		OnStartup:                        app.startup,
+		OnDomReady:                       app.nativeReady,
+		OnShutdown:                       app.shutdown,
+		Bind:                             []interface{}{app},
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "OpenADE:", err)

@@ -1,0 +1,140 @@
+import {test,ready,create,open,daemon,repo,otherRepo,tmp,choose,setRepository,status} from './helpers';
+import {expect,type APIRequestContext} from '@playwright/test';
+import fs from 'node:fs';
+import path from 'node:path';
+const png=fs.readFileSync(new URL('./fixtures/preview-grid.png',import.meta.url));
+const rasterFormats=[
+ {name:'media-grid.webp',mime:'image/webp',stored:'.webp',width:3},
+ {name:'media-grid.bmp',mime:'image/bmp',stored:'.png',width:3},
+ {name:'media-grid.tif',mime:'image/tiff',stored:'.png',width:3},
+ {name:'media-grid.avif',mime:'image/avif',stored:'.png',width:6},
+ {name:'media-grid.heic',mime:'image/heic',stored:'.png',width:6},
+];
+
+async function fillQueue(request:APIRequestContext,sessionId:string){
+ const responses=await Promise.all(Array.from({length:100},(_,index)=>request.post(`${daemon}/api/sessions/${sessionId}/message-queue`,{data:{text:`Queue capacity fixture ${index}`}})));
+ expect(responses.map(response=>response.status()).every(status=>status===202)).toBe(true);
+ const queue=await(await request.get(`${daemon}/api/sessions/${sessionId}/message-queue`)).json();expect(queue.messages).toHaveLength(100);
+}
+
+test('Home consumes accepted images before navigation and preserves newer text and images',async({page})=>{
+ await ready(page);await setRepository(page,repo);await choose(page,'Provider','codex');await page.getByLabel('New session prompt').fill('First Home image send');await page.getByLabel('Choose image attachments').setInputFiles({name:'accepted-home.png',mimeType:'image/png',buffer:png});await expect(page.getByLabel('View accepted-home.png')).toBeVisible();let entered=0;let release!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;});
+ await page.route('**/api/sessions',async route=>{if(route.request().method()!=='POST'){await route.continue();return;}entered++;await gate;await route.fulfill({response:await route.fetch()});});
+ try{await page.getByLabel('Start session').click();await expect.poll(()=>entered).toBe(1);await page.getByLabel('Open settings').click();await page.getByRole('button',{name:'Back',exact:true}).click();await expect(page.getByLabel('Start session')).toBeDisabled();await page.getByLabel('New session prompt').fill('Next Home draft');await setRepository(page,otherRepo);await page.getByLabel('Choose image attachments').setInputFiles({name:'next-home.png',mimeType:'image/png',buffer:png});await expect(page.getByLabel('View next-home.png')).toBeVisible();release();await expect(page.locator('.session-title h1')).toHaveText('First Home image send');await page.getByLabel('New session',{exact:true}).click();await expect(page.getByLabel('New session prompt')).toHaveValue('Next Home draft');await expect(page.getByLabel('View accepted-home.png')).toHaveCount(0);await expect(page.getByLabel('View next-home.png')).toBeVisible();await page.reload();await expect(page.getByLabel('New session prompt')).toHaveValue('Next Home draft');await expect(page.getByLabel('Choose project',{exact:true})).toHaveAttribute('data-value',otherRepo);await expect(page.getByLabel('View accepted-home.png')).toHaveCount(0);await expect(page.getByLabel('View next-home.png')).toBeVisible();
+ }finally{release();}
+});
+
+test('pending image sends enqueue once and preserve attachments staged afterward',async({page,request})=>{
+ const session=await create(request,'Image send concurrency audit');await expect.poll(()=>status(request,session.id)).toBe('completed');await ready(page);await open(page,'Image send concurrency audit');
+ await page.getByLabel('Choose image attachments').setInputFiles({name:'first.png',mimeType:'image/png',buffer:png});await expect(page.getByLabel('View first.png')).toBeVisible();let sends=0;let release!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;});
+ await page.route(`**/api/sessions/${session.id}/message-queue`,async route=>{if(route.request().method()!=='POST'){await route.continue();return;}sends++;if(sends===1)await gate;await route.fulfill({response:await route.fetch()});});
+ try{await page.getByLabel('Send message').click();await expect.poll(()=>sends).toBe(1);await expect(page.getByLabel('Send message')).toBeDisabled();await page.getByLabel('Session message').focus();await page.keyboard.press('Enter');await page.keyboard.press('Enter');
+ await page.getByLabel('Choose image attachments').setInputFiles({name:'later.png',mimeType:'image/png',buffer:png});await expect(page.getByLabel('View later.png')).toBeVisible();release();await expect(page.getByLabel('View first.png')).toHaveCount(0);await expect(page.getByLabel('View later.png')).toBeVisible();expect(sends).toBe(1);await expect(page.getByLabel('Send message')).toBeEnabled();await page.getByLabel('Send message').click();await expect.poll(()=>sends).toBe(2);await expect(page.getByLabel('Draft attachments')).toHaveCount(0);
+ }finally{release();}
+});
+
+test('engine enqueue rejection restores both drafts once and keeps staged images across navigation',async({page,request})=>{
+ const session=await create(request,'Rejected message draft recovery',{prompt:'wait-controlled recovery'});await fillQueue(request,session.id);await ready(page);await open(page,'Rejected message draft recovery');
+ await page.getByLabel('Session message').fill('Failed submitted text');await page.getByLabel('Choose image attachments').setInputFiles({name:'failed-original.png',mimeType:'image/png',buffer:png});await expect(page.getByLabel('View failed-original.png')).toBeVisible();
+ let entered=0;let release!:()=>void;let gate=new Promise<void>(resolve=>{release=resolve;});
+ await page.route(`**/api/sessions/${session.id}/message-queue`,async route=>{if(route.request().method()!=='POST'){await route.continue();return;}entered++;await gate;await route.fulfill({response:await route.fetch()});});
+ try{
+  await page.getByLabel('Send message').click();await expect.poll(()=>entered).toBe(1);await page.getByLabel('Session message').fill('Newer typed text');await page.getByLabel('Choose image attachments').setInputFiles({name:'failed-newer.png',mimeType:'image/png',buffer:png});await expect(page.getByLabel('View failed-newer.png')).toBeVisible();release();
+  await expect(page.getByLabel('Session message')).toHaveValue('Failed submitted text\n\nNewer typed text');if(await page.getByLabel('Toggle right sidebar').getAttribute('aria-pressed')!=='true')await page.getByLabel('Toggle right sidebar').click();await expect(page.getByRole('alert')).toContainText('submitted message and newer draft were restored');await expect(page.getByLabel('View failed-original.png')).toBeVisible();await expect(page.getByLabel('View failed-newer.png')).toBeVisible();
+ }finally{release();}
+ await page.getByLabel('New session',{exact:true}).click();await open(page,'Rejected message draft recovery');await expect(page.getByLabel('Session message')).toHaveValue('Failed submitted text\n\nNewer typed text');await expect(page.getByLabel('View failed-original.png')).toBeVisible();await expect(page.getByLabel('View failed-newer.png')).toBeVisible();
+ await page.getByLabel('Remove failed-original.png').click();await page.getByLabel('Remove failed-newer.png').click();await page.getByLabel('Session message').fill('Original with empty current');await page.getByLabel('Send message').click();await expect(page.getByLabel('Session message')).toHaveValue('Original with empty current');
+ let enteredEqual=0;let releaseEqual!:()=>void;let equalGate=new Promise<void>(resolve=>{releaseEqual=resolve;});
+ await page.route(`**/api/sessions/${session.id}/message-queue`,async route=>{if(route.request().method()!=='POST'){await route.continue();return;}if(route.request().postDataJSON()?.text?.includes('Equal draft')){enteredEqual++;await equalGate;}await route.fulfill({response:await route.fetch()});});
+ try{await page.getByLabel('Session message').fill('Equal draft');await page.getByLabel('Send message').click();await expect.poll(()=>enteredEqual).toBe(1);await page.getByLabel('Session message').fill('Equal draft');releaseEqual();await expect(page.getByLabel('Session message')).toHaveValue('Equal draft');}finally{releaseEqual();}
+ fs.writeFileSync(path.join(session.worktree_path,'.e2e-release'),'');
+});
+
+test('Home engine create rejection restores the submitted and newer prompts',async({page})=>{
+ await ready(page);await setRepository(page,path.join(tmp,'missing-project-for-rejected-create'));await expect(page.locator('.error-toast')).toBeVisible();await page.locator('.error-toast').click();await choose(page,'Provider','codex');await page.getByLabel('New session prompt').fill('Failed Home prompt');let entered=0;let release!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;});
+ await page.route('**/api/sessions',async route=>{if(route.request().method()!=='POST'){await route.continue();return;}entered++;await gate;await route.fulfill({response:await route.fetch()});});
+ try{await page.getByLabel('Start session').click();await expect.poll(()=>entered).toBe(1);await page.getByLabel('Open settings').click();await page.getByRole('button',{name:'Back',exact:true}).click();await expect(page.getByLabel('Start session')).toBeDisabled();await page.getByLabel('New session prompt').fill('Newer Home prompt');await setRepository(page,otherRepo);release();await expect(page.getByLabel('New session prompt')).toHaveValue('Failed Home prompt\n\nNewer Home prompt');await expect(page.locator('.error-toast')).toContainText('submitted prompt and newer draft were restored');await page.reload();await expect(page.getByLabel('New session prompt')).toHaveValue('Failed Home prompt\n\nNewer Home prompt');await expect(page.getByLabel('Choose project',{exact:true})).toHaveAttribute('data-value',otherRepo);}finally{release();}
+});
+
+test('accepted send stays consumed when the following refresh fails',async({page,request})=>{
+ const session=await create(request,'Accepted send refresh failure',{prompt:'wait-controlled refresh'});await ready(page);await open(page,'Accepted send refresh failure');await page.getByLabel('Session message').fill('Accepted once');await page.getByLabel('Choose image attachments').setInputFiles({name:'accepted-once.png',mimeType:'image/png',buffer:png});
+ await page.route(`**/api/sessions/${session.id}/message-queue`,async route=>{if(route.request().method()==='POST')await route.fulfill({response:await route.fetch()});else await route.continue();});
+ let failedRefreshes=0;await page.route('**/api/state',async route=>{if(route.request().method()==='GET'){failedRefreshes++;await route.fulfill({status:500,contentType:'application/json',body:'{"error":"refresh fixture failure"}'});}else await route.continue();});
+ await page.getByLabel('Send message').click();await expect(page.getByLabel('Session message')).toHaveValue('');await expect(page.getByLabel('Draft attachments')).toHaveCount(0);await expect.poll(()=>failedRefreshes).toBeGreaterThan(0);const queue=await(await request.get(`${daemon}/api/sessions/${session.id}/message-queue`)).json();expect(queue.messages.filter((message:{text:string})=>message.text.includes('Accepted once'))).toHaveLength(1);fs.writeFileSync(path.join(session.worktree_path,'.e2e-release'),'');
+});
+
+test('image picker staging persists, image-only send reaches the engine and lightbox returns focus',async({page,request})=>{
+ await ready(page);await setRepository(page,repo);await choose(page,'Provider','codex');
+ await page.getByLabel('Choose image attachments').setInputFiles({name:'reference.png',mimeType:'image/png',buffer:png});
+ await expect(page.getByLabel('Draft attachments')).toBeVisible();await expect(page.getByLabel('View reference.png').locator('img')).toHaveAttribute('src',/^blob:/);await expect.poll(()=>page.getByLabel('View reference.png').locator('img').evaluate(node=>(node as HTMLImageElement).naturalWidth)).toBe(1200);await expect(page.getByLabel('Start session')).toBeEnabled();
+ await page.getByLabel('Open settings').click();await page.getByRole('button',{name:'Back',exact:true}).click();await expect(page.getByLabel('View reference.png')).toBeVisible();await page.reload();await expect(page.getByLabel('View reference.png')).toBeVisible();
+ await page.getByLabel('Start session').click();await expect(page.getByLabel('Message attachments')).toBeVisible();
+ const image=page.getByLabel('View Image 1');await image.click();const dialog=page.getByRole('dialog',{name:'Image 1'});await expect(dialog).toBeVisible();await expect(page.getByLabel('Close image')).toBeFocused();expect(await dialog.evaluate(node=>getComputedStyle(node).getPropertyValue('--surface'))).toBe(await page.locator('.ade').evaluate(node=>getComputedStyle(node).getPropertyValue('--surface')));expect(await dialog.evaluate(node=>getComputedStyle(node).fontFamily)).toBe(await page.locator('.ade').evaluate(node=>getComputedStyle(node).fontFamily));await page.getByLabel('Actual image size').click();await expect(page.getByRole('region',{name:'Image 1 image viewport'})).toBeFocused();await page.keyboard.press('0');await expect(page.getByLabel('Actual image size')).toBeVisible();await expect(page.getByRole('region',{name:'Image 1 image viewport'})).toBeFocused();await page.evaluate(()=>(document.activeElement as HTMLElement)?.blur());await page.keyboard.press('Escape');await expect(image).toBeFocused();await expect(dialog).toHaveCount(0);
+ const id=await page.locator('.sidebar-chat-row.active').getAttribute('data-session-id');expect(id).toBeTruthy();const session=await(await request.get(`${daemon}/api/sessions/${id}`)).json();expect(session.prompt).toContain('Attached images (local files — open them to view):');expect(session.prompt).toContain('/attachments/');await expect.poll(()=>status(request,session.id)).toBe('completed');
+ await page.getByLabel('Choose image attachments').setInputFiles({name:'follow-up.png',mimeType:'image/png',buffer:png});await expect(page.locator('.session-composer')).toHaveAttribute('data-layout','expanded');await page.getByLabel('Remove follow-up.png').click();await expect(page.getByLabel('Draft attachments')).toHaveCount(0);await expect(page.locator('.session-composer')).toHaveAttribute('data-layout','compact');
+});
+
+test('media authentication, invalid uploads and image payloads are enforced by the real engine',async({request,page})=>{
+ const uploaded=await request.post(daemon+'/api/attachments?name=fixture.png',{data:png,headers:{'Content-Type':'image/png'}});expect(uploaded.status()).toBe(201);const image=await uploaded.json();
+ const media=await request.get(`${daemon}/api/attachments/${image.id}/media`);expect(media.status()).toBe(200);expect(await media.body()).toEqual(png);
+ const invalid=await request.post(daemon+'/api/attachments?name=script.svg',{data:'<svg onload="alert(1)"></svg>',headers:{'Content-Type':'image/svg+xml'}});expect(invalid.status()).toBe(400);
+ expect((await request.get(`${daemon}/api/attachments/../../media`)).status()).not.toBe(200);
+ const unauth=await page.request.get(`${daemon}/api/attachments/${image.id}/media`,{headers:{Authorization:''}});expect(unauth.status()).toBe(401);
+ await create(request,'Attachment paste audit');await ready(page);await open(page,'Attachment paste audit');
+ await page.getByLabel('Session message').evaluate((node,base64)=>{const bytes=Uint8Array.from(atob(base64),c=>c.charCodeAt(0));const file=new File([bytes],'pasted.png',{type:'image/png'});const clipboard=new DataTransfer();clipboard.items.add(file);node.dispatchEvent(new ClipboardEvent('paste',{bubbles:true,cancelable:true,clipboardData:clipboard}));},png.toString('base64'));
+ await expect(page.getByLabel('View pasted.png')).toBeVisible();await page.reload();await expect(page.getByLabel('View pasted.png')).toBeVisible();await page.getByLabel('Send message').click();await expect(page.getByLabel('Message attachments')).toBeVisible();
+});
+
+test('WebP, BMP, TIFF, AVIF and HEIC attachments preview and persist in provider-safe formats',async({page,request})=>{
+ await ready(page);await setRepository(page,repo);await choose(page,'Provider','codex');
+ for(const format of rasterFormats){
+  const buffer=fs.readFileSync(new URL(`./fixtures/${format.name}`,import.meta.url));
+  await page.getByLabel('Choose image attachments').setInputFiles({name:format.name,mimeType:format.mime,buffer});
+  const preview=page.getByLabel(`View ${format.name}`);
+  await expect(preview).toBeVisible();
+  await expect.poll(()=>preview.locator('img').evaluate(node=>(node as HTMLImageElement).naturalWidth)).toBe(format.width);
+  const uploaded=await request.post(`${daemon}/api/attachments?name=${format.name}`,{data:buffer,headers:{'Content-Type':format.mime}});
+  expect(uploaded.status()).toBe(201);
+  const metadata=await uploaded.json();
+  expect(metadata.path.endsWith(format.stored)).toBe(true);
+  expect(metadata.mime).toBe(format.stored==='.png'?'image/png':'image/webp');
+  const served=await request.get(`${daemon}/api/attachments/${metadata.id}/media`);
+  expect(served.status()).toBe(200);expect(served.headers()['content-type']).toContain(metadata.mime);
+  if(format.stored==='.png')expect((await served.body()).subarray(0,8)).toEqual(Buffer.from([137,80,78,71,13,10,26,10]));
+ }
+ await page.reload();
+ for(const format of rasterFormats)await expect(page.getByLabel(`View ${format.name}`)).toBeVisible();
+});
+
+test('SVG attachment becomes a bounded PNG without forwarding active vector content',async({page,request})=>{
+ const vector=Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="240" height="120"><rect width="240" height="120" fill="#187ec8"/><script>alert(1)</script><image href="file:///etc/passwd" width="10" height="10"/></svg>');
+ await ready(page);await setRepository(page,repo);await choose(page,'Provider','codex');
+ await page.getByLabel('Choose image attachments').setInputFiles({name:'bounded.svg',mimeType:'image/svg+xml',buffer:vector});
+ const preview=page.getByLabel('View bounded.svg');await expect(preview).toBeVisible();await expect.poll(()=>preview.locator('img').evaluate(node=>(node as HTMLImageElement).naturalWidth)).toBe(240);
+ const response=await request.post(`${daemon}/api/attachments?name=bounded.svg`,{data:vector,headers:{'Content-Type':'image/svg+xml'}});expect(response.status()).toBe(201);
+ const metadata=await response.json();expect(metadata.path.endsWith('.png')).toBe(true);expect(metadata.mime).toBe('image/png');
+ const image=await request.get(`${daemon}/api/attachments/${metadata.id}/media`);expect(image.status()).toBe(200);expect((await image.body()).subarray(0,8)).toEqual(Buffer.from([137,80,78,71,13,10,26,10]));
+ const spoofed=await request.post(`${daemon}/api/attachments?name=spoofed.avif`,{data:png,headers:{'Content-Type':'image/avif'}});expect(spoofed.status()).toBe(400);
+});
+
+
+test('accepted send consumes only its images after leaving and reopening the chat',async({page,request})=>{
+ const session=await create(request,'Accepted navigation image ownership',{prompt:'wait-controlled image navigation'});await ready(page);await open(page,'Accepted navigation image ownership');
+ await page.getByLabel('Session message').fill('Send once across navigation');await page.getByLabel('Choose image attachments').setInputFiles({name:'submitted-before-navigation.png',mimeType:'image/png',buffer:png});await expect(page.getByLabel('View submitted-before-navigation.png')).toBeVisible();
+ let entered=0;let release!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;});await page.route(`**/api/sessions/${session.id}/message-queue`,async route=>{if(route.request().method()!=='POST'){await route.continue();return;}entered++;await gate;await route.fulfill({response:await route.fetch()});});
+ try{await page.getByLabel('Send message').click();await expect.poll(()=>entered).toBe(1);await page.getByLabel('New session',{exact:true}).click();await open(page,'Accepted navigation image ownership');await expect(page.getByLabel('Send message')).toBeDisabled();await page.getByLabel('Session message').fill('New prompt after reopening');await page.getByLabel('Choose image attachments').setInputFiles({name:'staged-after-reopening.png',mimeType:'image/png',buffer:png});await expect(page.getByLabel('View staged-after-reopening.png')).toBeVisible();release();await expect(page.getByLabel('View submitted-before-navigation.png')).toHaveCount(0);await expect(page.getByLabel('View staged-after-reopening.png')).toBeVisible();await expect(page.getByLabel('Session message')).toHaveValue('New prompt after reopening');
+ const queue=await(await request.get(`${daemon}/api/sessions/${session.id}/message-queue`)).json();expect(queue.messages.filter((message:{text:string})=>message.text.includes('Send once across navigation'))).toHaveLength(1);await page.getByLabel('New session',{exact:true}).click();await open(page,'Accepted navigation image ownership');await expect(page.getByLabel('View staged-after-reopening.png')).toBeVisible();await expect(page.getByLabel('Session message')).toHaveValue('New prompt after reopening');
+ }finally{release();fs.writeFileSync(path.join(session.worktree_path,'.e2e-release'),'');}
+});
+
+test('retained Home receives workflow templates and hides inactive composer controls',async({page})=>{
+ await ready(page);await page.getByLabel('New session prompt').fill('Before workflow');await page.getByRole('button',{name:'Workflows',exact:true}).click();await expect(page.getByLabel('New session prompt')).toHaveCount(0);const workflow=page.locator('.template-card').first();const prompt=await workflow.locator('p').innerText();await workflow.click();await expect(page.getByLabel('New session prompt')).toHaveValue(prompt);await page.reload();await expect(page.getByLabel('New session prompt')).toHaveValue(prompt);
+});
+
+
+test('rejected send restores the current chat owner after navigation and survives further edits',async({page,request})=>{
+ const session=await create(request,'Rejected navigation draft ownership',{prompt:'wait-controlled rejected navigation'});await fillQueue(request,session.id);await ready(page);await open(page,'Rejected navigation draft ownership');await page.getByLabel('Session message').fill('Original rejected across navigation');let entered=0;let release!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;});
+ await page.route(`**/api/sessions/${session.id}/message-queue`,async route=>{if(route.request().method()!=='POST'){await route.continue();return;}entered++;await gate;await route.fulfill({response:await route.fetch()});});
+ try{await page.getByLabel('Send message').click();await expect.poll(()=>entered).toBe(1);await page.getByLabel('New session',{exact:true}).click();await open(page,'Rejected navigation draft ownership');await page.getByLabel('Session message').fill('Newer after navigation');await expect(page.getByLabel('Send message')).toBeDisabled();release();const recovered='Original rejected across navigation\n\nNewer after navigation';await expect(page.getByLabel('Session message')).toHaveValue(recovered);if(await page.getByLabel('Toggle right sidebar').getAttribute('aria-pressed')!=='true')await page.getByLabel('Toggle right sidebar').click();await expect(page.getByRole('alert')).toContainText('submitted message and newer draft were restored');await page.getByLabel('Session message').press('End');await page.getByLabel('Session message').press('!');await expect(page.getByLabel('Session message')).toHaveValue(recovered+'!');await page.getByLabel('New session',{exact:true}).click();await open(page,'Rejected navigation draft ownership');await expect(page.getByLabel('Session message')).toHaveValue(recovered+'!');
+ }finally{release();await request.post(`${daemon}/api/sessions/${session.id}/stop`);const remaining=await(await request.get(`${daemon}/api/sessions/${session.id}/message-queue`)).json();for(const message of remaining.messages)if(message.status==='queued')await request.delete(`${daemon}/api/sessions/${session.id}/message-queue/${message.id}`);}
+});

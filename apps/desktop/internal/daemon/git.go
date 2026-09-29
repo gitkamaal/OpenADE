@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -14,23 +16,53 @@ import (
 	"time"
 )
 
+const maxGitPreviewBytes = 4 * 1024 * 1024
+
 var branchUnsafe = regexp.MustCompile(`[^a-zA-Z0-9._/-]+`)
+
+type boundedGitOutput struct {
+	buffer    bytes.Buffer
+	limit     int
+	truncated bool
+}
+
+func (b *boundedGitOutput) String() string { return b.buffer.String() }
+func (b *boundedGitOutput) Write(p []byte) (int, error) {
+	n := len(p)
+	remaining := b.limit - b.buffer.Len()
+	if remaining > 0 {
+		take := n
+		if take > remaining {
+			take = remaining
+		}
+		_, _ = b.buffer.Write(p[:take])
+	}
+	if n > remaining {
+		b.truncated = true
+	}
+	return n, nil
+}
 
 func gitOutput(ctx context.Context, repo string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	commandArgs := append([]string{"-C", repo}, args...)
 	cmd := exec.CommandContext(ctx, "git", commandArgs...)
-	var stderr bytes.Buffer
+	stderr := boundedGitOutput{limit: 512 * 1024}
+	stdout := boundedGitOutput{limit: maxGitPreviewBytes}
 	cmd.Stderr = &stderr
-	out, err := cmd.Output()
+	cmd.Stdout = &stdout
+	err := cmd.Run()
+	if stdout.truncated || stderr.truncated {
+		return "", fmt.Errorf("git output exceeded the preview limit; narrow the changes or use the project terminal")
+	}
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return "", fmt.Errorf("git %s timed out while accessing %s", strings.Join(args, " "), repo)
 		}
 		return "", fmt.Errorf("git %s: %s", strings.Join(args, " "), strings.TrimSpace(stderr.String()))
 	}
-	return strings.TrimSpace(string(out)), nil
+	return strings.TrimSpace(stdout.String()), nil
 }
 
 func verifyRepository(ctx context.Context, repo string) (string, error) {
@@ -62,9 +94,13 @@ func createWorktree(ctx context.Context, repo, path, branch, base string) error 
 	if base == "" {
 		base = "HEAD"
 	}
+	resolved, err := gitOutput(ctx, repo, "rev-parse", "--verify", "--end-of-options", base+"^{commit}")
+	if err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", "-C", repo, "worktree", "add", "-b", branch, path, base)
+	cmd := exec.CommandContext(ctx, "git", "-C", repo, "worktree", "add", "-b", branch, path, resolved)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -77,21 +113,105 @@ func createWorktree(ctx context.Context, repo, path, branch, base string) error 
 }
 
 func worktreeDiff(ctx context.Context, path, base string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
 	if strings.TrimSpace(base) == "" {
 		base = "HEAD"
 	}
-	return gitOutput(ctx, path, "diff", "--no-ext-diff", "--stat", "--patch", base, "--")
+	resolved, err := gitOutput(ctx, path, "rev-parse", "--verify", "--end-of-options", base+"^{commit}")
+	if err != nil {
+		return "", err
+	}
+	diff, err := gitOutput(ctx, path, "diff", "--no-ext-diff", "--stat", "--patch", resolved, "--")
+	if err != nil {
+		return "", err
+	}
+	untracked, err := gitOutput(ctx, path, "ls-files", "--others", "--exclude-standard", "-z")
+	if err != nil {
+		return "", err
+	}
+	for _, relative := range strings.Split(untracked, "\x00") {
+		if len(diff) >= maxGitPreviewBytes {
+			return "", fmt.Errorf("git output exceeded the preview limit; narrow the changes or use the project terminal")
+		}
+		if relative == "" {
+			continue
+		}
+		file := filepath.Join(path, relative)
+		info, err := os.Lstat(file)
+		if err != nil {
+			continue
+		}
+		if info.Size() > maxEditorBytes {
+			diff += "\ndiff --git a/" + relative + " b/" + relative + "\nnew file mode 100644\nLarge file omitted from preview\n"
+			continue
+		}
+		cmd := exec.CommandContext(ctx, "git", "diff", "--no-ext-diff", "--no-index", "--", "/dev/null", file)
+		out := boundedGitOutput{limit: maxGitPreviewBytes - len(diff)}
+		stderr := boundedGitOutput{limit: 512 * 1024}
+		cmd.Stdout = &out
+		cmd.Stderr = &stderr
+		err = cmd.Run()
+		if out.truncated || stderr.truncated {
+			return "", fmt.Errorf("git output exceeded the preview limit; narrow the changes or use the project terminal")
+		}
+		if err != nil {
+			exit, ok := err.(*exec.ExitError)
+			if !ok || exit.ExitCode() != 1 {
+				return "", err
+			}
+		}
+		text := out.String()
+		if index := strings.IndexByte(text, '\n'); index >= 0 {
+			text = "diff --git a/" + relative + " b/" + relative + text[index:]
+		}
+		if len(diff)+len(text)+1 > maxGitPreviewBytes {
+			return "", fmt.Errorf("git output exceeded the preview limit; narrow the changes or use the project terminal")
+		}
+		diff += "\n" + text
+	}
+	return diff, nil
 }
 
 func worktreeFiles(ctx context.Context, path string) ([]string, error) {
-	out, err := gitOutput(ctx, path, "ls-files", "--cached", "--others", "--exclude-standard")
+	out, err := gitOutput(ctx, path, "ls-files", "--cached", "--others", "--exclude-standard", "-z")
 	if err != nil {
-		return nil, err
+		if !plainProjectFolder(path) {
+			return nil, err
+		}
+		files := []string{}
+		walkErr := filepath.WalkDir(path, func(current string, entry fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.Type()&os.ModeSymlink != 0 {
+				return nil
+			}
+			relative, err := filepath.Rel(path, current)
+			if err != nil {
+				return err
+			}
+			if entry.IsDir() {
+				if relative != "." && (entry.Name() == "node_modules" || entry.Name() == ".git" || entry.Name() == "target" || len(strings.Split(relative, string(filepath.Separator))) > 16) {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if len(files) >= 5000 {
+				return fs.SkipAll
+			}
+			if entry.Type().IsRegular() {
+				files = append(files, filepath.ToSlash(relative))
+			}
+			return nil
+		})
+		sort.Strings(files)
+		return files, walkErr
 	}
 	if out == "" {
 		return []string{}, nil
 	}
-	files := strings.Split(out, "\n")
+	files := strings.Split(strings.TrimSuffix(out, "\x00"), "\x00")
 	sort.Strings(files)
 	return files, nil
 }
@@ -198,4 +318,66 @@ func fetchJiraTicket(ctx context.Context, key string) (Ticket, error) {
 		ticket.Summary = strings.TrimSpace(lines[0])
 	}
 	return ticket, nil
+}
+
+// A separate index snapshots the turn without touching the user's staging area.
+func snapshotWorkingTree(ctx context.Context, root string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	temporary, err := os.CreateTemp("", "openade-turn-index-*")
+	if err != nil {
+		return "", err
+	}
+	index := temporary.Name()
+	temporary.Close()
+	os.Remove(index)
+	defer os.Remove(index)
+	defer os.Remove(index + ".lock")
+	run := func(args ...string) (string, error) {
+		cmd := exec.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...)
+		cmd.Env = append(os.Environ(), "GIT_INDEX_FILE="+index)
+		out := boundedGitOutput{limit: maxGitPreviewBytes}
+		stderr := boundedGitOutput{limit: 512 * 1024}
+		cmd.Stdout = &out
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			return "", fmt.Errorf("turn snapshot unavailable: %s", strings.TrimSpace(stderr.String()))
+		}
+		if out.truncated || stderr.truncated {
+			return "", fmt.Errorf("turn snapshot exceeded limit")
+		}
+		return strings.TrimSpace(out.String()), nil
+	}
+	if _, err = run("read-tree", "HEAD"); err != nil {
+		return "", err
+	}
+	if _, err = run("add", "--all", "--", "."); err != nil {
+		return "", err
+	}
+	return run("write-tree")
+}
+
+// Never reinterpret a Git access/ownership failure as an ordinary folder.
+func plainProjectFolder(path string) bool {
+	canonical, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return false
+	}
+	path = canonical
+	if filepath.Base(path) == ".git" {
+		return false
+	}
+	if _, err := os.Stat(filepath.Join(path, "HEAD")); err == nil {
+		if info, e := os.Stat(filepath.Join(path, "objects")); e == nil && info.IsDir() {
+			return false
+		}
+	}
+	for current := filepath.Clean(path); ; current = filepath.Dir(current) {
+		if _, err := os.Lstat(filepath.Join(current, ".git")); err == nil || !errors.Is(err, os.ErrNotExist) {
+			return false
+		}
+		if filepath.Dir(current) == current {
+			return true
+		}
+	}
 }

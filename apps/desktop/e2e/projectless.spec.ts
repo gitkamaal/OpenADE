@@ -1,0 +1,14 @@
+import {test,ready,choose,status,daemon,create} from './helpers';
+import {expect} from '@playwright/test';
+test('projectless chat has private workspace and can resume without entering the project catalog',async({page,request})=>{
+ await create(request,'Existing project for projectless draft');
+ await ready(page);await choose(page,'Choose project','');await choose(page,'Provider','codex');await page.getByLabel('New session prompt').fill('Projectless parity audit');await page.getByLabel('Start session').click();await expect(page.locator('.session-title h1')).toHaveText('Projectless parity audit');
+ await expect(page.locator('.session-context')).toContainText('No project');
+ const sessions=(await(await request.get(daemon+'/api/sessions')).json()).sessions;const session=sessions.find((s:{title:string})=>s.title==='Projectless parity audit');expect(session.repo_root).toBe('');expect(session.branch).toBe('');expect(session.worktree_path).toContain('/workspaces/');await expect.poll(()=>status(request,session.id)).toBe('completed');
+ const projects=(await(await request.get(daemon+'/api/projects')).json()).projects;expect(projects).not.toContain('');expect(projects).not.toContain(session.worktree_path);expect((await(await request.get(daemon+'/api/state')).json()).projects).not.toContain('');
+ await page.getByLabel('Session message').fill('Projectless follow-up');await page.getByLabel('Send message').click();await expect.poll(async()=>{const current=await(await request.get(`${daemon}/api/sessions/${session.id}`)).json();return current.generation;}).toBe(2);await page.reload();await expect(page.locator('.session-title h1')).toHaveText('Projectless parity audit');
+});
+
+test('an explicit No project draft survives Settings and reload with projects already available',async({page,request})=>{
+ await create(request,'Existing repository catalog');await ready(page);await choose(page,'Choose project','');await choose(page,'Provider','codex');await page.getByLabel('New session prompt').fill('Restored projectless draft');await page.getByLabel('Open settings').click();await page.getByRole('button',{name:'Back',exact:true}).click();await expect(page.getByRole('combobox',{name:'Choose project',exact:true})).toContainText('No project');await expect(page.getByRole('combobox',{name:'Checkout mode',exact:true})).toContainText('No project');await page.reload();await expect(page.getByRole('combobox',{name:'Choose project',exact:true})).toContainText('No project');await expect(page.getByLabel('New session prompt')).toHaveValue('Restored projectless draft');await page.getByLabel('Start session').click();await expect(page.locator('.session-title h1')).toHaveText('Restored projectless draft');const sessions=(await(await request.get(daemon+'/api/sessions')).json()).sessions;expect(sessions.find((s:{title:string})=>s.title==='Restored projectless draft').repo_root).toBe('');
+});

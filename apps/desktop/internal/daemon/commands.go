@@ -18,7 +18,7 @@ type AgentCommand struct {
 }
 
 func discoverAgentCommands(session Session) []AgentCommand {
-	home, _ := os.UserHomeDir()
+	home := providerHome()
 	agent := strings.ToLower(session.Agent)
 	isClaude := strings.Contains(agent, "claude")
 	candidates := []struct {
@@ -28,14 +28,14 @@ func discoverAgentCommands(session Session) []AgentCommand {
 		candidates = append(candidates,
 			struct{ root, pattern, kind, source string }{filepath.Join(home, ".claude", "commands"), "*.md", "command", "Claude"},
 			struct{ root, pattern, kind, source string }{filepath.Join(home, ".claude", "skills"), "*/SKILL.md", "skill", "Claude"},
-			struct{ root, pattern, kind, source string }{filepath.Join(session.RepoRoot, ".claude", "commands"), "*.md", "command", "Project"},
-			struct{ root, pattern, kind, source string }{filepath.Join(session.RepoRoot, ".claude", "skills"), "*/SKILL.md", "skill", "Project"},
+			struct{ root, pattern, kind, source string }{filepath.Join(session.WorktreePath, ".claude", "commands"), "*.md", "command", "Project"},
+			struct{ root, pattern, kind, source string }{filepath.Join(session.WorktreePath, ".claude", "skills"), "*/SKILL.md", "skill", "Project"},
 		)
 	} else {
 		candidates = append(candidates,
 			struct{ root, pattern, kind, source string }{filepath.Join(home, ".codex", "skills"), "*/SKILL.md", "skill", "Codex"},
 			struct{ root, pattern, kind, source string }{filepath.Join(home, ".agents", "skills"), "*/SKILL.md", "skill", "Shared"},
-			struct{ root, pattern, kind, source string }{filepath.Join(session.RepoRoot, ".agents", "skills"), "*/SKILL.md", "skill", "Project"},
+			struct{ root, pattern, kind, source string }{filepath.Join(session.WorktreePath, ".agents", "skills"), "*/SKILL.md", "skill", "Project"},
 		)
 	}
 

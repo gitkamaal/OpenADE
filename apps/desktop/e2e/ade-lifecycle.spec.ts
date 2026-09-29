@@ -1,4 +1,5 @@
-import { expect, Page, test } from "@playwright/test";
+import { test } from "./helpers";
+import { expect, Page } from "@playwright/test";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -97,7 +98,7 @@ test("repeated direct-TUI navigation releases sockets and resize observers", asy
     localStorage.setItem("openade.preferences", JSON.stringify({ session_surface: "terminal" }));
   });
   await page.goto("/");
-  await expect(page.getByText("Daemon connected")).toBeVisible();
+  await expect(page.locator(".ade")).toHaveAttribute("data-connected","true");
 
   for (let pass = 0; pass < 5; pass += 1) {
     await page.getByRole("button", { name: /E2E direct TUI lifecycle/ }).first().click();
@@ -129,7 +130,7 @@ test("multiple project terminals replace and release their browser resources", a
   await page.goto("/");
   await page.getByRole("button", { name: /E2E independent terminals/ }).first().click();
   await page.getByRole("button", { name: "New terminal" }).first().click();
-  await expect(page.getByText("Terminal 1")).toBeVisible();
+  await expect(page.getByLabel("Terminal 1 in project worktree")).toBeVisible();
   await expect.poll(() => resourceCounts(page)).toEqual({ sockets: 1, observers: 1 });
 
   await page.getByRole("button", { name: "New terminal" }).click();

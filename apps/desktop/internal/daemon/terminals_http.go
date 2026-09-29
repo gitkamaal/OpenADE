@@ -3,6 +3,7 @@ package daemon
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 )
 
 func (d *Daemon) handleListTerminals(w http.ResponseWriter, r *http.Request) {
@@ -45,7 +46,12 @@ func (d *Daemon) handleCreateTerminal(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *Daemon) handleTerminalStream(w http.ResponseWriter, r *http.Request) {
-	initial, output, cancel, err := d.terminals.Subscribe(r.PathValue("id"))
+	after, err := streamCursor(r)
+	if err != nil {
+		writeError(w, 400, err)
+		return
+	}
+	initial, output, cancel, err := d.terminals.Subscribe(r.PathValue("id"), after)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err)
 		return
@@ -57,11 +63,21 @@ func (d *Daemon) handleTerminalStream(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 	defer cancel()
-	if len(initial) > 0 {
-		_ = conn.WriteJSON(map[string]any{"type": "output", "data": string(initial), "replay": true})
-	}
+	go func() {
+		defer cancel()
+		for {
+			if _, _, err := conn.NextReader(); err != nil {
+				return
+			}
+		}
+	}()
+	cursor := initial.Cursor
+	_ = conn.SetWriteDeadline(time.Now().Add(3 * time.Second))
+	_ = conn.WriteJSON(map[string]any{"type": "output", "data": string(initial.Data), "replay": true, "reset": initial.Reset || after == 0, "offset": initial.Offset, "cursor": cursor})
 	for chunk := range output {
-		if err := conn.WriteJSON(map[string]any{"type": "output", "data": string(chunk)}); err != nil {
+		cursor += int64(len(chunk))
+		_ = conn.SetWriteDeadline(time.Now().Add(3 * time.Second))
+		if err := conn.WriteJSON(map[string]any{"type": "output", "data": string(chunk), "cursor": cursor}); err != nil {
 			return
 		}
 	}
