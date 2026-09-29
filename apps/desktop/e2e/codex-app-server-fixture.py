@@ -43,6 +43,22 @@ def work(turn,prompt):
   notify('thread/tokenUsage/updated',{'threadId':thread,'turnId':turn,'token_usage':{'last':{'total_tokens':90000,'input_tokens':100,'output_tokens':100}}})
   notify('turn/completed',{'threadId':thread,'turn':{'id':turn,'status':'completed'}})
   return
+ if 'context-model-new' in prompt:
+  state[turn]['active']=False
+  notify('thread/tokenUsage/updated',{'threadId':thread,'turnId':turn,'tokenUsage':{'last':{'totalTokens':100000},'modelContextWindow':400000}})
+  notify('turn/completed',{'threadId':thread,'turn':{'id':turn,'status':'completed'}})
+  return
+ if 'context-live-model-switch' in prompt:
+  gate=os.path.join(os.environ['OPENADE_PROVIDER_HOME'],'context-model-switch-'+sid)
+  notify('thread/tokenUsage/updated',{'threadId':thread,'turnId':turn,'tokenUsage':{'last':{'totalTokens':64000},'modelContextWindow':256000}})
+  open(gate+'.ready','w').close()
+  deadline=time.monotonic()+10
+  while not os.path.exists(gate+'.go') and time.monotonic()<deadline and state.get(turn,{}).get('active'):time.sleep(.02)
+  if not state.get(turn,{}).get('active'):return
+  state[turn]['active']=False
+  notify('thread/tokenUsage/updated',{'threadId':thread,'turnId':turn,'tokenUsage':{'last':{'totalTokens':70000},'modelContextWindow':256000}})
+  notify('turn/completed',{'threadId':thread,'turn':{'id':turn,'status':'completed'}})
+  return
  if 'interleaved-live' in prompt:
   gate=os.path.join(os.environ['OPENADE_PROVIDER_HOME'],'interleaved-live-'+sid)
   notify('item/agentMessage/delta',{'threadId':thread,'turnId':turn,'itemId':'message','delta':'First visible text. '})

@@ -40,6 +40,34 @@ test('Claude cached context usage excludes child traffic and persists in the cha
  expect((await state(request,s.id)).context).toEqual({tokens:42000,window:200000});
 });
 
+test('Claude model changes hide saved usage until the next run reports its own window',async({request,page})=>{
+ const session=await create(request,'Claude model context',{agent:'claude',model:'claude-sonnet-5',prompt:'claude-context'});
+ await expect.poll(()=>status(request,session.id)).toBe('completed');
+ await expect.poll(async()=>{const context=(await state(request,session.id)).context;return [context.tokens,context.window];}).toEqual([42000,200000]);
+ expect((await request.post(`${daemon}/api/sessions/${session.id}/model`,{data:{model:'claude-opus-5-5',effort:''}})).status()).toBe(200);
+ await expect.poll(async()=>{const context=(await state(request,session.id)).context;return [context.tokens,context.window];}).toEqual([null,null]);
+ expect((await request.post(`${daemon}/api/sessions/${session.id}/messages`,{data:{text:'claude-context again'}})).status()).toBe(202);
+ await expect.poll(async()=>{const current=await(await request.get(`${daemon}/api/sessions/${session.id}`)).json();return current.generation===2?current.status:'previous';}).toBe('completed');
+ await expect.poll(async()=>{const context=(await state(request,session.id)).context;return [context.tokens,context.window];}).toEqual([42000,200000]);
+ await ready(page);await open(page,'Claude model context');await expect(page.getByRole('button',{name:'Context usage 21%'})).toBeVisible();
+});
+
+test('Claude clears the old window when its actual model changes mid-conversation',async({request,page})=>{
+ const session=await create(request,'Claude actual model context',{agent:'claude',prompt:'claude-context'});
+ await expect.poll(()=>status(request,session.id)).toBe('completed');
+ await expect.poll(async()=>{const context=(await state(request,session.id)).context;return [context.tokens,context.window];}).toEqual([42000,200000]);
+ const gate=path.join(tmp,'provider-home','claude-context-model-'+session.id);
+ try{
+  expect((await request.post(`${daemon}/api/sessions/${session.id}/messages`,{data:{text:'claude-context-model-transition'}})).status()).toBe(202);
+  await expect.poll(()=>fs.existsSync(gate+'.ready')).toBe(true);
+  await expect.poll(async()=>{const context=(await state(request,session.id)).context;return [context.tokens,context.window];}).toEqual([10000,null]);
+  fs.writeFileSync(gate+'.go','');
+  await expect.poll(async()=>{const current=await(await request.get(`${daemon}/api/sessions/${session.id}`)).json();return current.generation===2?current.status:'previous';}).toBe('completed');
+  await expect.poll(async()=>{const context=(await state(request,session.id)).context;return [context.tokens,context.window];}).toEqual([10000,100000]);
+  await ready(page);await open(page,'Claude actual model context');await expect(page.getByRole('button',{name:'Context usage 10%'})).toBeVisible();
+ }finally{fs.writeFileSync(gate+'.go','');await request.post(`${daemon}/api/sessions/${session.id}/stop`);}
+});
+
 test('known context capacity remains visible while token use is unavailable',async({request,page})=>{
  const session=await create(request,'Context capacity without usage',{agent:'codex',prompt:'context-window-only'});
  await expect.poll(()=>status(request,session.id)).toBe('completed');
@@ -61,6 +89,40 @@ test('Codex snake case usage and zero-token reset keep the context meter accurat
  expect((await request.post(`${daemon}/api/sessions/${session.id}/messages`,{data:{text:'context-snake-reset'}})).status()).toBe(202);
  await expect.poll(()=>status(request,session.id)).toBe('completed');await expect.poll(async()=>(await state(request,session.id)).context).toEqual({tokens:0,window:256000});
  const ring=page.getByRole('button',{name:'Context usage 0%'});await expect(ring).toBeVisible();await ring.click();await expect(page.getByRole('dialog',{name:'Context usage details'})).toContainText('0 / 256,000 tokens');await page.reload();await expect(ring).toBeVisible();
+});
+
+test('changing a model hides the previous model context until new telemetry arrives',async({request,page})=>{
+ const session=await create(request,'Model context ownership',{agent:'codex',model:'fixture-model-a',prompt:'context-snake-usage'});
+ await expect.poll(()=>status(request,session.id)).toBe('completed');
+ await expect.poll(async()=>{const context=(await state(request,session.id)).context;return [context.tokens,context.window];}).toEqual([64000,256000]);
+ await ready(page);await open(page,'Model context ownership');await expect(page.getByRole('button',{name:'Context usage 25%'})).toBeVisible();
+ expect((await request.post(`${daemon}/api/sessions/${session.id}/model`,{data:{model:'fixture-model-b',effort:''}})).status()).toBe(200);
+ await expect.poll(async()=>{const context=(await state(request,session.id)).context;return [context.tokens,context.window];}).toEqual([null,null]);
+ await expect(page.getByRole('button',{name:/^Context usage/})).toHaveCount(0);
+ expect((await request.post(`${daemon}/api/sessions/${session.id}/messages`,{data:{text:'context-model-new'}})).status()).toBe(202);
+ await expect.poll(()=>status(request,session.id)).toBe('completed');
+ await expect.poll(async()=>{const context=(await state(request,session.id)).context;return [context.tokens,context.window];}).toEqual([100000,400000]);
+ await expect(page.getByRole('button',{name:'Context usage 25%'})).toBeVisible();
+ await page.reload();await expect(page.getByRole('button',{name:'Context usage 25%'})).toBeVisible();
+});
+
+test('an old Codex turn cannot revive usage after the next model is selected',async({request,page})=>{
+ const session=await create(request,'Live model switch',{agent:'codex',model:'fixture-model-a',prompt:'context-live-model-switch'});
+ const gate=path.join(tmp,'provider-home','context-model-switch-'+session.id);
+ try{
+  await expect.poll(()=>fs.existsSync(gate+'.ready')).toBe(true);
+  await expect.poll(async()=>{const context=(await state(request,session.id)).context;return [context.tokens,context.window];}).toEqual([64000,256000]);
+  expect((await request.post(`${daemon}/api/sessions/${session.id}/model`,{data:{model:'fixture-model-b',effort:''}})).status()).toBe(200);
+  await expect.poll(async()=>{const context=(await state(request,session.id)).context;return [context.tokens,context.window];}).toEqual([null,null]);
+  fs.writeFileSync(gate+'.go','');
+  await expect.poll(()=>status(request,session.id)).toBe('completed');
+  const stale=(await state(request,session.id)).context;expect([stale.tokens,stale.window]).toEqual([null,null]);
+  await ready(page);await open(page,'Live model switch');await expect(page.getByRole('button',{name:/^Context usage/})).toHaveCount(0);
+  expect((await request.post(`${daemon}/api/sessions/${session.id}/messages`,{data:{text:'context-model-new'}})).status()).toBe(202);
+  await expect.poll(async()=>{const current=await(await request.get(`${daemon}/api/sessions/${session.id}`)).json();return current.generation===2?current.status:'previous';}).toBe('completed');
+  await expect.poll(async()=>{const context=(await state(request,session.id)).context;return [context.tokens,context.window];}).toEqual([100000,400000]);
+  await expect(page.getByRole('button',{name:'Context usage 25%'})).toBeVisible();
+ }finally{fs.writeFileSync(gate+'.go','');await request.post(`${daemon}/api/sessions/${session.id}/stop`);}
 });
 
 test('delivered stream text becomes visible before the provider finishes',async({request,page})=>{
