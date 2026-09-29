@@ -3,7 +3,8 @@ import { expect } from "@playwright/test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { execFileSync } from "node:child_process";
-import { create,daemon,open,otherRepo,ready,repo,status,tmp } from "./helpers";
+import { createServer } from "node:http";
+import { create,daemon,open,otherRepo,panel,ready,repo,status,tmp } from "./helpers";
 const percentile=(values:number[],p:number)=>[...values].sort((a,b)=>a-b)[Math.min(values.length-1,Math.ceil(values.length*p)-1)];
 test("repeatable production-client performance with multiple projects and long inactive transcripts",async({browser,request},testInfo)=>{
  test.setTimeout(180000);const baseline=Boolean(process.env.OPENADE_E2E_SOURCE);const sessions=[];
@@ -22,10 +23,52 @@ test("repeatable production-client performance with multiple projects and long i
  const domNodes=await page.locator(".chat-timeline article").count();const cdp=await context.newCDPSession(page);await cdp.send("Performance.enable");const metrics=(await cdp.send("Performance.getMetrics")).metrics as {name:string;value:number}[];const rendererHeap=metrics.find(metric=>metric.name==="JSHeapUsedSize")?.value;await cdp.send("HeapProfiler.collectGarbage");const collectedMetrics=(await cdp.send("Performance.getMetrics")).metrics as {name:string;value:number}[];const rendererRetainedHeap=collectedMetrics.find(metric=>metric.name==="JSHeapUsedSize")?.value;
  await page.getByRole("button",{name:"Home",exact:true}).click();const health=await(await request.get(`${daemon}/api/health`)).json();const ps=execFileSync("ps",["-p",String(health.pid),"-o","rss=,%cpu="],{encoding:"utf8"}).trim().split(/\s+/).map(Number);const diagnosticsResponse=await request.get(`${daemon}/api/diagnostics`);const diagnostics=diagnosticsResponse.ok()?await diagnosticsResponse.json():null;
  const streaming:number[]=[];for(let i=0;i<5;i++){const session=await create(request,`Streaming performance ${i}`,{agent:"claude",prompt:"streaming fixture"});await page.getByRole("button",{name:"Sessions",exact:true}).click();const start=performance.now();await page.getByRole("button",{name:new RegExp(`Streaming performance ${i}`)}).first().click();await expect(page.getByText(/Native chat streams correctly/).first()).toBeVisible();streaming.push(performance.now()-start);}
- const report={variant:baseline?"baseline":"rebuilt",environment:{frontend:"production Vite build in Chromium; actual Go daemon; synthetic provider CLIs",nativeLatencyMeasured:false,agentMemoryIncluded:false},workload:{sessions:24,projects:2,historicalTurns:260},coldReady:{samples:cold,p50:percentile(cold,.5),p95:percentile(cold,.95)},warmReady:{samples:warm,p50:percentile(warm,.5),p95:percentile(warm,.95)},inputToTwoFrames:{samples:input,p95:percentile(input,.95)},sessionSwitch:{samples:switches,p95:percentile(switches,.95)},streamFirstVisible:{samples:streaming,p95:percentile(streaming,.95)},engine:{rssKiB:ps[0],cpuPercent:ps[1],diagnostics},rendererHeapBytes:rendererHeap,rendererRetainedHeapBytes:rendererRetainedHeap,timelineArticleCount:domNodes};
+ const report={variant:baseline?"baseline":"rebuilt",environment:{frontend:"production Vite build in Chromium; actual Go daemon; synthetic provider CLIs",nativeLatencyMeasured:false,agentMemoryIncluded:false},workload:{sessions:24,projects:2,historicalTurns:260},coldReady:{samples:cold,p50:percentile(cold,.5),p95:percentile(cold,.95)},warmReady:{samples:warm,p50:percentile(warm,.5),p95:percentile(warm,.95)},inputToTwoFrames:{samples:input,p50:percentile(input,.5),p95:percentile(input,.95)},sessionSwitch:{samples:switches,p50:percentile(switches,.5),p95:percentile(switches,.95)},streamFirstVisible:{samples:streaming,p50:percentile(streaming,.5),p95:percentile(streaming,.95)},engine:{rssKiB:ps[0],cpuPercent:ps[1],diagnostics},rendererHeapBytes:rendererHeap,rendererRetainedHeapBytes:rendererRetainedHeap,timelineArticleCount:domNodes};
  const output=process.env.OPENADE_PERF_OUTPUT??testInfo.outputPath("performance.json");fs.mkdirSync(path.dirname(output),{recursive:true});fs.writeFileSync(output,JSON.stringify(report,null,2));await testInfo.attach("performance",{path:output,contentType:"application/json"});
  if(!baseline){expect(domNodes).toBeLessThanOrEqual(80);expect(report.inputToTwoFrames.p95).toBeLessThan(150);expect(report.sessionSwitch.p95).toBeLessThan(600);expect(report.engine.diagnostics.stream_clients).toBe(0);}
  await context.close();
+});
+
+test("browser, terminal and panel cycles release renderer and daemon resources",async({page,request},testInfo)=>{
+ test.setTimeout(120000);const baseline=Boolean(process.env.OPENADE_E2E_SOURCE);
+ const session=await create(request,"Resource cycle fixture");await expect.poll(()=>status(request,session.id)).toBe("completed");
+ const site=createServer((_req,res)=>{res.setHeader("Content-Type","text/html");res.end("<title>Local fixture</title><h1>Local browser fixture</h1>");});
+ await new Promise<void>(resolve=>site.listen(0,"127.0.0.1",resolve));
+ const address=site.address();if(!address||typeof address==="string")throw Error("No local fixture port");
+ const url=`http://127.0.0.1:${address.port}/`;
+ const cycles:number[]=[];
+ try{
+  await ready(page);await open(page,"Resource cycle fixture");await panel(page,"Browser");
+  await page.locator(".browser-panel:visible").getByLabel("Website address").fill(url);
+  await page.locator(".browser-panel:visible").getByRole("button",{name:"Go",exact:true}).click();
+  await expect(page.locator(".browser-panel:visible").getByTitle("Workspace browser preview")).toHaveAttribute("src",url);
+  for(let index=0;index<5;index++){
+   const started=performance.now();
+   await page.getByLabel("Close right sidebar").click();
+   await page.setViewportSize({width:index%2?1280:1480,height:920});
+   await page.getByLabel("Toggle right sidebar").click();
+   await expect(page.locator(".browser-panel:visible").getByTitle("Workspace browser preview")).toHaveAttribute("src",url);
+   cycles.push(performance.now()-started);
+   const response=await request.post(`${daemon}/api/sessions/${session.id}/terminals`,{data:{title:`Cycle terminal ${index}`}});
+   expect(response.status()).toBe(201);const terminal=await response.json();
+   await panel(page,"Terminal");await expect(page.locator(".terminal-host:visible")).toBeVisible();
+   expect((await request.post(`${daemon}/api/terminals/${terminal.id}/stop`)).status()).toBe(204);
+   await expect.poll(async()=>(await(await request.get(`${daemon}/api/diagnostics`)).json()).live_terminals).toBe(0);
+   await page.locator(".panel-tabs [role=tab]").first().click();
+  }
+  const cdp=await page.context().newCDPSession(page);await cdp.send("Performance.enable");await cdp.send("HeapProfiler.collectGarbage");
+  const metrics=(await cdp.send("Performance.getMetrics")).metrics as {name:string;value:number}[];
+  const retainedHeapBytes=metrics.find(metric=>metric.name==="JSHeapUsedSize")?.value;
+  await page.close();
+  if(!baseline)await expect.poll(async()=>(await(await request.get(`${daemon}/api/diagnostics`)).json()).activity_clients).toBe(0);
+  const health=await(await request.get(`${daemon}/api/health`)).json();
+  const ps=execFileSync("ps",["-p",String(health.pid),"-o","rss=,%cpu="],{encoding:"utf8"}).trim().split(/\s+/).map(Number);
+  const handles=execFileSync("lsof",["-nP","-p",String(health.pid)],{encoding:"utf8"}).trim().split("\n").slice(1).map(line=>line.trim().split(/\s+/)).filter(parts=>/^\d+[a-z]*$/.test(parts[3]??""));
+  const diagnostics=await(await request.get(`${daemon}/api/diagnostics`)).json();
+  const report={variant:baseline?"baseline":"rebuilt",environment:"Chromium production client, actual Go daemon and synthetic providers; browser is an iframe fixture, not WKWebView",workload:{panelCycles:5,terminalStartsAndStops:5,browserTab:1,viewportWidths:[1280,1480]},panelCycleMs:{samples:cycles,p50:percentile(cycles,.5),p95:percentile(cycles,.95)},rendererRetainedHeapBytes:retainedHeapBytes,engine:{rssKiB:ps[0],cpuPercent:ps[1],fileDescriptors:handles.length,sockets:handles.filter(parts=>["IPv4","IPv6","unix"].includes(parts[4]??"")).length,diagnostics}};
+  const output=process.env.OPENADE_RESOURCE_PERF_OUTPUT??testInfo.outputPath("resource-performance.json");fs.mkdirSync(path.dirname(output),{recursive:true});fs.writeFileSync(output,JSON.stringify(report,null,2));await testInfo.attach("resource-performance",{path:output,contentType:"application/json"});
+  if(!baseline){expect(diagnostics.live_terminals).toBe(0);expect(diagnostics.stream_clients).toBe(0);expect(diagnostics.activity_clients).toBe(0);}
+ }finally{await new Promise<void>(resolve=>site.close(()=>resolve()));}
 });
 
 test("large editor keeps review gutters viewport bounded",async({page,request},testInfo)=>{

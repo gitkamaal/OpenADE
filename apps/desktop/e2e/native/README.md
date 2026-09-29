@@ -27,11 +27,10 @@ that assessment. OS accessibility settings and macOS <26 fallback also require
 native system checks; the Playwright bridge fixture covers client reactions,
 including terminal material updates, rather than emulating AppKit.
 
-After visual checks, build normally to remove the fixture from the binary:
+After visual checks, build a separate handoff app with a fresh frontend:
 
 ```sh
-npm run build
-wails build -m -skipbindings -s
+./scripts/build-handoff.sh /path/to/local-output-folder
 ```
 
 `OPENADE_VISUAL_E2E=content` instead puts the same colored native view underneath

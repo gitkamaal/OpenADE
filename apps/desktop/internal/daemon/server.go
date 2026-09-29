@@ -44,6 +44,10 @@ type Daemon struct {
 	projectReads    chan struct{}
 	projectMu       sync.Mutex
 	deletions       *deletionFence
+	activityMu      sync.Mutex
+	activityClients map[chan struct{}]struct{}
+	activityStop    context.CancelFunc
+	activityPolls   int64
 }
 
 func DefaultConfig() Config {

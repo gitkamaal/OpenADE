@@ -18,7 +18,11 @@ func ownedProcess(pid int, id string) bool {
 	return err == nil && strings.Contains(string(out), "OPENADE_SESSION_ID="+id)
 }
 func (s *Store) recoverProcesses() {
-	rows, err := s.db.Query(`SELECT pid,id FROM sessions WHERE pid>0 AND status IN ('starting','running','waiting')`)
+	// The daemon owns project terminals as well as provider sessions. A hard
+	// daemon exit leaves both kinds of process running until this profile is
+	// reopened, so recover their recorded process groups before clearing rows.
+	rows, err := s.db.Query(`SELECT pid,id FROM sessions WHERE pid>0 AND status IN ('starting','running','waiting')
+		UNION ALL SELECT pid,session_id FROM terminals WHERE pid>0 AND status IN ('starting','running')`)
 	if err != nil {
 		return
 	}
